@@ -2,6 +2,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import os
+import json
 from unittest.mock import patch
 from pathlib import Path
 
@@ -14,6 +16,7 @@ from quizmd import (
     parse_quiz_markdown,
     prompt_input,
     run_coroutine_sync,
+    save_attempt,
     select_theme,
     slugify,
 )
@@ -379,6 +382,52 @@ class QuizMarkdownTests(unittest.TestCase):
         with patch.dict("os.environ", {"QUIZMD_THEME": "light"}, clear=False):
             theme = select_theme("auto")
             self.assertEqual(theme["pt_title"], THEMES["light"]["pt_title"])
+
+    def test_save_attempt_writes_json_and_text_outputs(self):
+        questions = [
+            {
+                "title": "Question 1",
+                "question": "Pick one",
+                "options": ["A", "B"],
+                "correct": [2],
+                "type": "single",
+                "time_limit": 10,
+                "explanation": "Because B",
+            }
+        ]
+        answers = [
+            {
+                "question_title": "Question 1",
+                "question_text": "Pick one",
+                "selected_indexes": [2],
+                "selected_labels": "2. B",
+                "correct_indexes": [2],
+                "correct_labels": "2. B",
+                "is_correct": True,
+                "explanation": "Because B",
+            }
+        ]
+
+        old_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                attempt_dir = save_attempt("Demo Quiz", 1, questions, answers)
+                self.assertTrue((attempt_dir / "answers.json").exists())
+                self.assertTrue((attempt_dir / "answers.txt").exists())
+
+                payload = json.loads((attempt_dir / "answers.json").read_text(encoding="utf-8"))
+                self.assertEqual(payload["quiz_title"], "Demo Quiz")
+                self.assertEqual(payload["score"], 1)
+                self.assertEqual(payload["total_questions"], 1)
+                self.assertEqual(len(payload["answers"]), 1)
+
+                text_output = (attempt_dir / "answers.txt").read_text(encoding="utf-8")
+                self.assertIn("Quiz: Demo Quiz", text_output)
+                self.assertIn("Score: 1/1", text_output)
+                self.assertIn("Result: Correct", text_output)
+            finally:
+                os.chdir(old_cwd)
 
     def test_build_question_markup_escapes_special_characters(self):
         question = {

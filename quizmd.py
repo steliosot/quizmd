@@ -553,13 +553,21 @@ def run(title, questions, theme_name: str = "auto"):
         console.print(Panel(f"[bold cyan]Final Score: {score}/{len(questions)}[/bold cyan]"))
 
         if ask_to_save_answers():
-            attempt_dir = save_attempt(title, score, questions, saved_answers)
-            console.print(
-                Panel(
-                    f"[bold green]Answers saved successfully.[/bold green]\n{attempt_dir}",
-                    border_style="green"
+            try:
+                attempt_dir = save_attempt(title, score, questions, saved_answers)
+                console.print(
+                    Panel(
+                        f"[bold green]Answers saved successfully.[/bold green]\n{attempt_dir}",
+                        border_style="green"
+                    )
                 )
-            )
+            except OSError as exc:
+                console.print(
+                    Panel(
+                        f"[bold red]Could not save answers:[/bold red]\n{exc}",
+                        border_style="red",
+                    )
+                )
 
     except KeyboardInterrupt:
         console.print("\n\n")  # ← spacing BEFORE
