@@ -42,14 +42,15 @@ THEMES = {
     "light": {
         "primary": "ansiblue",
         "secondary": "ansimagenta",
-        "accent": "ansiyellow",
+        "accent": "ansiblue",
         "success": "ansigreen",
         "danger": "ansired",
         "panel": "ansiblue",
         "pt_primary": "ansiblue",
         "pt_title": "ansiblack",
-        "pt_timer": "ansimagenta",
-        "pt_timer_warning": "ansired",
+        "pt_code": "ansimagenta",
+        "pt_timer": "ansiblue",
+        "pt_timer_warning": "ansiyellow",
         "pt_timer_danger": "ansired",
         "pt_instruction": "ansiblack",
         "pt_selected_fg": "ansiwhite",
@@ -292,6 +293,18 @@ def render_inline_markdown_for_prompt_toolkit(text: str) -> str:
     return escaped
 
 
+def parse_question_lines(question_text: str) -> list[tuple[str, bool]]:
+    lines: list[tuple[str, bool]] = []
+    in_code_fence = False
+    for raw_line in question_text.splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("```"):
+            in_code_fence = not in_code_fence
+            continue
+        lines.append((raw_line, in_code_fence))
+    return lines or [("", False)]
+
+
 def strip_prompt_toolkit_tags(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text)
 
@@ -396,17 +409,28 @@ def build_question_markup(
     progress_bar = "█" * filled_units + "░" * (progress_units - filled_units)
 
     timer_color = theme["pt_timer"]
+    timer_prefix = "⏱"
     if remaining is not None:
         if remaining < 5:
             timer_color = theme["pt_timer_danger"]
-        elif remaining < 10:
+            timer_prefix = "😱"
+        elif remaining <= 10:
             timer_color = theme["pt_timer_warning"]
+            timer_prefix = "😱"
 
-    question_body_lines = [
-        render_inline_markdown_for_prompt_toolkit(line) for line in q["question"].splitlines()
-    ]
+    parsed_question_lines = parse_question_lines(q["question"])
+    rendered_question_lines = []
+    for raw_line, is_code in parsed_question_lines:
+        if is_code:
+            rendered = html.escape(raw_line.rstrip())
+            if rendered:
+                rendered = f"<style fg='{theme.get('pt_code', theme['pt_primary'])}'>{rendered}</style>"
+            rendered_question_lines.append(rendered)
+        else:
+            rendered_question_lines.append(render_inline_markdown_for_prompt_toolkit(raw_line))
+
     visible_widths = [
-        display_width(html.unescape(strip_prompt_toolkit_tags(line))) for line in question_body_lines
+        display_width(html.unescape(strip_prompt_toolkit_tags(line))) for line in rendered_question_lines
     ] or [0]
     question_width = max(40, max(visible_widths))
     question_box_top = "┌" + ("─" * (question_width + 2)) + "┐"
@@ -414,18 +438,18 @@ def build_question_markup(
 
     lines = [
         f"<style fg='{theme['pt_instruction']}'><b>Question {question_index}/{total_questions}</b> {progress_bar}</style>"
-        + (f"  <style fg='{timer_color}'>⏱ {remaining}s</style>" if remaining is not None else ""),
+        + (f"  <style fg='{timer_color}'>{timer_prefix} {remaining}s</style>" if remaining is not None else ""),
         "",
         f"<style fg='{theme['pt_title']}'>{question_box_top}</style>",
     ]
-    for i, line in enumerate(question_body_lines or [""]):
+    for line in rendered_question_lines:
         visible = html.unescape(strip_prompt_toolkit_tags(line))
         padding = " " * max(0, question_width - display_width(visible))
         lines.append(f"<style fg='{theme['pt_title']}'>│ {line}{padding} │</style>")
     lines.extend([
         f"<style fg='{theme['pt_title']}'>{question_box_bot}</style>",
         "",
-        f"<style fg='{theme['pt_instruction']}'><i>{html.escape(instruction)}</i></style>",
+        f"<style fg='{theme['pt_instruction']}'>{html.escape(instruction)}</style>",
         "",
         f"<style fg='{theme['pt_instruction']}'>──────── Choices ────────</style>",
         "",
