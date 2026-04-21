@@ -36,8 +36,12 @@ THEMES = {
         "pt_instruction": "ansigray",
         "pt_selected_fg": "ansiwhite",
         "pt_selected_bg": "ansiblue",
+        "pt_selected_fg_pulse": "ansiblue",
+        "pt_selected_bg_pulse": "ansiwhite",
         "pt_marked_fg": "ansiwhite",
         "pt_marked_bg": "ansigreen",
+        "pt_code": "ansiwhite",
+        "pt_code_bg": "#1d2630",
     },
     "light": {
         "primary": "blue",
@@ -55,8 +59,11 @@ THEMES = {
         "pt_instruction": "black",
         "pt_selected_fg": "ansiwhite",
         "pt_selected_bg": "ansiblue",
+        "pt_selected_fg_pulse": "ansiblue",
+        "pt_selected_bg_pulse": "ansiwhite",
         "pt_marked_fg": "ansiwhite",
         "pt_marked_bg": "ansigreen",
+        "pt_code_bg": "#eaf2ff",
     },
 }
 
@@ -422,8 +429,10 @@ def build_question_markup(
     is_multiple: bool,
     question_index: int = 1,
     total_questions: int = 1,
+    pulse: bool = False,
 ) -> str:
-    instruction = "Select 1 or more answers with Space, then Enter" if is_multiple else "Select 1 answer with Space, then Enter"
+    instruction = "Select with Space, then Enter"
+    question_type_badge = "[MULTI ☑]" if is_multiple else "[SINGLE ○]"
     progress_units = 10
     progress_fraction = question_index / total_questions if total_questions else 1
     filled_units = max(0, min(progress_units, int(round(progress_fraction * progress_units))))
@@ -440,18 +449,16 @@ def build_question_markup(
             timer_prefix = "😱"
 
     parsed_question_lines = parse_question_lines(q["question"])
-    rendered_question_lines = []
+    rendered_question_lines: list[tuple[str, bool]] = []
     for raw_line, is_code in parsed_question_lines:
         if is_code:
             rendered = html.escape(raw_line.rstrip())
-            if rendered:
-                rendered = f"<style fg='{theme.get('pt_code', theme['pt_primary'])}'>{rendered}</style>"
-            rendered_question_lines.append(rendered)
+            rendered_question_lines.append((rendered, True))
         else:
-            rendered_question_lines.append(render_inline_markdown_for_prompt_toolkit(raw_line))
+            rendered_question_lines.append((render_inline_markdown_for_prompt_toolkit(raw_line), False))
 
     visible_widths = [
-        display_width(html.unescape(strip_prompt_toolkit_tags(line))) for line in rendered_question_lines
+        display_width(html.unescape(strip_prompt_toolkit_tags(line))) for line, _ in rendered_question_lines
     ] or [0]
     question_width = max(40, max(visible_widths))
     question_box_top = "┌" + ("─" * (question_width + 2)) + "┐"
@@ -459,14 +466,20 @@ def build_question_markup(
 
     lines = [
         f"<style fg='{theme['pt_instruction']}'><b>Question {question_index}/{total_questions}</b> {progress_bar}</style>"
-        + (f"  <style fg='{timer_color}'>{timer_prefix} {remaining}s</style>" if remaining is not None else ""),
+        + (f"  <style fg='{timer_color}'>{timer_prefix} {remaining}s</style>" if remaining is not None else "")
+        + f"  <style fg='{theme['pt_instruction']}'>{html.escape(question_type_badge)}</style>",
         "",
         f"<style fg='{theme['pt_title']}'>{question_box_top}</style>",
     ]
-    for line in rendered_question_lines:
+    for line, is_code in rendered_question_lines:
         visible = html.unescape(strip_prompt_toolkit_tags(line))
         padding = " " * max(0, question_width - display_width(visible))
-        lines.append(f"<style fg='{theme['pt_title']}'>│ {line}{padding} │</style>")
+        if is_code:
+            code_style = f"fg='{theme.get('pt_code', theme['pt_primary'])}' bg='{theme['pt_code_bg']}'"
+            code_line = f"<style {code_style}>{line}{padding}</style>"
+            lines.append(f"<style fg='{theme['pt_title']}'>│ {code_line} │</style>")
+        else:
+            lines.append(f"<style fg='{theme['pt_title']}'>│ {line}{padding} │</style>")
     lines.extend([
         f"<style fg='{theme['pt_title']}'>{question_box_bot}</style>",
         "",
@@ -487,7 +500,13 @@ def build_question_markup(
         if idx in marked:
             style = f"fg='{theme['pt_marked_fg']}' bg='{theme['pt_marked_bg']}'"
         elif i == selected:
-            style = f"fg='{theme['pt_selected_fg']}' bg='{theme['pt_selected_bg']}'"
+            if pulse:
+                style = (
+                    f"fg='{theme.get('pt_selected_fg_pulse', theme['pt_selected_fg'])}' "
+                    f"bg='{theme.get('pt_selected_bg_pulse', theme['pt_selected_bg'])}'"
+                )
+            else:
+                style = f"fg='{theme['pt_selected_fg']}' bg='{theme['pt_selected_bg']}'"
         else:
             style = f"fg='{theme['pt_primary']}'"
 
@@ -515,6 +534,7 @@ async def ask_question(q, theme, question_index: int = 1, total_questions: int =
 
     selected = 0
     marked = set()
+    pulse = False
     remaining = q["time_limit"]
     result = {"answer": None}
     is_multiple = q.get("type", "single") == "multiple"
@@ -530,6 +550,7 @@ async def ask_question(q, theme, question_index: int = 1, total_questions: int =
                 is_multiple,
                 question_index=question_index,
                 total_questions=total_questions,
+                pulse=pulse,
             )
         )
 
@@ -539,14 +560,16 @@ async def ask_question(q, theme, question_index: int = 1, total_questions: int =
 
     @kb.add("up")
     def _(_):
-        nonlocal selected
+        nonlocal selected, pulse
         selected = (selected - 1) % len(q["options"])
+        pulse = not pulse
         control.text = render()
 
     @kb.add("down")
     def _(_):
-        nonlocal selected
+        nonlocal selected, pulse
         selected = (selected + 1) % len(q["options"])
+        pulse = not pulse
         control.text = render()
 
     @kb.add("space")

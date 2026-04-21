@@ -536,6 +536,7 @@ class QuizMarkdownTests(unittest.TestCase):
         )
         self.assertIn("◉", single_markup)
         self.assertIn("○", single_markup)
+        self.assertIn("[SINGLE ○]", single_markup)
 
         multiple_markup = build_question_markup(
             base_question,
@@ -547,6 +548,7 @@ class QuizMarkdownTests(unittest.TestCase):
         )
         self.assertIn("☑", multiple_markup)
         self.assertIn("☐", multiple_markup)
+        self.assertIn("[MULTI ☑]", multiple_markup)
 
     def test_build_question_markup_shows_progress_and_timer_states(self):
         question = {
@@ -594,6 +596,7 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("ansiyellow", normal)
         self.assertIn("ansimagenta", warning)
         self.assertIn("ansired", danger)
+        self.assertIn("Select with Space, then Enter", normal)
 
     def test_build_question_markup_handles_multiline_question_box(self):
         question = {
@@ -619,6 +622,30 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("└", markup)
         self.assertIn("print", markup)
         self.assertNotIn("```", markup)
+        self.assertIn("bg='#1d2630'", markup)
+
+    def test_build_question_markup_pulse_style_for_selected_choice(self):
+        question = {
+            "title": "Question 1",
+            "question": "Pick",
+            "options": ["A", "B"],
+            "correct": [1],
+            "type": "single",
+            "time_limit": 10,
+            "explanation": "",
+        }
+        markup = build_question_markup(
+            question,
+            THEMES["dark"],
+            selected=0,
+            marked=set(),
+            remaining=10,
+            is_multiple=False,
+            question_index=1,
+            total_questions=2,
+            pulse=True,
+        )
+        self.assertIn("bg='ansiwhite'", markup)
 
 
 if __name__ == "__main__":
