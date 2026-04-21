@@ -511,6 +511,7 @@ def parse_essay_markdown(path: str) -> tuple[str, dict]:
         "mode": "essay",
         "title": title,
         "instructor_name": section_map.get("Instructor Name", "").strip(),
+        "hint": section_map.get("Hint", "").strip(),
         "question": section_map["Question"],
         "instructions": section_map["Instructions for Students"],
         "criteria": criteria,
@@ -707,8 +708,8 @@ def _rubric_lines(criteria: list[dict]) -> list[str]:
     return lines
 
 
-def _rubric_markdown(criteria: list[dict], total_points: int) -> str:
-    lines = [f"### Rubric ({total_points} points)"]
+def _rubric_markdown(criteria: list[dict]) -> str:
+    lines = []
     for idx, item in enumerate(criteria, start=1):
         lines.append(f"{idx}. **{item['name']} ({item['points']} points)**")
         for detail in item.get("details", []):
@@ -1463,10 +1464,12 @@ def run_essay(
     title = essay["title"]
     question = essay["question"]
     instructions = essay["instructions"]
+    hint_text = essay.get("hint", "").strip() or "🤔 Hint: Focus on the key points your instructor expects."
     intro_markdown = (
         f"## Question\n\n{question}\n\n"
         f"## Instructions\n\n{instructions}\n\n"
-        f"{_rubric_markdown(essay['criteria'], essay['total_points'])}\n\n"
+        f"## Hint\n\n{hint_text}\n\n"
+        f"{_rubric_markdown(essay['criteria'])}\n\n"
         f"**✓ Press Enter to open your editor and write your answer.**"
     )
 
