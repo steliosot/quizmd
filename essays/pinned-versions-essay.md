@@ -13,6 +13,10 @@ Focus on reliability, debugging, and teamwork impacts.
 
 Stelios
 
+## Hint
+
+🤔 Hint: There are four points to discuss.
+
 ## Evaluation Criteria (Total: 4 points)
 
 1. **Deterministic environments (1 point)**

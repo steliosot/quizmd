@@ -13,6 +13,10 @@ Explain practical reasons, not only definitions.
 
 Stelios
 
+## Hint
+
+🤔 Hint: There are four points to discuss.
+
 ## Evaluation Criteria (Total: 4 points)
 
 1. **Isolation (1 point)**

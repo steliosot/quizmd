@@ -13,9 +13,35 @@ Be clear and logical. Focus on why it is needed, not just what it is.
 
 Stelios
 
-## Evaluation Criteria (Total: 4 points)
+## Hint
 
 🤔 Hint: There are four points to discuss.
+
+## Evaluation Criteria (Total: 4 points)
+
+1. **Dependency conflict problem (1 point)**
+
+- Different projects can require different versions of the same package
+
+- Version mismatches can break projects
+
+2. **Reproducibility (1 point)**
+
+- Team members can recreate the same environment
+
+- The project behaves consistently across machines
+
+3. **Collaboration benefit (1 point)**
+
+- Reduces setup friction between teammates
+
+- Avoids "works on my machine" issues
+
+4. **Version tracking (1 point)**
+
+- Encourages pinning versions
+
+- Helps debugging and long-term maintenance
 
 ## Reference Answer
 
