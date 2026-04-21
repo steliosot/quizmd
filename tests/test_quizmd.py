@@ -374,13 +374,16 @@ class QuizMarkdownTests(unittest.TestCase):
                 run_essay(essay, no_color=True)
 
     def test_mcq_validate_does_not_require_gemini_key(self):
-        with patch.dict("os.environ", {}, clear=True):
-            result = subprocess.run(
-                [sys.executable, "quizmd.py", "--validate", "quizzes/python-basics-quiz.md"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+        env = os.environ.copy()
+        env.pop("GEMINI_API_KEY", None)
+        env.pop("NO_COLOR", None)
+        result = subprocess.run(
+            [sys.executable, "quizmd.py", "--validate", "quizzes/python-basics-quiz.md"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("Validation passed", result.stdout)
 
