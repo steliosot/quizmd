@@ -10,6 +10,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 from quizmd import (
+    _format_possessive,
     THEMES,
     build_question_markup,
     collect_essay_answer_via_editor,
@@ -272,11 +273,29 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(answer, "Line 1\nLine 2")
         self.assertIn(":wq!", seen_template["value"])
 
+    def test_collect_essay_answer_template_includes_question_text(self):
+        seen_template = {"value": ""}
+
+        def fake_editor(cmd, check):
+            target = Path(cmd[-1])
+            seen_template["value"] = target.read_text(encoding="utf-8")
+            target.write_text("Line 1\n", encoding="utf-8")
+
+        with patch("subprocess.run", side_effect=fake_editor):
+            with patch.dict("os.environ", {"EDITOR": "fake-editor"}, clear=False):
+                answer = collect_essay_answer_via_editor("Title", "Why do we use .venv?")
+        self.assertEqual(answer, "Line 1")
+        self.assertIn("# Why do we use .venv?", seen_template["value"])
+
+    def test_format_possessive_handles_names_ending_with_s(self):
+        self.assertEqual(_format_possessive("Stelios"), "Stelios’")
+        self.assertEqual(_format_possessive("Anna"), "Anna's")
+
     def test_collect_essay_answer_windows_notepad_prompt(self):
         def fake_editor(cmd, check):
             Path(cmd[-1]).write_text("Windows answer\n", encoding="utf-8")
 
-        with patch("quizmd.os.name", "nt"):
+        with patch("quizmd._is_windows", return_value=True):
             with patch.dict("os.environ", {}, clear=True):
                 with patch("quizmd.ask_yes_no", return_value=True):
                     with patch("subprocess.run", side_effect=fake_editor):
@@ -284,7 +303,7 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(answer, "Windows answer")
 
     def test_collect_essay_answer_windows_notepad_prompt_declined(self):
-        with patch("quizmd.os.name", "nt"):
+        with patch("quizmd._is_windows", return_value=True):
             with patch.dict("os.environ", {}, clear=True):
                 with patch("quizmd.ask_yes_no", return_value=False):
                     with self.assertRaisesRegex(RuntimeError, "No editor configured on Windows"):
@@ -299,7 +318,7 @@ class QuizMarkdownTests(unittest.TestCase):
                 raise FileNotFoundError("missing")
             Path(cmd[-1]).write_text("Recovered answer\n", encoding="utf-8")
 
-        with patch("quizmd.os.name", "nt"):
+        with patch("quizmd._is_windows", return_value=True):
             with patch.dict("os.environ", {"EDITOR": "missing-editor"}, clear=False):
                 with patch("quizmd.ask_yes_no", return_value=True):
                     with patch("subprocess.run", side_effect=flaky_editor):

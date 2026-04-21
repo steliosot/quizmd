@@ -942,10 +942,23 @@ def evaluate_essay_deterministic_fallback(
     }
 
 
-def collect_essay_answer_via_editor(question_title: str) -> str:
+def _format_possessive(name: str) -> str:
+    text = name.strip()
+    if not text:
+        return ""
+    if text.lower().endswith("s"):
+        return f"{text}’"
+    return f"{text}'s"
+
+
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+def collect_essay_answer_via_editor(question_title: str, question_text: str = "") -> str:
     editor = (os.environ.get("EDITOR") or "").strip()
     if not editor:
-        if os.name == "nt":
+        if _is_windows():
             if ask_yes_no("No EDITOR is configured. Open Notepad now? [y/n]: "):
                 editor = "notepad"
             else:
@@ -955,8 +968,9 @@ def collect_essay_answer_via_editor(question_title: str) -> str:
         else:
             editor = "vi"
 
+    header_line = question_text.strip() or question_title
     template = (
-        f"# {question_title}\n"
+        f"# {header_line}\n\n"
         "# When ready (vim): press Esc, type :wq!, then press Enter to save and exit.\n"
         "# Write your answer below. Keep 5-10 lines.\n"
         "# Lines starting with '#' will be ignored.\n\n"
@@ -972,7 +986,7 @@ def collect_essay_answer_via_editor(question_title: str) -> str:
         try:
             subprocess.run(command, check=True)
         except (FileNotFoundError, subprocess.CalledProcessError) as exc:
-            if os.name == "nt" and editor.lower() != "notepad":
+            if _is_windows() and editor.lower() != "notepad":
                 if ask_yes_no(f"Could not open '{editor}'. Open Notepad instead? [y/n]: "):
                     subprocess.run(["notepad", str(temp_path)], check=True)
                 else:
@@ -1557,7 +1571,7 @@ def run_essay(
             )
         )
         prompt_input()
-        student_answer = collect_essay_answer_via_editor(title)
+        student_answer = collect_essay_answer_via_editor(title, question)
 
         if no_color:
             console.print("✓ Answer captured.")
@@ -1620,10 +1634,15 @@ def run_essay(
                 f"- Note: AI unavailable ({reason_label}); deterministic fallback used."
             )
 
+        feedback_heading = "Feedback"
+        instructor_name = str(essay.get("instructor_name", "")).strip()
+        if instructor_name:
+            feedback_heading = f"Feedback from {_format_possessive(instructor_name)} notes"
+
         console.print(
             Panel(
                 f"[bold {theme['primary']}]Score: {score_text}[/bold {theme['primary']}]\n\n"
-                "[bold]Feedback[/bold]\n"
+                f"[bold]{feedback_heading}[/bold]\n"
                 + "\n".join(feedback_lines),
                 border_style=theme["panel"],
             )
