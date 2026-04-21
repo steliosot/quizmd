@@ -24,7 +24,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.0.1"
+__version__ = "2.0.0"
 DEFAULT_AI_PROVIDER = "gemini"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 GEMINI_REQUESTS_PER_MINUTE = 15
@@ -706,6 +706,15 @@ def _rubric_lines(criteria: list[dict]) -> list[str]:
     return lines
 
 
+def _rubric_markdown(criteria: list[dict], total_points: int) -> str:
+    lines = [f"### Rubric ({total_points} points)"]
+    for idx, item in enumerate(criteria, start=1):
+        lines.append(f"{idx}. **{item['name']} ({item['points']} points)**")
+        for detail in item.get("details", []):
+            lines.append(f"   - {detail}")
+    return "\n".join(lines)
+
+
 def evaluate_essay_with_gemini(
     essay: dict,
     student_answer: str,
@@ -876,6 +885,7 @@ def collect_essay_answer_via_editor(question_title: str) -> str:
 
     template = (
         f"# {question_title}\n"
+        "# When ready (vim): press Esc, type :wq!, then press Enter to save and exit.\n"
         "# Write your answer below. Keep 5-10 lines.\n"
         "# Lines starting with '#' will be ignored.\n\n"
     )
@@ -896,6 +906,55 @@ def collect_essay_answer_via_editor(question_title: str) -> str:
         return answer
     finally:
         temp_path.unlink(missing_ok=True)
+
+
+def evaluate_essay_with_loading(console, theme: dict, evaluator, *args, **kwargs):
+    try:
+        from rich.progress import BarColumn
+        from rich.progress import Progress
+        from rich.progress import SpinnerColumn
+        from rich.progress import TextColumn
+        from rich.progress import TimeElapsedColumn
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Running the quiz requires rich. Install dependencies from requirements.txt."
+        ) from exc
+
+    import threading
+
+    result: dict = {}
+
+    def worker():
+        try:
+            result["value"] = evaluator(*args, **kwargs)
+        except Exception as exc:  # pragma: no cover - bubble up after animation stops
+            result["error"] = exc
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+    text = (
+        f"[{theme['accent']}]Wait, I am getting your feedback...[/]"
+        if not console.no_color
+        else "Wait, I am getting your feedback..."
+    )
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        BarColumn(bar_width=24),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task(text, total=None)
+        while thread.is_alive():
+            progress.update(task)
+            time.sleep(0.1)
+
+    thread.join()
+    if "error" in result:
+        raise result["error"]
+    return result["value"]
 
 
 def build_question_markup(
@@ -1394,24 +1453,34 @@ def run_essay(
     title = essay["title"]
     question = essay["question"]
     instructions = essay["instructions"]
-    criteria_lines = "\n".join(_rubric_lines(essay["criteria"]))
+    intro_markdown = (
+        f"## Question\n\n{question}\n\n"
+        f"## Instructions\n\n{instructions}\n\n"
+        f"{_rubric_markdown(essay['criteria'], essay['total_points'])}\n\n"
+        f"**✓ Press Enter to open your editor and write your answer.**"
+    )
 
     try:
         console.print(
             Panel(
-                f"[bold {theme['primary']}]{title}[/bold {theme['primary']}]\n\n"
-                f"[bold]Question[/bold]\n{question}\n\n"
-                f"[bold]Instructions[/bold]\n{instructions}\n\n"
-                f"[bold]Rubric ({essay['total_points']} points)[/bold]\n{criteria_lines}\n\n"
-                f"[bold {theme['accent']}]Press Enter to open your editor and write the answer.[/bold {theme['accent']}]",
+                Markdown(intro_markdown, code_theme="monokai"),
+                title=f"[bold {theme['primary']}]{title}[/bold {theme['primary']}]",
                 border_style=theme["panel"],
             )
         )
         prompt_input()
         student_answer = collect_essay_answer_via_editor(title)
 
+        if no_color:
+            console.print("✓ Answer captured.")
+        else:
+            console.print(f"[bold {theme['success']}]✓ Answer captured.[/bold {theme['success']}]")
+
         try:
-            grade = evaluate_essay_with_gemini(
+            grade = evaluate_essay_with_loading(
+                console,
+                theme,
+                evaluate_essay_with_gemini,
                 essay=essay,
                 student_answer=student_answer,
                 api_key=api_key,

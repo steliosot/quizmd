@@ -9,6 +9,10 @@ What is `requirements.txt` and what problem does it solve in Python projects?
 Write a short answer (5-10 lines).
 Be clear and logical. Focus on why it is needed, not just what it is.
 
+## Instructor Name
+
+Stelios
+
 ## Evaluation Criteria (Total: 4 points)
 
 1. **Dependency conflict problem (1 point)**

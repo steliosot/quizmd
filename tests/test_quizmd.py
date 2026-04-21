@@ -159,6 +159,32 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(len(essay["criteria"]), 4)
         Path(essay_path).unlink()
 
+    def test_parse_essay_keeps_inline_code_and_code_fences(self):
+        essay_path = self.write_quiz(
+            "# Essay Question: code sample\n\n"
+            "## Question\n"
+            "Explain what `requirements.txt` does for this setup:\n"
+            "```bash\n"
+            "pip install -r requirements.txt\n"
+            "```\n\n"
+            "## Instructions for Students\n"
+            "Answer clearly.\n\n"
+            "## Evaluation Criteria (Total: 1 points)\n"
+            "1. **Accuracy (1 point)**\n"
+            "- Mentions dependencies and reproducibility\n\n"
+            "## Reference Answer\n"
+            "It installs listed dependencies.\n\n"
+            "## AI Evaluation Rules\n"
+            "Only use criteria.\n\n"
+            "## Output Format\n"
+            "Score and feedback.\n"
+        )
+        _, essay = parse_essay_markdown(essay_path)
+        self.assertIn("`requirements.txt`", essay["question"])
+        self.assertIn("```bash", essay["question"])
+        self.assertIn("pip install -r requirements.txt", essay["question"])
+        Path(essay_path).unlink()
+
     def test_parse_essay_missing_required_sections_fail(self):
         section_patterns = {
             "Question": "missing required section\\(s\\): Question",
@@ -230,14 +256,18 @@ class QuizMarkdownTests(unittest.TestCase):
         Path(essay_path).unlink()
 
     def test_collect_essay_answer_via_editor(self):
+        seen_template = {"value": ""}
+
         def fake_editor(cmd, check):
             target = Path(cmd[-1])
+            seen_template["value"] = target.read_text(encoding="utf-8")
             target.write_text("Line 1\nLine 2\n", encoding="utf-8")
 
         with patch("subprocess.run", side_effect=fake_editor):
             with patch.dict("os.environ", {"EDITOR": "fake-editor"}, clear=False):
                 answer = collect_essay_answer_via_editor("Sample")
         self.assertEqual(answer, "Line 1\nLine 2")
+        self.assertIn(":wq!", seen_template["value"])
 
     def test_gemini_evaluation_success(self):
         essay = {
@@ -413,8 +443,9 @@ class QuizMarkdownTests(unittest.TestCase):
                 with patch("quizmd.collect_essay_answer_via_editor", return_value="student answer"):
                     with patch("quizmd.evaluate_essay_with_gemini", return_value=fake_grade):
                         with patch("quizmd.ask_to_save_answers", return_value=False):
-                            with patch("rich.console.Console.print"):
-                                run_essay(essay, no_color=True)
+                            with patch("quizmd.evaluate_essay_with_loading", return_value=fake_grade):
+                                with patch("rich.console.Console.print"):
+                                    run_essay(essay, no_color=True)
 
     def test_save_essay_attempt_outputs_files(self):
         payload = {
