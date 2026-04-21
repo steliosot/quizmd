@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 __version__ = "0.1.0"
@@ -259,6 +260,19 @@ def render_inline_markdown_for_prompt_toolkit(text: str) -> str:
     return escaped
 
 
+def strip_prompt_toolkit_tags(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text)
+
+
+def display_width(text: str) -> int:
+    width = 0
+    for ch in text:
+        if unicodedata.combining(ch):
+            continue
+        width += 2 if unicodedata.east_asian_width(ch) in {"W", "F"} else 1
+    return width
+
+
 def slugify(text: str) -> str:
     slug = text.lower().strip()
     slug = re.sub(r"[^a-z0-9]+", "-", slug)
@@ -357,14 +371,16 @@ def build_question_markup(
             timer_color = theme["pt_timer_warning"]
 
     question_body = render_inline_markdown_for_prompt_toolkit(q["question"])
-    question_box_top = "┌" + ("─" * 58) + "┐"
-    question_box_mid = f"│ {question_body} │"
-    question_box_bot = "└" + ("─" * 58) + "┘"
+    question_visible = html.unescape(strip_prompt_toolkit_tags(question_body))
+    question_width = max(40, display_width(question_visible))
+    question_padding = " " * max(0, question_width - display_width(question_visible))
+    question_box_top = "┌" + ("─" * (question_width + 2)) + "┐"
+    question_box_mid = f"│ {question_body}{question_padding} │"
+    question_box_bot = "└" + ("─" * (question_width + 2)) + "┘"
 
     lines = [
-        f"<style fg='{theme['pt_instruction']}'>Question {question_index}/{total_questions} {progress_bar}</style>"
+        f"<style fg='{theme['pt_instruction']}'><b>Question {question_index}/{total_questions}</b> {progress_bar}</style>"
         + (f"  <style fg='{timer_color}'>⏱ {remaining}s</style>" if remaining is not None else ""),
-        f"<style fg='{theme['pt_title']}'><b>❓ QUESTION</b> {html.escape(q['title'])}</style>",
         "",
         f"<style fg='{theme['pt_title']}'>{question_box_top}</style>",
         f"<style fg='{theme['pt_title']}'>{question_box_mid}</style>",

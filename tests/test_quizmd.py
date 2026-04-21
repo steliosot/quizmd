@@ -457,7 +457,6 @@ class QuizMarkdownTests(unittest.TestCase):
             is_multiple=False,
         )
 
-        self.assertIn("Question &lt;1&gt;", str(markup))
         self.assertIn("Is 2 &lt; 3 &amp; 4 &gt; 1?", str(markup))
 
     def test_build_question_markup_supports_basic_markdown_and_emoji(self):
