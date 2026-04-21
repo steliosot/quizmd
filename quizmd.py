@@ -356,14 +356,23 @@ def build_question_markup(
         elif remaining < 10:
             timer_color = theme["pt_timer_warning"]
 
+    question_body = render_inline_markdown_for_prompt_toolkit(q["question"])
+    question_box_top = "┌" + ("─" * 58) + "┐"
+    question_box_mid = f"│ {question_body} │"
+    question_box_bot = "└" + ("─" * 58) + "┘"
+
     lines = [
-        f"<style fg='{theme['pt_instruction']}'>Question {question_index}/{total_questions} {progress_bar}</style>",
-        f"<style fg='{theme['pt_title']}'> {html.escape('🤔 ' + q['title'])}</style>",
+        f"<style fg='{theme['pt_instruction']}'>Question {question_index}/{total_questions} {progress_bar}</style>"
+        + (f"  <style fg='{timer_color}'>⏱ {remaining}s</style>" if remaining is not None else ""),
+        f"<style fg='{theme['pt_title']}'><b>❓ QUESTION</b> {html.escape(q['title'])}</style>",
         "",
-        render_inline_markdown_for_prompt_toolkit(q["question"]),
-        f"<style fg='{timer_color}'>Time left: {remaining}s</style>" if remaining is not None else "",
+        f"<style fg='{theme['pt_title']}'>{question_box_top}</style>",
+        f"<style fg='{theme['pt_title']}'>{question_box_mid}</style>",
+        f"<style fg='{theme['pt_title']}'>{question_box_bot}</style>",
         "",
-        f"<style fg='{theme['pt_instruction']}'>{html.escape(instruction)}</style>",
+        f"<style fg='{theme['pt_instruction']}'><i>{html.escape(instruction)}</i></style>",
+        "",
+        f"<style fg='{theme['pt_instruction']}'>──────── Choices ────────</style>",
         "",
     ]
 
@@ -555,7 +564,8 @@ def run(title, questions, theme_name: str = "auto"):
                 "[bold]Rules:[/bold]\n"
                 "- Use ↑/↓ to move\n"
                 "- Press [bold]Space[/bold] to select an answer\n"
-                "- Press [bold]Enter[/bold] to continue\n\n"
+                "- Press [bold]Enter[/bold] to continue\n"
+                "- Press [bold]Ctrl+C[/bold] to exit the quiz at any time\n\n"
                 "Are you ready to start?\n"
                 f"[bold {theme['accent']}]Press Enter... Let's go! 🚀[/bold {theme['accent']}]",
                 border_style=theme["panel"]
@@ -566,7 +576,8 @@ def run(title, questions, theme_name: str = "auto"):
         score = 0
 
         for i, q in enumerate(questions, start=1):
-            console.print(Panel(Markdown(q["question"]), border_style=theme["panel"]))
+            if i > 1:
+                console.print("\n")
 
             correct, ans = run_coroutine_sync(
                 ask_question(q, theme, question_index=i, total_questions=len(questions))
