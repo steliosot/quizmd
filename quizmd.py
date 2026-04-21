@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import html
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -20,20 +21,60 @@ LOGO = r"""
 
 THEMES = {
     "dark": {
-        "primary": "cyan",
+        "primary": "ansicyan",
         "secondary": "magenta",
         "accent": "yellow",
         "success": "green",
         "danger": "red",
         "panel": "cyan",
-        "pt_primary": "cyan",
-        "pt_muted": "gray",
-        "pt_selected_fg": "black",
-        "pt_selected_bg": "yellow",
-        "pt_marked_fg": "black",
-        "pt_marked_bg": "green",
-    }
+        "pt_primary": "ansicyan",
+        "pt_title": "ansiwhite",
+        "pt_timer": "ansiyellow",
+        "pt_instruction": "ansigray",
+        "pt_selected_fg": "ansiwhite",
+        "pt_selected_bg": "ansiblue",
+        "pt_marked_fg": "ansiwhite",
+        "pt_marked_bg": "ansigreen",
+    },
+    "light": {
+        "primary": "ansiblue",
+        "secondary": "ansimagenta",
+        "accent": "ansiyellow",
+        "success": "ansigreen",
+        "danger": "ansired",
+        "panel": "ansiblue",
+        "pt_primary": "ansiblue",
+        "pt_title": "ansiblack",
+        "pt_timer": "ansimagenta",
+        "pt_instruction": "ansiblack",
+        "pt_selected_fg": "ansiwhite",
+        "pt_selected_bg": "ansiblue",
+        "pt_marked_fg": "ansiwhite",
+        "pt_marked_bg": "ansigreen",
+    },
 }
+
+
+def _is_light_terminal() -> bool:
+    colorfgbg = os.environ.get("COLORFGBG", "")
+    if not colorfgbg:
+        return False
+    parts = colorfgbg.split(";")
+    if len(parts) < 2:
+        return False
+    try:
+        bg = int(parts[-1])
+    except ValueError:
+        return False
+    return bg >= 7
+
+
+def select_theme(name: str = "auto") -> dict:
+    if name == "dark":
+        return THEMES["dark"]
+    if name == "light":
+        return THEMES["light"]
+    return THEMES["light"] if _is_light_terminal() else THEMES["dark"]
 
 
 def parse_int_list(raw_value: str, field_name: str, question_title: str, source: Path) -> list[int]:
@@ -273,12 +314,12 @@ def build_question_markup(
     instruction = "Select 1 or more answers with Space, then Enter" if is_multiple else "Select 1 answer with Space, then Enter"
 
     lines = [
-        f"<style fg='#dddddd'> {html.escape('🤔 ' + q['title'])}</style>",
+        f"<style fg='{theme['pt_title']}'> {html.escape('🤔 ' + q['title'])}</style>",
         "",
         html.escape(q["question"]),
-        f"<style fg='yellow'>Time left: {remaining}s</style>" if remaining is not None else "",
+        f"<style fg='{theme['pt_timer']}'>Time left: {remaining}s</style>" if remaining is not None else "",
         "",
-        f"<style fg='gray'>{html.escape(instruction)}</style>",
+        f"<style fg='{theme['pt_instruction']}'>{html.escape(instruction)}</style>",
         "",
     ]
 
@@ -400,7 +441,7 @@ def format_labels(options: list[str], indexes: list[int] | None) -> str:
     return "; ".join(labels)
 
 
-def run(title, questions):
+def run(title, questions, theme_name: str = "auto"):
     try:
         from rich.console import Console
         from rich.panel import Panel
@@ -412,7 +453,7 @@ def run(title, questions):
     console = Console()
     console.print(LOGO)
 
-    theme = THEMES["dark"]
+    theme = select_theme(theme_name)
     saved_answers = []
 
     try:
@@ -497,6 +538,12 @@ def main():
         action="version",
         version=f"%(prog)s {__version__}",
     )
+    parser.add_argument(
+        "--theme",
+        choices=["auto", "dark", "light"],
+        default="auto",
+        help="Color theme for the interactive quiz UI.",
+    )
     args = parser.parse_args()
 
     try:
@@ -509,7 +556,7 @@ def main():
         print(f"Validation passed: {title} ({len(questions)} questions)")
         return
 
-    run(title, questions)
+    run(title, questions, theme_name=args.theme)
 
 
 if __name__ == "__main__":
