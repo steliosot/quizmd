@@ -30,6 +30,8 @@ THEMES = {
         "pt_primary": "ansicyan",
         "pt_title": "ansiwhite",
         "pt_timer": "ansiyellow",
+        "pt_timer_warning": "ansimagenta",
+        "pt_timer_danger": "ansired",
         "pt_instruction": "ansigray",
         "pt_selected_fg": "ansiwhite",
         "pt_selected_bg": "ansiblue",
@@ -46,6 +48,8 @@ THEMES = {
         "pt_primary": "ansiblue",
         "pt_title": "ansiblack",
         "pt_timer": "ansimagenta",
+        "pt_timer_warning": "ansired",
+        "pt_timer_danger": "ansired",
         "pt_instruction": "ansiblack",
         "pt_selected_fg": "ansiwhite",
         "pt_selected_bg": "ansiblue",
@@ -247,6 +251,14 @@ def parse_quiz_markdown(path: str):
     return quiz_title, questions
 
 
+def render_inline_markdown_for_prompt_toolkit(text: str) -> str:
+    escaped = html.escape(text)
+    escaped = re.sub(r"`([^`]+)`", r"<style fg='ansiyellow'>\1</style>", escaped)
+    escaped = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", escaped)
+    escaped = re.sub(r"\*([^*]+)\*", r"<i>\1</i>", escaped)
+    return escaped
+
+
 def slugify(text: str) -> str:
     slug = text.lower().strip()
     slug = re.sub(r"[^a-z0-9]+", "-", slug)
@@ -328,14 +340,28 @@ def build_question_markup(
     marked: set[int],
     remaining: int | None,
     is_multiple: bool,
+    question_index: int = 1,
+    total_questions: int = 1,
 ) -> str:
     instruction = "Select 1 or more answers with Space, then Enter" if is_multiple else "Select 1 answer with Space, then Enter"
+    progress_units = 10
+    progress_fraction = question_index / total_questions if total_questions else 1
+    filled_units = max(0, min(progress_units, int(round(progress_fraction * progress_units))))
+    progress_bar = "█" * filled_units + "░" * (progress_units - filled_units)
+
+    timer_color = theme["pt_timer"]
+    if remaining is not None:
+        if remaining < 5:
+            timer_color = theme["pt_timer_danger"]
+        elif remaining < 10:
+            timer_color = theme["pt_timer_warning"]
 
     lines = [
+        f"<style fg='{theme['pt_instruction']}'>Question {question_index}/{total_questions} {progress_bar}</style>",
         f"<style fg='{theme['pt_title']}'> {html.escape('🤔 ' + q['title'])}</style>",
         "",
-        html.escape(q["question"]),
-        f"<style fg='{theme['pt_timer']}'>Time left: {remaining}s</style>" if remaining is not None else "",
+        render_inline_markdown_for_prompt_toolkit(q["question"]),
+        f"<style fg='{timer_color}'>Time left: {remaining}s</style>" if remaining is not None else "",
         "",
         f"<style fg='{theme['pt_instruction']}'>{html.escape(instruction)}</style>",
         "",
@@ -344,7 +370,10 @@ def build_question_markup(
     for i, opt in enumerate(q["options"]):
         idx = i + 1
         pointer = "&gt;" if i == selected else " "
-        checkbox = "[x]" if idx in marked else "[ ]"
+        if is_multiple:
+            marker = "☑" if idx in marked else "☐"
+        else:
+            marker = "◉" if idx in marked else "○"
 
         if idx in marked:
             style = f"fg='{theme['pt_marked_fg']}' bg='{theme['pt_marked_bg']}'"
@@ -354,7 +383,7 @@ def build_question_markup(
             style = f"fg='{theme['pt_primary']}'"
 
         lines.append(
-            f"<style {style}>{pointer} {idx}. {html.escape(checkbox)} {html.escape(opt)}</style>"
+            f"<style {style}>{pointer} {idx}. {html.escape(marker)} {render_inline_markdown_for_prompt_toolkit(opt)}</style>"
         )
 
     lines.append("")
@@ -363,7 +392,7 @@ def build_question_markup(
     return "\n".join(lines)
 
 
-async def ask_question(q, theme):
+async def ask_question(q, theme, question_index: int = 1, total_questions: int = 1):
     try:
         from prompt_toolkit import Application
         from prompt_toolkit.formatted_text import HTML as PromptHTML
@@ -382,7 +411,18 @@ async def ask_question(q, theme):
     is_multiple = q.get("type", "single") == "multiple"
 
     def render():
-        return PromptHTML(build_question_markup(q, theme, selected, marked, remaining, is_multiple))
+        return PromptHTML(
+            build_question_markup(
+                q,
+                theme,
+                selected,
+                marked,
+                remaining,
+                is_multiple,
+                question_index=question_index,
+                total_questions=total_questions,
+            )
+        )
 
     control = FormattedTextControl(text=render)
     window = Window(content=control)
@@ -495,6 +535,7 @@ def format_labels(options: list[str], indexes: list[int] | None) -> str:
 def run(title, questions, theme_name: str = "auto"):
     try:
         from rich.console import Console
+        from rich.markdown import Markdown
         from rich.panel import Panel
     except ModuleNotFoundError as exc:
         raise RuntimeError(
@@ -510,37 +551,43 @@ def run(title, questions, theme_name: str = "auto"):
     try:
         console.print(
             Panel(
-                f"[bold cyan]{title}[/bold cyan]\n\n"
+                f"[bold {theme['primary']}]{title}[/bold {theme['primary']}]\n\n"
                 "[bold]Rules:[/bold]\n"
                 "- Use ↑/↓ to move\n"
                 "- Press [bold]Space[/bold] to select an answer\n"
                 "- Press [bold]Enter[/bold] to continue\n\n"
                 "Are you ready to start?\n"
-                "[bold yellow]Press Enter... Let's go! 🚀[/bold yellow]",
-                border_style="cyan"
+                f"[bold {theme['accent']}]Press Enter... Let's go! 🚀[/bold {theme['accent']}]",
+                border_style=theme["panel"]
             )
         )
         prompt_input()
 
         score = 0
 
-        for q in questions:
-            
-            console.print(Panel(q["question"]))
+        for i, q in enumerate(questions, start=1):
+            console.print(Panel(Markdown(q["question"]), border_style=theme["panel"]))
 
-            correct, ans = run_coroutine_sync(ask_question(q, theme))
+            correct, ans = run_coroutine_sync(
+                ask_question(q, theme, question_index=i, total_questions=len(questions))
+            )
 
             selected_labels = format_labels(q["options"], ans)
             correct_labels = format_labels(q["options"], q["correct"])
 
             if correct:
-                console.print("[green]Correct[/green]")
+                console.print(f"[{theme['success']}]Correct[/{theme['success']}]")
                 score += 1
             else:
-                console.print("[red]Wrong[/red]")
+                console.print(f"[{theme['danger']}]Wrong[/{theme['danger']}]")
 
             if q.get("explanation"):
-                console.print(Panel(f"[bold]Explanation:[/bold]\n{q['explanation']}"))
+                console.print(
+                    Panel(
+                        Markdown(f"**Explanation**\n\n{q['explanation']}"),
+                        border_style=theme["panel"],
+                    )
+                )
 
             saved_answers.append({
                 "question_title": q["title"],
@@ -555,22 +602,36 @@ def run(title, questions, theme_name: str = "auto"):
 
             prompt_input("Press Enter for the next question...")
             
-        console.print(Panel(f"[bold cyan]Final Score: {score}/{len(questions)}[/bold cyan]"))
+        percentage = (score / len(questions)) * 100 if questions else 0.0
+        wrong_topics = [item["question_title"] for item in saved_answers if not item["is_correct"]]
+        if wrong_topics:
+            quick_review = "\n".join(f"- {topic}" for topic in wrong_topics)
+        else:
+            quick_review = "- None, excellent work."
+
+        summary = (
+            f"[bold {theme['primary']}]Quiz Summary[/bold {theme['primary']}]\n\n"
+            f"Score: [bold]{score}/{len(questions)}[/bold]\n"
+            f"Percentage: [bold]{percentage:.1f}%[/bold]\n"
+            f"Correct Answers: [bold]{score}[/bold]\n\n"
+            f"[bold]Quick Review Topics:[/bold]\n{quick_review}"
+        )
+        console.print(Panel(summary, border_style=theme["panel"]))
 
         if ask_to_save_answers():
             try:
                 attempt_dir = save_attempt(title, score, questions, saved_answers)
                 console.print(
                     Panel(
-                        f"[bold green]Answers saved successfully.[/bold green]\n{attempt_dir}",
-                        border_style="green"
+                        f"[bold {theme['success']}]Answers saved successfully.[/bold {theme['success']}]\n{attempt_dir}",
+                        border_style=theme["success"],
                     )
                 )
             except OSError as exc:
                 console.print(
                     Panel(
-                        f"[bold red]Could not save answers:[/bold red]\n{exc}",
-                        border_style="red",
+                        f"[bold {theme['danger']}]Could not save answers:[/bold {theme['danger']}]\n{exc}",
+                        border_style=theme["danger"],
                     )
                 )
 
@@ -579,8 +640,8 @@ def run(title, questions, theme_name: str = "auto"):
 
         console.print(
             Panel(
-                "[bold yellow]Thank you for trying! 👋[/bold yellow]",
-                border_style="yellow"
+                f"[bold {theme['accent']}]Thank you for trying! 👋[/bold {theme['accent']}]",
+                border_style=theme["accent"],
             )
         )
 

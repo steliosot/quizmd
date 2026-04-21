@@ -1,7 +1,7 @@
 # 🦉 Harry Potter Quiz
 
 ## Question 1
-What is the name of Harry Potter’s owl?
+What is the name of Harry Potter’s owl? 🦉
 
 - Crookshanks
 - Hedwig

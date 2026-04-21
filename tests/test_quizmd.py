@@ -460,6 +460,111 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("Question &lt;1&gt;", str(markup))
         self.assertIn("Is 2 &lt; 3 &amp; 4 &gt; 1?", str(markup))
 
+    def test_build_question_markup_supports_basic_markdown_and_emoji(self):
+        question = {
+            "title": "Question 1",
+            "question": "Pick **one** emoji: 🧠",
+            "options": ["`A`", "*B*"],
+            "correct": [1],
+            "type": "single",
+            "time_limit": 10,
+            "explanation": "",
+        }
+
+        markup = build_question_markup(
+            question,
+            THEMES["dark"],
+            selected=0,
+            marked=set(),
+            remaining=10,
+            is_multiple=False,
+        )
+        rendered = str(markup)
+        self.assertIn("<b>one</b>", rendered)
+        self.assertIn("🧠", rendered)
+        self.assertIn("ansiyellow", rendered)
+        self.assertIn("<i>B</i>", rendered)
+
+    def test_build_question_markup_uses_single_and_multiple_symbols(self):
+        base_question = {
+            "title": "Question 1",
+            "question": "Pick",
+            "options": ["A", "B"],
+            "correct": [1],
+            "type": "single",
+            "time_limit": 10,
+            "explanation": "",
+        }
+
+        single_markup = build_question_markup(
+            base_question,
+            THEMES["dark"],
+            selected=0,
+            marked={1},
+            remaining=10,
+            is_multiple=False,
+        )
+        self.assertIn("◉", single_markup)
+        self.assertIn("○", single_markup)
+
+        multiple_markup = build_question_markup(
+            base_question,
+            THEMES["dark"],
+            selected=0,
+            marked={1},
+            remaining=10,
+            is_multiple=True,
+        )
+        self.assertIn("☑", multiple_markup)
+        self.assertIn("☐", multiple_markup)
+
+    def test_build_question_markup_shows_progress_and_timer_states(self):
+        question = {
+            "title": "Question 1",
+            "question": "Pick one",
+            "options": ["A", "B"],
+            "correct": [1],
+            "type": "single",
+            "time_limit": 10,
+            "explanation": "",
+        }
+
+        normal = build_question_markup(
+            question,
+            THEMES["dark"],
+            selected=0,
+            marked=set(),
+            remaining=20,
+            is_multiple=False,
+            question_index=3,
+            total_questions=10,
+        )
+        warning = build_question_markup(
+            question,
+            THEMES["dark"],
+            selected=0,
+            marked=set(),
+            remaining=8,
+            is_multiple=False,
+            question_index=3,
+            total_questions=10,
+        )
+        danger = build_question_markup(
+            question,
+            THEMES["dark"],
+            selected=0,
+            marked=set(),
+            remaining=4,
+            is_multiple=False,
+            question_index=3,
+            total_questions=10,
+        )
+
+        self.assertIn("Question 3/10", normal)
+        self.assertIn("ansiyellow", normal)
+        self.assertIn("ansimagenta", warning)
+        self.assertIn("ansired", danger)
+
 
 if __name__ == "__main__":
     unittest.main()
