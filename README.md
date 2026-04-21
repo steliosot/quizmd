@@ -16,6 +16,12 @@ Then check the CLI:
 quizmd --version
 ```
 
+If you already installed it and want the latest updates:
+
+```bash
+pip install --upgrade --force-reinstall "git+https://github.com/steliosot/quizmd.git"
+```
+
 ## Run a Quiz
 
 If you want the bundled examples, clone the repo:
@@ -30,6 +36,14 @@ Validate quiz files without running the interactive UI:
 
 ```bash
 quizmd --validate quizzes/harry-potter-quiz.md
+```
+
+Theme options for better readability on light or dark terminals:
+
+```bash
+quizmd --theme auto quizzes/harry-potter-quiz.md
+quizmd --theme light quizzes/harry-potter-quiz.md
+quizmd --theme dark quizzes/harry-potter-quiz.md
 ```
 
 ## Example Quizzes Included
