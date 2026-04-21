@@ -971,7 +971,7 @@ def collect_essay_answer_via_editor(question_title: str, question_text: str = ""
     header_line = question_text.strip() or question_title
     template = (
         f"# {header_line}\n\n"
-        "# When ready (vim): press Esc, type :wq!, then press Enter to save and exit.\n"
+        "# When ready: Press Esc, type :wq!, then Enter to save and exit (or :q! to quit without saving).\n"
         "# Write your answer below. Keep 5-10 lines.\n"
         "# Lines starting with '#' will be ignored.\n\n"
     )
