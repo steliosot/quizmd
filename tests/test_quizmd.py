@@ -445,7 +445,7 @@ class QuizMarkdownTests(unittest.TestCase):
             with patch("quizmd.prompt_input", return_value=""):
                 with patch("quizmd.collect_essay_answer_via_editor", return_value="student answer"):
                     with patch("quizmd.evaluate_essay_with_gemini", return_value=fake_grade):
-                        with patch("quizmd.ask_to_save_answers", return_value=False):
+                        with patch("quizmd.ask_yes_no", return_value=False):
                             with patch("quizmd.evaluate_essay_with_loading", return_value=fake_grade):
                                 with patch("rich.console.Console.print"):
                                     run_essay(essay, no_color=True)

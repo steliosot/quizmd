@@ -586,8 +586,12 @@ def next_attempt_dir(quiz_title: str) -> Path:
 
 
 def ask_to_save_answers() -> bool:
+    return ask_yes_no("Do you want to save your answers? [y/n]: ")
+
+
+def ask_yes_no(prompt: str) -> bool:
     while True:
-        choice = prompt_input("Do you want to save your answers? [y/n]: ").strip().lower()
+        choice = prompt_input(prompt).strip().lower()
         if choice in {"y", "yes"}:
             return True
         if choice in {"n", "no"}:
@@ -1469,7 +1473,6 @@ def run_essay(
         f"## Question\n\n{question}\n\n"
         f"## Instructions\n\n{instructions}\n\n"
         f"## Hint\n\n{hint_text}\n\n"
-        f"{_rubric_markdown(essay['criteria'])}\n\n"
         f"**✓ Press Enter to open your editor and write your answer.**"
     )
 
@@ -1531,6 +1534,16 @@ def run_essay(
                 border_style=theme["panel"],
             )
         )
+
+        if ask_yes_no("Do you want to see the rubric? [y/n]: "):
+            rubric_markdown = _rubric_markdown(essay["criteria"])
+            console.print(
+                Panel(
+                    Markdown(rubric_markdown, code_theme="monokai"),
+                    title=f"[bold {theme['primary']}]Rubric[/bold {theme['primary']}]",
+                    border_style=theme["panel"],
+                )
+            )
 
         payload = {
             "mode": "essay",
