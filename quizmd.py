@@ -70,6 +70,10 @@ def _is_light_terminal() -> bool:
 
 
 def select_theme(name: str = "auto") -> dict:
+    env_theme = os.environ.get("QUIZMD_THEME", "").strip().lower()
+    if env_theme in THEMES:
+        return THEMES[env_theme]
+
     if name == "dark":
         return THEMES["dark"]
     if name == "light":
@@ -190,16 +194,23 @@ def parse_quiz_markdown(path: str):
         explanation = ""
 
         for l in lines[2:]:
-            if l.startswith("- "):
-                options.append(l[2:])
-            elif l.lower().startswith("answer:"):
-                answer = parse_int_list(l.split(":", 1)[1], "answer", title, source)
-            elif l.lower().startswith("type:"):
-                qtype = l.split(":", 1)[1].strip().lower()
-            elif l.lower().startswith("time:"):
-                time_limit = parse_int_value(l.split(":", 1)[1], "time", title, source)
-            elif l.lower().startswith("explanation:"):
-                explanation = l.split(":", 1)[1].strip()
+            stripped = l.strip()
+            if stripped.startswith("- "):
+                options.append(stripped[2:].strip())
+                continue
+
+            field_match = re.match(r"(?i)^(answer|type|time|explanation)\s*:\s*(.*)$", stripped)
+            if field_match:
+                key = field_match.group(1).lower()
+                value = field_match.group(2)
+                if key == "answer":
+                    answer = parse_int_list(value, "answer", title, source)
+                elif key == "type":
+                    qtype = value.strip().lower()
+                elif key == "time":
+                    time_limit = parse_int_value(value, "time", title, source)
+                else:
+                    explanation = value.strip()
             else:
                 raise ValueError(
                     f"{source}: unrecognized line {l!r} in question {title!r}. "
@@ -260,11 +271,18 @@ def next_attempt_dir(quiz_title: str) -> Path:
 
 def ask_to_save_answers() -> bool:
     while True:
-        choice = input("Do you want to save your answers? [y/n]: ").strip().lower()
+        choice = prompt_input("Do you want to save your answers? [y/n]: ").strip().lower()
         if choice in {"y", "yes"}:
             return True
         if choice in {"n", "no"}:
             return False
+
+
+def prompt_input(prompt: str = "") -> str:
+    try:
+        return input(prompt)
+    except EOFError as exc:
+        raise RuntimeError("Interactive input is not available in this environment.") from exc
 
 
 def save_attempt(quiz_title: str, score: int, questions: list[dict], answers: list[dict]) -> Path:
@@ -431,6 +449,34 @@ async def ask_question(q, theme):
     return ans == q["correct"], ans
 
 
+def run_coroutine_sync(coro):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    result = {"value": None, "error": None}
+
+    def _runner():
+        loop = asyncio.new_event_loop()
+        try:
+            result["value"] = loop.run_until_complete(coro)
+        except Exception as exc:  # pragma: no cover - re-raised in caller thread
+            result["error"] = exc
+        finally:
+            loop.close()
+
+    import threading
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join()
+
+    if result["error"] is not None:
+        raise result["error"]
+    return result["value"]
+
+
 def format_labels(options: list[str], indexes: list[int] | None) -> str:
     if not indexes:
         return ""
@@ -469,7 +515,7 @@ def run(title, questions, theme_name: str = "auto"):
                 border_style="cyan"
             )
         )
-        input()
+        prompt_input()
 
         score = 0
 
@@ -477,7 +523,7 @@ def run(title, questions, theme_name: str = "auto"):
             
             console.print(Panel(q["question"]))
 
-            correct, ans = asyncio.run(ask_question(q, theme))
+            correct, ans = run_coroutine_sync(ask_question(q, theme))
 
             selected_labels = format_labels(q["options"], ans)
             correct_labels = format_labels(q["options"], q["correct"])
@@ -502,7 +548,7 @@ def run(title, questions, theme_name: str = "auto"):
                 "explanation": q.get("explanation", ""),
             })
 
-            input("Press Enter for the next question...")
+            prompt_input("Press Enter for the next question...")
             
         console.print(Panel(f"[bold cyan]Final Score: {score}/{len(questions)}[/bold cyan]"))
 
@@ -551,12 +597,19 @@ def main():
     except ValueError as exc:
         print(f"Validation failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
+    except OSError as exc:
+        print(f"File error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
 
     if args.validate:
         print(f"Validation passed: {title} ({len(questions)} questions)")
         return
 
-    run(title, questions, theme_name=args.theme)
+    try:
+        run(title, questions, theme_name=args.theme)
+    except RuntimeError as exc:
+        print(f"Runtime error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":

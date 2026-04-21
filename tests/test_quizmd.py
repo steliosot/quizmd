@@ -2,6 +2,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from quizmd import (
@@ -11,6 +12,9 @@ from quizmd import (
     parse_int_list,
     parse_int_value,
     parse_quiz_markdown,
+    prompt_input,
+    run_coroutine_sync,
+    select_theme,
     slugify,
 )
 
@@ -86,6 +90,16 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("Validation failed", result.stderr)
 
         Path(quiz_path).unlink()
+
+    def test_validate_cli_fails_with_missing_file(self):
+        result = subprocess.run(
+            [sys.executable, "quizmd.py", "--validate", "quizzes/does-not-exist.md"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("File error", result.stderr)
 
     def test_invalid_answer_value_raises_clear_error(self):
         quiz_path = self.write_quiz(
@@ -298,6 +312,23 @@ class QuizMarkdownTests(unittest.TestCase):
 
         Path(quiz_path).unlink()
 
+    def test_parser_accepts_indented_options_and_spaced_fields(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "   - A\n"
+            "   - B\n\n"
+            "Answer : 2\n"
+            "Type : single\n"
+            "Time : 10\n"
+        )
+        _, questions = parse_quiz_markdown(quiz_path)
+        self.assertEqual(questions[0]["correct"], [2])
+        self.assertEqual(questions[0]["type"], "single")
+        self.assertEqual(questions[0]["time_limit"], 10)
+        Path(quiz_path).unlink()
+
     def test_blank_explanation_is_allowed(self):
         quiz_path = self.write_quiz(
             "# Test Quiz\n\n"
@@ -322,12 +353,32 @@ class QuizMarkdownTests(unittest.TestCase):
         value = parse_int_value(" 25 ", "time", "Q1", source)
         self.assertEqual(value, 25)
 
+    def test_prompt_input_raises_runtime_error_on_eof(self):
+        with patch("builtins.input", side_effect=EOFError):
+            with self.assertRaisesRegex(RuntimeError, "Interactive input is not available"):
+                prompt_input("Enter: ")
+
+    def test_run_coroutine_sync_with_running_loop(self):
+        async def inner():
+            return run_coroutine_sync(self._example_coro())
+
+        result = run_coroutine_sync(inner())
+        self.assertEqual(result, "ok")
+
+    async def _example_coro(self):
+        return "ok"
+
     def test_slugify_and_format_labels_helpers(self):
         self.assertEqual(slugify("  Data Science Quiz! "), "data-science-quiz")
         self.assertEqual(slugify("###"), "quiz")
         labels = format_labels(["A", "B", "C"], [1, 3])
         self.assertEqual(labels, "1. A; 3. C")
         self.assertEqual(format_labels(["A"], None), "")
+
+    def test_select_theme_uses_env_override(self):
+        with patch.dict("os.environ", {"QUIZMD_THEME": "light"}, clear=False):
+            theme = select_theme("auto")
+            self.assertEqual(theme["pt_title"], THEMES["light"]["pt_title"])
 
     def test_build_question_markup_escapes_special_characters(self):
         question = {

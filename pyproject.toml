@@ -13,8 +13,8 @@ authors = [
   { name = "QuizMD Maintainers" }
 ]
 dependencies = [
-  "rich>=13.7.0",
-  "prompt_toolkit>=3.0.36"
+  "rich==13.7.0",
+  "prompt_toolkit==3.0.36"
 ]
 keywords = ["quiz", "markdown", "education", "cli"]
 classifiers = [

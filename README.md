@@ -4,7 +4,7 @@
 
 ## Install
 
-Install directly from GitHub:
+Install the tool directly from GitHub:
 
 ```bash
 pip install "git+https://github.com/steliosot/quizmd.git"
@@ -21,6 +21,17 @@ If you already installed it and want the latest updates:
 ```bash
 pip install --upgrade --force-reinstall "git+https://github.com/steliosot/quizmd.git"
 ```
+
+Add it to `requirements.txt` if you want teammates/students to install from GitHub:
+
+```txt
+git+https://github.com/steliosot/quizmd.git
+```
+
+## Install vs Examples
+
+- `pip install ...` installs the `quizmd` command.
+- `git clone ...` downloads this repository so you can use the bundled example quizzes.
 
 ## Run a Quiz
 
@@ -44,6 +55,24 @@ Theme options for better readability on light or dark terminals:
 quizmd --theme auto quizzes/harry-potter-quiz.md
 quizmd --theme light quizzes/harry-potter-quiz.md
 quizmd --theme dark quizzes/harry-potter-quiz.md
+```
+
+## Windows Setup Notes
+
+Create and activate a virtual environment on Windows:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+```
+
+Install and run:
+
+```powershell
+pip install "git+https://github.com/steliosot/quizmd.git"
+quizmd --version
+quizmd --validate .\quizzes\harry-potter-quiz.md
+quizmd .\quizzes\harry-potter-quiz.md
 ```
 
 ## Example Quizzes Included
@@ -114,6 +143,22 @@ quizmd my-quiz.md
 - `unsupported question type`
 - `unexpected content outside question blocks`
 - `no valid questions found`
+
+## Student End-to-End Check (Clean Environment)
+
+Use these exact steps before class to confirm everything works:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install "git+https://github.com/steliosot/quizmd.git"
+quizmd --version
+git clone https://github.com/steliosot/quizmd.git
+cd quizmd
+quizmd --validate quizzes/harry-potter-quiz.md
+quizmd quizzes/harry-potter-quiz.md
+```
 
 ## Development
 
