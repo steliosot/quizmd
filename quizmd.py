@@ -24,7 +24,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.0.0"
+__version__ = "2.0.2"
 DEFAULT_AI_PROVIDER = "gemini"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 GEMINI_REQUESTS_PER_MINUTE = 15
@@ -703,6 +703,76 @@ def _extract_json_object(text: str) -> dict:
         return json.loads(stripped[start : end + 1])
 
 
+def _coerce_text_list(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else []
+    if isinstance(value, (list, tuple)):
+        items = [str(item).strip() for item in value if str(item).strip()]
+        return items
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def _normalize_gemini_grade(raw_grade, expected_total_points: int) -> dict:
+    if isinstance(raw_grade, list):
+        if len(raw_grade) == 1 and isinstance(raw_grade[0], dict):
+            raw_grade = raw_grade[0]
+        else:
+            raise ValueError("Gemini JSON returned a list instead of a single object")
+    if not isinstance(raw_grade, dict):
+        raise ValueError("Gemini JSON must be an object")
+
+    required_keys = {
+        "points_awarded",
+        "total_points",
+        "score_percent",
+        "did_well",
+        "missing",
+        "suggestions",
+    }
+    missing_keys = sorted(required_keys - set(raw_grade.keys()))
+    if missing_keys:
+        raise ValueError(f"Gemini JSON missing key(s): {', '.join(missing_keys)}")
+
+    try:
+        graded_total = int(raw_grade["total_points"])
+        points_awarded = float(raw_grade["points_awarded"])
+        score_percent = float(raw_grade["score_percent"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Gemini JSON has invalid numeric values") from exc
+
+    if graded_total != expected_total_points:
+        raise ValueError(
+            f"Gemini JSON total_points={graded_total} does not match rubric total={expected_total_points}"
+        )
+    if points_awarded < 0 or points_awarded > graded_total:
+        raise ValueError("Gemini JSON points_awarded is out of valid range")
+
+    expected_percent = (points_awarded / graded_total) * 100 if graded_total else 0.0
+    if abs(expected_percent - score_percent) > 0.5:
+        score_percent = expected_percent
+
+    did_well = _coerce_text_list(raw_grade.get("did_well"))[:5]
+    missing = _coerce_text_list(raw_grade.get("missing"))[:5]
+    suggestions = _coerce_text_list(raw_grade.get("suggestions"))[:3]
+    if not suggestions:
+        suggestions = ["Strengthen your answer by explicitly covering each rubric criterion."]
+
+    return {
+        "points_awarded": points_awarded,
+        "total_points": graded_total,
+        "score_percent": score_percent,
+        "did_well": did_well,
+        "missing": missing,
+        "suggestions": suggestions,
+        "ai_unavailable": False,
+        "ai_error": "",
+        "ai_reason": "none",
+    }
+
+
 def _rubric_lines(criteria: list[dict]) -> list[str]:
     lines = []
     for idx, item in enumerate(criteria, start=1):
@@ -760,6 +830,7 @@ def evaluate_essay_with_gemini(
     endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
     last_error = None
+    reason_code = "unknown_error"
     for attempt in range(max_retries + 1):
         _wait_for_gemini_window()
         request = urllib.request.Request(
@@ -783,49 +854,7 @@ def evaluate_essay_with_gemini(
                 if not text.strip():
                     raise ValueError("Gemini response did not contain text output")
                 graded = _extract_json_object(text)
-                if isinstance(graded, list):
-                    if len(graded) == 1 and isinstance(graded[0], dict):
-                        graded = graded[0]
-                    else:
-                        raise ValueError("Gemini JSON returned a list instead of an object")
-                if not isinstance(graded, dict):
-                    raise ValueError("Gemini JSON must be an object")
-                required_keys = {
-                    "points_awarded",
-                    "total_points",
-                    "score_percent",
-                    "did_well",
-                    "missing",
-                    "suggestions",
-                }
-                missing_keys = sorted(required_keys - set(graded.keys()))
-                if missing_keys:
-                    raise ValueError(f"Gemini JSON missing key(s): {', '.join(missing_keys)}")
-
-                graded_total = int(graded["total_points"])
-                if graded_total != int(essay["total_points"]):
-                    raise ValueError(
-                        f"Gemini JSON total_points={graded_total} does not match rubric total={essay['total_points']}"
-                    )
-
-                points_awarded = float(graded["points_awarded"])
-                score_percent = float(graded["score_percent"])
-                if points_awarded < 0 or points_awarded > graded_total:
-                    raise ValueError("Gemini JSON points_awarded is out of valid range")
-                expected_percent = (points_awarded / graded_total) * 100 if graded_total else 0.0
-                if abs(expected_percent - score_percent) > 0.5:
-                    score_percent = expected_percent
-
-                return {
-                    "points_awarded": points_awarded,
-                    "total_points": graded_total,
-                    "score_percent": score_percent,
-                    "did_well": [str(x) for x in graded.get("did_well", [])][:5],
-                    "missing": [str(x) for x in graded.get("missing", [])][:5],
-                    "suggestions": [str(x) for x in graded.get("suggestions", [])][:3],
-                    "ai_unavailable": False,
-                    "ai_error": "",
-                }
+                return _normalize_gemini_grade(graded, int(essay["total_points"]))
         except Exception as exc:  # network/parser/HTTP handling
             if isinstance(exc, KeyboardInterrupt):
                 raise
@@ -833,18 +862,39 @@ def evaluate_essay_with_gemini(
             code = getattr(exc, "code", None)
             if isinstance(code, int):
                 retryable = code == 429 or 500 <= code < 600
+                if code == 429:
+                    reason_code = "rate_limit"
+                elif code == 404:
+                    reason_code = "not_found"
+                elif 500 <= code < 600:
+                    reason_code = "server_error"
+                else:
+                    reason_code = "http_error"
             else:
                 retryable = isinstance(exc, (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError))
+                if isinstance(exc, TimeoutError):
+                    reason_code = "timeout"
+                elif isinstance(exc, urllib.error.URLError):
+                    reason_code = "network_error"
+                elif isinstance(exc, (ValueError, json.JSONDecodeError)):
+                    reason_code = "invalid_response"
+                else:
+                    reason_code = "unknown_error"
 
         if attempt >= max_retries or not retryable:
             break
         sleep_seconds = (2 ** attempt) + random.uniform(0.1, 0.35)
         time.sleep(sleep_seconds)
 
-    raise RuntimeError(f"Gemini evaluation failed after retries: {last_error}")
+    raise RuntimeError(f"[{reason_code}] Gemini evaluation failed after retries: {last_error}")
 
 
-def evaluate_essay_deterministic_fallback(essay: dict, student_answer: str, error_message: str) -> dict:
+def evaluate_essay_deterministic_fallback(
+    essay: dict,
+    student_answer: str,
+    error_message: str,
+    reason_code: str = "unknown_error",
+) -> dict:
     normalized_answer = re.sub(r"\s+", " ", student_answer.lower()).strip()
     did_well = []
     missing = []
@@ -888,13 +938,22 @@ def evaluate_essay_deterministic_fallback(essay: dict, student_answer: str, erro
         "suggestions": suggestions[:2],
         "ai_unavailable": True,
         "ai_error": error_message,
+        "ai_reason": reason_code,
     }
 
 
 def collect_essay_answer_via_editor(question_title: str) -> str:
-    editor = os.environ.get("EDITOR")
+    editor = (os.environ.get("EDITOR") or "").strip()
     if not editor:
-        editor = "notepad" if os.name == "nt" else "vi"
+        if os.name == "nt":
+            if ask_yes_no("No EDITOR is configured. Open Notepad now? [y/n]: "):
+                editor = "notepad"
+            else:
+                raise RuntimeError(
+                    "No editor configured on Windows. Set EDITOR or choose Notepad when prompted."
+                )
+        else:
+            editor = "vi"
 
     template = (
         f"# {question_title}\n"
@@ -910,7 +969,20 @@ def collect_essay_answer_via_editor(question_title: str) -> str:
 
     try:
         command = shlex.split(editor) + [str(temp_path)]
-        subprocess.run(command, check=True)
+        try:
+            subprocess.run(command, check=True)
+        except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+            if os.name == "nt" and editor.lower() != "notepad":
+                if ask_yes_no(f"Could not open '{editor}'. Open Notepad instead? [y/n]: "):
+                    subprocess.run(["notepad", str(temp_path)], check=True)
+                else:
+                    raise RuntimeError(
+                        f"Could not launch editor '{editor}'. Set EDITOR to a valid command."
+                    ) from exc
+            else:
+                raise RuntimeError(
+                    f"Could not launch editor '{editor}'. Set EDITOR to a valid command."
+                ) from exc
         content = temp_path.read_text(encoding="utf-8")
         cleaned_lines = [line for line in content.splitlines() if not line.strip().startswith("#")]
         answer = "\n".join(cleaned_lines).strip()
@@ -1505,7 +1577,16 @@ def run_essay(
                 timeout=ai_timeout,
             )
         except RuntimeError as exc:
-            grade = evaluate_essay_deterministic_fallback(essay, student_answer, str(exc))
+            fallback_reason = "unknown_error"
+            fallback_message = str(exc)
+            if fallback_message.startswith("[") and "]" in fallback_message:
+                fallback_reason = fallback_message[1 : fallback_message.index("]")]
+            grade = evaluate_essay_deterministic_fallback(
+                essay,
+                student_answer,
+                fallback_message,
+                reason_code=fallback_reason,
+            )
 
         if grade["score_percent"] is None:
             score_text = "N/A (AI unavailable)"
@@ -1523,8 +1604,21 @@ def run_essay(
             feedback_lines.append("- Feedback unavailable.")
 
         if grade["ai_unavailable"]:
+            reason_labels = {
+                "rate_limit": "rate limit reached",
+                "not_found": "model or endpoint not found",
+                "server_error": "provider server error",
+                "http_error": "HTTP error",
+                "timeout": "request timeout",
+                "network_error": "network error",
+                "invalid_response": "unexpected model response shape",
+                "unknown_error": "unknown error",
+            }
+            reason_label = reason_labels.get(grade.get("ai_reason", ""), "unknown error")
             feedback_lines.append("")
-            feedback_lines.append(f"- Note: AI unavailable, deterministic fallback used ({grade['ai_error']}).")
+            feedback_lines.append(
+                f"- Note: AI unavailable ({reason_label}); deterministic fallback used."
+            )
 
         console.print(
             Panel(
@@ -1558,6 +1652,7 @@ def run_essay(
             "suggestions": grade["suggestions"],
             "ai_unavailable": grade["ai_unavailable"],
             "ai_error": grade["ai_error"],
+            "ai_reason": grade.get("ai_reason", "none"),
             "ai_provider": ai_provider,
             "ai_model": ai_model,
         }

@@ -272,6 +272,41 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(answer, "Line 1\nLine 2")
         self.assertIn(":wq!", seen_template["value"])
 
+    def test_collect_essay_answer_windows_notepad_prompt(self):
+        def fake_editor(cmd, check):
+            Path(cmd[-1]).write_text("Windows answer\n", encoding="utf-8")
+
+        with patch("quizmd.os.name", "nt"):
+            with patch.dict("os.environ", {}, clear=True):
+                with patch("quizmd.ask_yes_no", return_value=True):
+                    with patch("subprocess.run", side_effect=fake_editor):
+                        answer = collect_essay_answer_via_editor("Sample")
+        self.assertEqual(answer, "Windows answer")
+
+    def test_collect_essay_answer_windows_notepad_prompt_declined(self):
+        with patch("quizmd.os.name", "nt"):
+            with patch.dict("os.environ", {}, clear=True):
+                with patch("quizmd.ask_yes_no", return_value=False):
+                    with self.assertRaisesRegex(RuntimeError, "No editor configured on Windows"):
+                        collect_essay_answer_via_editor("Sample")
+
+    def test_collect_essay_answer_windows_fallback_when_editor_fails(self):
+        calls = {"n": 0}
+
+        def flaky_editor(cmd, check):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise FileNotFoundError("missing")
+            Path(cmd[-1]).write_text("Recovered answer\n", encoding="utf-8")
+
+        with patch("quizmd.os.name", "nt"):
+            with patch.dict("os.environ", {"EDITOR": "missing-editor"}, clear=False):
+                with patch("quizmd.ask_yes_no", return_value=True):
+                    with patch("subprocess.run", side_effect=flaky_editor):
+                        answer = collect_essay_answer_via_editor("Sample")
+        self.assertEqual(answer, "Recovered answer")
+        self.assertGreaterEqual(calls["n"], 2)
+
     def test_gemini_evaluation_success(self):
         essay = {
             "question": "Q",
@@ -357,6 +392,39 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(result["total_points"], 1)
         self.assertGreaterEqual(calls["n"], 2)
 
+    def test_gemini_normalizes_single_item_list_response(self):
+        essay = {
+            "question": "Q",
+            "criteria": [{"name": "A", "points": 1, "details": ["x"]}],
+            "total_points": 1,
+            "reference_answer": "R",
+            "ai_evaluation_rules": "Rules",
+        }
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                return False
+            def read(self):
+                model_json = [{
+                    "points_awarded": 1,
+                    "total_points": 1,
+                    "score_percent": 99.0,
+                    "did_well": "good coverage",
+                    "missing": None,
+                    "suggestions": ("be concise",),
+                }]
+                payload = {"candidates": [{"content": {"parts": [{"text": json.dumps(model_json)}]}}]}
+                return json.dumps(payload).encode("utf-8")
+
+        with patch("urllib.request.urlopen", return_value=FakeResponse()):
+            result = evaluate_essay_with_gemini(essay, "student", "k", "gemini-1.5-flash", 5, max_retries=0)
+        self.assertEqual(result["total_points"], 1)
+        self.assertEqual(result["did_well"], ["good coverage"])
+        self.assertEqual(result["missing"], [])
+        self.assertEqual(result["suggestions"], ["be concise"])
+
     def test_gemini_retry_exhaustion_raises(self):
         essay = {
             "question": "Q",
@@ -387,9 +455,11 @@ class QuizMarkdownTests(unittest.TestCase):
             essay,
             "Different versions conflict in projects.",
             "network down",
+            reason_code="network_error",
         )
         self.assertIsNone(result["score_percent"])
         self.assertTrue(result["ai_unavailable"])
+        self.assertEqual(result["ai_reason"], "network_error")
 
     def test_run_essay_missing_api_key_fails(self):
         essay = {
@@ -440,6 +510,7 @@ class QuizMarkdownTests(unittest.TestCase):
             "suggestions": ["Great"],
             "ai_unavailable": False,
             "ai_error": "",
+            "ai_reason": "none",
         }
         with patch.dict("os.environ", {"GEMINI_API_KEY": "k"}, clear=True):
             with patch("quizmd.prompt_input", return_value=""):
@@ -464,6 +535,7 @@ class QuizMarkdownTests(unittest.TestCase):
             "suggestions": ["z"],
             "ai_unavailable": False,
             "ai_error": "",
+            "ai_reason": "none",
             "ai_provider": "gemini",
             "ai_model": "gemini-1.5-flash",
         }
