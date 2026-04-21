@@ -333,6 +333,27 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(questions[0]["time_limit"], 10)
         Path(quiz_path).unlink()
 
+    def test_parser_accepts_multiline_question_with_code_fence(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "What is the time complexity of this code?\n"
+            "```python\n"
+            "for i in items:\n"
+            "    print(i)\n"
+            "```\n\n"
+            "- O(1)\n"
+            "- O(n)\n"
+            "- O(n^2)\n\n"
+            "Answer: 2\n"
+            "Type: single\n"
+        )
+        _, questions = parse_quiz_markdown(quiz_path)
+        self.assertIn("```python", questions[0]["question"])
+        self.assertIn("for i in items:", questions[0]["question"])
+        self.assertEqual(questions[0]["correct"], [2])
+        Path(quiz_path).unlink()
+
     def test_blank_explanation_is_allowed(self):
         quiz_path = self.write_quiz(
             "# Test Quiz\n\n"
@@ -563,6 +584,30 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("ansiyellow", normal)
         self.assertIn("ansimagenta", warning)
         self.assertIn("ansired", danger)
+
+    def test_build_question_markup_handles_multiline_question_box(self):
+        question = {
+            "title": "Question 1",
+            "question": "Line one\n```python\nprint('x')\n```",
+            "options": ["A", "B"],
+            "correct": [1],
+            "type": "single",
+            "time_limit": 10,
+            "explanation": "",
+        }
+        markup = build_question_markup(
+            question,
+            THEMES["dark"],
+            selected=0,
+            marked=set(),
+            remaining=10,
+            is_multiple=False,
+            question_index=1,
+            total_questions=2,
+        )
+        self.assertIn("┌", markup)
+        self.assertIn("└", markup)
+        self.assertIn("print", markup)
 
 
 if __name__ == "__main__":

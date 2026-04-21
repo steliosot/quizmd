@@ -181,7 +181,7 @@ def parse_quiz_markdown(path: str):
         if not block:
             continue
 
-        lines = [l for l in block.splitlines() if l.strip()]
+        lines = block.splitlines()
         if len(lines) < 2:
             if lines and not lines[0].startswith("# "):
                 raise ValueError(
@@ -189,8 +189,38 @@ def parse_quiz_markdown(path: str):
                 )
             continue
 
-        title = lines[0]
-        question = lines[1]
+        title = lines[0].strip()
+        body_lines = lines[1:]
+
+        question_lines = []
+        metadata_lines = []
+        in_code_fence = False
+        found_metadata = False
+
+        for raw_line in body_lines:
+            stripped = raw_line.strip()
+            if stripped.startswith("```"):
+                in_code_fence = not in_code_fence
+
+            is_metadata_or_option = (
+                not in_code_fence
+                and (
+                    stripped.startswith("- ")
+                    or re.match(r"(?i)^(answer|type|time|explanation)\s*:", stripped) is not None
+                )
+            )
+
+            if found_metadata or is_metadata_or_option:
+                found_metadata = True
+                metadata_lines.append(raw_line)
+            else:
+                question_lines.append(raw_line)
+
+        question = "\n".join(question_lines).strip()
+        if not question:
+            raise ValueError(
+                f"{source}: malformed question block {title!r} is missing the question text line"
+            )
 
         options = []
         answer = []
@@ -198,8 +228,10 @@ def parse_quiz_markdown(path: str):
         time_limit = None
         explanation = ""
 
-        for l in lines[2:]:
+        for l in metadata_lines:
             stripped = l.strip()
+            if not stripped:
+                continue
             if stripped.startswith("- "):
                 options.append(stripped[2:].strip())
                 continue
@@ -370,12 +402,14 @@ def build_question_markup(
         elif remaining < 10:
             timer_color = theme["pt_timer_warning"]
 
-    question_body = render_inline_markdown_for_prompt_toolkit(q["question"])
-    question_visible = html.unescape(strip_prompt_toolkit_tags(question_body))
-    question_width = max(40, display_width(question_visible))
-    question_padding = " " * max(0, question_width - display_width(question_visible))
+    question_body_lines = [
+        render_inline_markdown_for_prompt_toolkit(line) for line in q["question"].splitlines()
+    ]
+    visible_widths = [
+        display_width(html.unescape(strip_prompt_toolkit_tags(line))) for line in question_body_lines
+    ] or [0]
+    question_width = max(40, max(visible_widths))
     question_box_top = "┌" + ("─" * (question_width + 2)) + "┐"
-    question_box_mid = f"│ {question_body}{question_padding} │"
     question_box_bot = "└" + ("─" * (question_width + 2)) + "┘"
 
     lines = [
@@ -383,14 +417,19 @@ def build_question_markup(
         + (f"  <style fg='{timer_color}'>⏱ {remaining}s</style>" if remaining is not None else ""),
         "",
         f"<style fg='{theme['pt_title']}'>{question_box_top}</style>",
-        f"<style fg='{theme['pt_title']}'>{question_box_mid}</style>",
+    ]
+    for i, line in enumerate(question_body_lines or [""]):
+        visible = html.unescape(strip_prompt_toolkit_tags(line))
+        padding = " " * max(0, question_width - display_width(visible))
+        lines.append(f"<style fg='{theme['pt_title']}'>│ {line}{padding} │</style>")
+    lines.extend([
         f"<style fg='{theme['pt_title']}'>{question_box_bot}</style>",
         "",
         f"<style fg='{theme['pt_instruction']}'><i>{html.escape(instruction)}</i></style>",
         "",
         f"<style fg='{theme['pt_instruction']}'>──────── Choices ────────</style>",
         "",
-    ]
+    ])
 
     for i, opt in enumerate(q["options"]):
         idx = i + 1
