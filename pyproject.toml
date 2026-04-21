@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quizmd"
+version = "0.1.0"
+description = "Run markdown quizzes in the terminal"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "QuizMD Maintainers" }
+]
+dependencies = [
+  "rich>=13.7.0",
+  "prompt_toolkit>=3.0.36"
+]
+keywords = ["quiz", "markdown", "education", "cli"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "License :: OSI Approved :: MIT License",
+  "Environment :: Console",
+  "Intended Audience :: Education"
+]
+
+[project.scripts]
+quizmd = "quizmd:main"
+
+[tool.setuptools]
+py-modules = ["quizmd"]

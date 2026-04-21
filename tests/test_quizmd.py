@@ -1,0 +1,357 @@
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+from quizmd import (
+    THEMES,
+    build_question_markup,
+    format_labels,
+    parse_int_list,
+    parse_int_value,
+    parse_quiz_markdown,
+    slugify,
+)
+
+
+QUIZ_DIR = Path("quizzes")
+
+
+class QuizMarkdownTests(unittest.TestCase):
+    def write_quiz(self, content: str) -> str:
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as handle:
+            handle.write(content)
+            return handle.name
+
+    def test_parse_sample_quiz(self):
+        title, questions = parse_quiz_markdown("quizzes/harry-potter-quiz.md")
+        self.assertEqual(title, "🦉 Harry Potter Quiz")
+        self.assertEqual(len(questions), 10)
+        self.assertEqual(questions[0]["correct"], [2])
+        self.assertEqual(questions[5]["type"], "multiple")
+
+    def test_parse_all_quizzes_in_repository(self):
+        quiz_files = sorted(QUIZ_DIR.glob("*.md"))
+        self.assertGreaterEqual(len(quiz_files), 6)
+
+        for quiz_file in quiz_files:
+            with self.subTest(quiz=str(quiz_file)):
+                title, questions = parse_quiz_markdown(str(quiz_file))
+                self.assertTrue(title.strip())
+                self.assertGreaterEqual(len(questions), 5)
+                for question in questions:
+                    self.assertTrue(question["title"].strip())
+                    self.assertTrue(question["question"].strip())
+                    self.assertGreaterEqual(len(question["options"]), 2)
+                    self.assertIn(question["type"], {"single", "multiple"})
+                    self.assertGreaterEqual(len(question["correct"]), 1)
+                    for idx in question["correct"]:
+                        self.assertTrue(1 <= idx <= len(question["options"]))
+                    if question["time_limit"] is not None:
+                        self.assertGreater(question["time_limit"], 0)
+
+    def test_validate_cli_passes_for_all_quizzes(self):
+        quiz_files = sorted(QUIZ_DIR.glob("*.md"))
+        self.assertTrue(quiz_files)
+
+        for quiz_file in quiz_files:
+            with self.subTest(quiz=str(quiz_file)):
+                result = subprocess.run(
+                    [sys.executable, "quizmd.py", "--validate", str(quiz_file)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, msg=result.stderr)
+                self.assertIn("Validation passed", result.stdout)
+
+    def test_validate_cli_fails_for_invalid_quiz(self):
+        quiz_path = self.write_quiz(
+            "# Broken Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Type: single\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "quizmd.py", "--validate", quiz_path],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Validation failed", result.stderr)
+
+        Path(quiz_path).unlink()
+
+    def test_invalid_answer_value_raises_clear_error(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: one\n"
+            "Type: single\n"
+        )
+
+        with self.assertRaisesRegex(ValueError, "invalid answer value"):
+            parse_quiz_markdown(quiz_path)
+
+        Path(quiz_path).unlink()
+
+    def test_invalid_time_value_raises_clear_error(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1\n"
+            "Type: single\n"
+            "Time: soon\n"
+        )
+
+        with self.assertRaisesRegex(ValueError, "invalid time value"):
+            parse_quiz_markdown(quiz_path)
+
+        Path(quiz_path).unlink()
+
+    def test_zero_or_negative_time_value_raises_clear_error(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1\n"
+            "Type: single\n"
+            "Time: 0\n"
+        )
+
+        with self.assertRaisesRegex(ValueError, "time limit must be greater than zero"):
+            parse_quiz_markdown(quiz_path)
+
+        Path(quiz_path).unlink()
+
+    def test_out_of_range_answer_raises_clear_error(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 3\n"
+            "Type: single\n"
+        )
+
+        with self.assertRaisesRegex(ValueError, "out of range"):
+            parse_quiz_markdown(quiz_path)
+
+        Path(quiz_path).unlink()
+
+    def test_missing_answer_raises_clear_error(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Type: single\n"
+        )
+
+        with self.assertRaisesRegex(ValueError, "missing required field\\(s\\): answer"):
+            parse_quiz_markdown(quiz_path)
+
+        Path(quiz_path).unlink()
+
+    def test_missing_options_raises_clear_error(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "Answer: 1\n"
+            "Type: single\n"
+        )
+
+        with self.assertRaisesRegex(ValueError, "missing required field\\(s\\): options"):
+            parse_quiz_markdown(quiz_path)
+
+        Path(quiz_path).unlink()
+
+    def test_missing_type_raises_clear_error(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1\n"
+        )
+
+        with self.assertRaisesRegex(ValueError, "missing required field\\(s\\): type"):
+            parse_quiz_markdown(quiz_path)
+
+        Path(quiz_path).unlink()
+
+    def test_invalid_type_raises_clear_error(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1\n"
+            "Type: essay\n"
+        )
+
+        with self.assertRaisesRegex(ValueError, "unsupported question type"):
+            parse_quiz_markdown(quiz_path)
+
+        Path(quiz_path).unlink()
+
+    def test_duplicate_answer_indexes_raise_clear_error(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1,1\n"
+            "Type: multiple\n"
+        )
+
+        with self.assertRaisesRegex(ValueError, "duplicate answer indexes"):
+            parse_quiz_markdown(quiz_path)
+
+        Path(quiz_path).unlink()
+
+    def test_single_choice_with_multiple_answers_is_rejected(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1,2\n"
+            "Type: single\n"
+        )
+
+        with self.assertRaisesRegex(ValueError, "must have exactly one answer"):
+            parse_quiz_markdown(quiz_path)
+
+        Path(quiz_path).unlink()
+
+    def test_no_questions_raises_clear_error(self):
+        quiz_path = self.write_quiz("# Empty Quiz\n")
+
+        with self.assertRaisesRegex(ValueError, "no valid questions found"):
+            parse_quiz_markdown(quiz_path)
+
+        Path(quiz_path).unlink()
+
+    def test_malformed_block_missing_question_text_raises_clear_error(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+        )
+
+        with self.assertRaisesRegex(ValueError, "missing the question text line"):
+            parse_quiz_markdown(quiz_path)
+
+        Path(quiz_path).unlink()
+
+    def test_unexpected_content_outside_question_blocks_raises_clear_error(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "This text should not be outside a question block.\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1\n"
+            "Type: single\n"
+        )
+
+        with self.assertRaisesRegex(ValueError, "unexpected content outside question blocks"):
+            parse_quiz_markdown(quiz_path)
+
+        Path(quiz_path).unlink()
+
+    def test_unrecognized_line_in_question_raises_clear_error(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Hint: this should not be allowed\n"
+            "Answer: 1\n"
+            "Type: single\n"
+        )
+
+        with self.assertRaisesRegex(ValueError, "unrecognized line"):
+            parse_quiz_markdown(quiz_path)
+
+        Path(quiz_path).unlink()
+
+    def test_blank_explanation_is_allowed(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1\n"
+            "Type: single\n"
+            "Explanation:   \n"
+        )
+
+        _, questions = parse_quiz_markdown(quiz_path)
+        self.assertEqual(questions[0]["explanation"], "")
+
+        Path(quiz_path).unlink()
+
+    def test_parse_int_helpers(self):
+        source = Path("dummy.md")
+        values = parse_int_list("1, 2,3", "answer", "Q1", source)
+        self.assertEqual(values, [1, 2, 3])
+        value = parse_int_value(" 25 ", "time", "Q1", source)
+        self.assertEqual(value, 25)
+
+    def test_slugify_and_format_labels_helpers(self):
+        self.assertEqual(slugify("  Data Science Quiz! "), "data-science-quiz")
+        self.assertEqual(slugify("###"), "quiz")
+        labels = format_labels(["A", "B", "C"], [1, 3])
+        self.assertEqual(labels, "1. A; 3. C")
+        self.assertEqual(format_labels(["A"], None), "")
+
+    def test_build_question_markup_escapes_special_characters(self):
+        question = {
+            "title": "Question <1>",
+            "question": "Is 2 < 3 & 4 > 1?",
+            "options": ["Yes & always", "No <never>"],
+            "correct": [1],
+            "type": "single",
+            "time_limit": 10,
+            "explanation": "",
+        }
+
+        markup = build_question_markup(
+            question,
+            THEMES["dark"],
+            selected=0,
+            marked=set(),
+            remaining=10,
+            is_multiple=False,
+        )
+
+        self.assertIn("Question &lt;1&gt;", str(markup))
+        self.assertIn("Is 2 &lt; 3 &amp; 4 &gt; 1?", str(markup))
+
+
+if __name__ == "__main__":
+    unittest.main()
