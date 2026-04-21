@@ -608,6 +608,7 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("┌", markup)
         self.assertIn("└", markup)
         self.assertIn("print", markup)
+        self.assertNotIn("```", markup)
 
 
 if __name__ == "__main__":
