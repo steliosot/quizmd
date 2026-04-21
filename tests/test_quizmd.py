@@ -16,6 +16,7 @@ from quizmd import (
     parse_quiz_markdown,
     prompt_input,
     run_coroutine_sync,
+    safe_for_stream,
     save_attempt,
     select_theme,
     slugify,
@@ -382,6 +383,13 @@ class QuizMarkdownTests(unittest.TestCase):
         with patch.dict("os.environ", {"QUIZMD_THEME": "light"}, clear=False):
             theme = select_theme("auto")
             self.assertEqual(theme["pt_title"], THEMES["light"]["pt_title"])
+
+    def test_safe_for_stream_handles_non_utf8_encodings(self):
+        class FakeStream:
+            encoding = "cp1252"
+
+        text = safe_for_stream("Validation passed: 🦉 Harry Potter Quiz", FakeStream())
+        self.assertIn("Validation passed:", text)
 
     def test_save_attempt_writes_json_and_text_outputs(self):
         questions = [

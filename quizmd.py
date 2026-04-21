@@ -477,6 +477,11 @@ def run_coroutine_sync(coro):
     return result["value"]
 
 
+def safe_for_stream(text: str, stream) -> str:
+    encoding = getattr(stream, "encoding", None) or "utf-8"
+    return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+
+
 def format_labels(options: list[str], indexes: list[int] | None) -> str:
     if not indexes:
         return ""
@@ -603,20 +608,20 @@ def main():
     try:
         title, questions = parse_quiz_markdown(args.file)
     except ValueError as exc:
-        print(f"Validation failed: {exc}", file=sys.stderr)
+        print(safe_for_stream(f"Validation failed: {exc}", sys.stderr), file=sys.stderr)
         raise SystemExit(1) from exc
     except OSError as exc:
-        print(f"File error: {exc}", file=sys.stderr)
+        print(safe_for_stream(f"File error: {exc}", sys.stderr), file=sys.stderr)
         raise SystemExit(1) from exc
 
     if args.validate:
-        print(f"Validation passed: {title} ({len(questions)} questions)")
+        print(safe_for_stream(f"Validation passed: {title} ({len(questions)} questions)", sys.stdout))
         return
 
     try:
         run(title, questions, theme_name=args.theme)
     except RuntimeError as exc:
-        print(f"Runtime error: {exc}", file=sys.stderr)
+        print(safe_for_stream(f"Runtime error: {exc}", sys.stderr), file=sys.stderr)
         raise SystemExit(1) from exc
 
 
