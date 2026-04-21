@@ -24,7 +24,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 DEFAULT_AI_PROVIDER = "gemini"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 GEMINI_REQUESTS_PER_MINUTE = 15

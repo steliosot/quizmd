@@ -36,7 +36,7 @@ from quizmd import (
 
 
 QUIZ_DIR = Path("quizzes")
-ESSAY_DIR = Path("ESSAYS")
+ESSAY_DIR = Path("essays")
 
 
 class QuizMarkdownTests(unittest.TestCase):

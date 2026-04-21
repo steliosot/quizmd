@@ -52,15 +52,15 @@ quizmd --validate quizzes/harry-potter-quiz.md
 Validate and run an essay quiz:
 
 ```bash
-quizmd --validate ESSAYS/requirements-txt-essay.md
+quizmd --validate essays/requirements-txt-essay.md
 export GEMINI_API_KEY="your_key_here"
-quizmd ESSAYS/requirements-txt-essay.md
+quizmd essays/requirements-txt-essay.md
 ```
 
 Optional AI settings for essay mode:
 
 ```bash
-quizmd --ai-provider gemini --ai-model gemini-1.5-flash --ai-timeout 30 ESSAYS/requirements-txt-essay.md
+quizmd --ai-provider gemini --ai-model gemini-flash-latest --ai-timeout 30 essays/requirements-txt-essay.md
 ```
 
 Security notes:
@@ -106,9 +106,9 @@ quizmd .\quizzes\harry-potter-quiz.md
 ## Essay Examples (LLM-Based)
 
 Essay files are separate and use Gemini evaluation:
-- `ESSAYS/requirements-txt-essay.md`
-- `ESSAYS/venv-essay.md`
-- `ESSAYS/pinned-versions-essay.md`
+- `essays/requirements-txt-essay.md`
+- `essays/venv-essay.md`
+- `essays/pinned-versions-essay.md`
 
 MCQ quizzes in `quizzes/` do not call LLMs and do not need `GEMINI_API_KEY`.
 
