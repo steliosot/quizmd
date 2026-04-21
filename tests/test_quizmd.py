@@ -52,6 +52,8 @@ class QuizMarkdownTests(unittest.TestCase):
             "What is requirements.txt?\n\n"
             "## Instructions for Students\n"
             "Write 5-10 lines.\n\n"
+            "## Instructor Name\n"
+            "Stelios\n\n"
             "## Evaluation Criteria (Total: 4 points)\n"
             "1. **Dependency problem (1 point)**\n"
             "- Different versions can conflict\n"
@@ -157,6 +159,7 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(title, "requirements.txt")
         self.assertEqual(essay["total_points"], 4)
         self.assertEqual(len(essay["criteria"]), 4)
+        self.assertEqual(essay["instructor_name"], "Stelios")
         Path(essay_path).unlink()
 
     def test_parse_essay_keeps_inline_code_and_code_fences(self):

@@ -9,6 +9,10 @@ Why is pinning package versions (for example `package==1.2.3`) important in `req
 Write a short answer (5-10 lines).
 Focus on reliability, debugging, and teamwork impacts.
 
+## Instructor Name
+
+Stelios
+
 ## Evaluation Criteria (Total: 4 points)
 
 1. **Deterministic environments (1 point)**

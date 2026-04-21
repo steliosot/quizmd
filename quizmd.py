@@ -510,6 +510,7 @@ def parse_essay_markdown(path: str) -> tuple[str, dict]:
     payload = {
         "mode": "essay",
         "title": title,
+        "instructor_name": section_map.get("Instructor Name", "").strip(),
         "question": section_map["Question"],
         "instructions": section_map["Instructions for Students"],
         "criteria": criteria,
@@ -777,6 +778,13 @@ def evaluate_essay_with_gemini(
                 if not text.strip():
                     raise ValueError("Gemini response did not contain text output")
                 graded = _extract_json_object(text)
+                if isinstance(graded, list):
+                    if len(graded) == 1 and isinstance(graded[0], dict):
+                        graded = graded[0]
+                    else:
+                        raise ValueError("Gemini JSON returned a list instead of an object")
+                if not isinstance(graded, dict):
+                    raise ValueError("Gemini JSON must be an object")
                 required_keys = {
                     "points_awarded",
                     "total_points",
@@ -922,6 +930,7 @@ def evaluate_essay_with_loading(console, theme: dict, evaluator, *args, **kwargs
 
     import threading
 
+    instructor_name = str(kwargs.pop("instructor_name", "")).strip()
     result: dict = {}
 
     def worker():
@@ -933,11 +942,12 @@ def evaluate_essay_with_loading(console, theme: dict, evaluator, *args, **kwargs
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
 
-    text = (
-        f"[{theme['accent']}]Wait, I am getting your feedback...[/]"
-        if not console.no_color
-        else "Wait, I am getting your feedback..."
-    )
+    if instructor_name:
+        message = f"Reviewing your answer using {instructor_name}'s rubric and guidance..."
+    else:
+        message = "Reviewing your answer using the rubric and guidance..."
+
+    text = f"[{theme['accent']}]{message}[/]" if not console.no_color else message
     with Progress(
         SpinnerColumn(),
         TextColumn("{task.description}"),
@@ -1481,6 +1491,7 @@ def run_essay(
                 console,
                 theme,
                 evaluate_essay_with_gemini,
+                instructor_name=essay.get("instructor_name", ""),
                 essay=essay,
                 student_answer=student_answer,
                 api_key=api_key,

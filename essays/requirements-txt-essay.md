@@ -15,29 +15,16 @@ Stelios
 
 ## Evaluation Criteria (Total: 4 points)
 
-1. **Dependency conflict problem (1 point)**
-- Different projects can require different versions of the same package
-- Version mismatches can break projects
-
-2. **Reproducibility (1 point)**
-- Team members can recreate the same environment
-- The project behaves consistently across machines
-
-3. **Collaboration benefit (1 point)**
-- Reduces setup friction between teammates
-- Avoids "works on my machine" issues
-
-4. **Version tracking (1 point)**
-- Encourages pinning versions
-- Helps debugging and long-term maintenance
+🤔 Hint: There are four points to discuss.
 
 ## Reference Answer
 
-`requirements.txt` lists project dependencies, often with pinned versions.
-It solves dependency conflicts because each project may need different library versions.
-By installing from the same file, team members and CI create the same environment.
-This improves reproducibility and collaboration.
-It also helps maintenance because exact versions are documented.
+The students need to reference all these 4 points.
+
+1. `requirements.txt` lists project dependencies, often with pinned versions.
+2. It solves dependency conflicts because each project may need different library versions.
+3. By installing from the same file, team members and CI create the same environment. This improves reproducibility and collaboration.
+4. It also helps maintenance because exact versions are documented.
 
 ## AI Evaluation Rules
 
