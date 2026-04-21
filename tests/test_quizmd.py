@@ -405,6 +405,16 @@ class QuizMarkdownTests(unittest.TestCase):
             theme = select_theme("auto")
             self.assertEqual(theme["pt_title"], THEMES["light"]["pt_title"])
 
+    def test_select_theme_uses_terminal_theme_hint(self):
+        with patch.dict("os.environ", {"TERMINAL_THEME": "Light"}, clear=False):
+            theme = select_theme("auto")
+            self.assertEqual(theme["pt_title"], THEMES["light"]["pt_title"])
+
+    def test_select_theme_uses_colorscheme_hint(self):
+        with patch.dict("os.environ", {"COLORSCHEME": "Dark Plus"}, clear=False):
+            theme = select_theme("auto")
+            self.assertEqual(theme["pt_title"], THEMES["dark"]["pt_title"])
+
     def test_safe_for_stream_handles_non_utf8_encodings(self):
         class FakeStream:
             encoding = "cp1252"

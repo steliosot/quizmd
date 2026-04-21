@@ -22,7 +22,7 @@ LOGO = r"""
 
 THEMES = {
     "dark": {
-        "primary": "ansicyan",
+        "primary": "cyan",
         "secondary": "magenta",
         "accent": "yellow",
         "success": "green",
@@ -40,12 +40,12 @@ THEMES = {
         "pt_marked_bg": "ansigreen",
     },
     "light": {
-        "primary": "ansiblue",
-        "secondary": "ansimagenta",
-        "accent": "ansiblue",
-        "success": "ansigreen",
-        "danger": "ansired",
-        "panel": "ansiblue",
+        "primary": "blue",
+        "secondary": "magenta",
+        "accent": "blue",
+        "success": "green",
+        "danger": "red",
+        "panel": "blue",
         "pt_primary": "black",
         "pt_title": "black",
         "pt_code": "ansiblue",
@@ -75,6 +75,24 @@ def _is_light_terminal() -> bool:
     return bg >= 7
 
 
+def _theme_hint_from_env() -> str | None:
+    """Best-effort theme detection from common terminal/editor environment hints."""
+    candidates = [
+        os.environ.get("TERMINAL_THEME", ""),
+        os.environ.get("COLORSCHEME", ""),
+        os.environ.get("ITERM_PROFILE", ""),
+    ]
+    joined = " ".join(candidates).strip().lower()
+    if not joined:
+        return None
+
+    if any(token in joined for token in ("light", "day", "solarized light", "latte")):
+        return "light"
+    if any(token in joined for token in ("dark", "night", "solarized dark", "mocha")):
+        return "dark"
+    return None
+
+
 def select_theme(name: str = "auto") -> dict:
     env_theme = os.environ.get("QUIZMD_THEME", "").strip().lower()
     if env_theme in THEMES:
@@ -84,6 +102,9 @@ def select_theme(name: str = "auto") -> dict:
         return THEMES["dark"]
     if name == "light":
         return THEMES["light"]
+    env_hint = _theme_hint_from_env()
+    if env_hint in THEMES:
+        return THEMES[env_hint]
     return THEMES["light"] if _is_light_terminal() else THEMES["dark"]
 
 
