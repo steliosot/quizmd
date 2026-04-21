@@ -168,3 +168,10 @@ source .venv/bin/activate
 pip install -r requirements.txt
 python -m unittest discover -s tests -q
 ```
+
+## Community
+
+- Contributing guide: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Code of Conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- Security policy: [SECURITY.md](SECURITY.md)
+- License: [LICENSE](LICENSE)
