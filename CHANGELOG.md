@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## v2.2.0 - 2026-04-22
+
+- Added Imposter Mode for MCQ quizzes via `Imposters:` metadata in quiz markdown.
+- Added imposter interactions (`X` key), per-question feedback, and summary metrics:
+  - Imposter precision
+  - Imposter recall
+  - False-flag count
+- Added partial imposter scoring (`+1` correct flag, `-1` false flag, floor at 0) with per-question max points.
+- Improved full-screen quiz flow to keep answer + explanation in one screen before advancing.
+- Added compact/ultra-compact terminal rendering improvements for narrow widths.
+- Added/updated tests for imposter parsing, scoring, rendering, and end-to-end persistence.
+- Added a new example quiz: `quizzes/python-basics-imposter.md`.
+
 ## v2.1.1 - 2026-04-22
 
 - Fixed low-time countdown rendering so timer always keeps visible seconds (no blank `😱  s` state).

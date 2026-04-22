@@ -24,7 +24,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.1.1"
+__version__ = "2.2.0"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -245,7 +245,7 @@ def should_use_compact_layout(min_width: int = 100, columns: int | None = None) 
     return columns < min_width
 
 
-def get_terminal_columns(default: int = 120) -> int:
+def get_terminal_columns(default: int = 80) -> int:
     try:
         return os.get_terminal_size().columns
     except OSError:
@@ -291,6 +291,7 @@ def parse_int_value(raw_value: str, field_name: str, question_title: str, source
 def validate_question(question: dict, source: Path) -> None:
     qtype = question["type"]
     correct = question["correct"]
+    imposters = question.get("imposters", [])
     option_count = len(question["options"])
 
     if qtype not in {"single", "multiple"}:
@@ -319,6 +320,30 @@ def validate_question(question: dict, source: Path) -> None:
     if invalid_answers:
         raise ValueError(
             f"{source}: answer indexes {invalid_answers} are out of range in {question['title']!r}"
+        )
+
+    imposter_seen = set()
+    imposter_duplicates = set()
+    for idx in imposters:
+        if idx in imposter_seen:
+            imposter_duplicates.add(idx)
+        imposter_seen.add(idx)
+    imposter_duplicates = sorted(imposter_duplicates)
+    if imposter_duplicates:
+        raise ValueError(
+            f"{source}: duplicate imposter indexes {imposter_duplicates} in {question['title']!r}"
+        )
+
+    invalid_imposters = [idx for idx in imposters if idx < 1 or idx > option_count]
+    if invalid_imposters:
+        raise ValueError(
+            f"{source}: imposter indexes {invalid_imposters} are out of range in {question['title']!r}"
+        )
+
+    overlap = sorted(set(correct).intersection(imposters))
+    if overlap:
+        raise ValueError(
+            f"{source}: imposter indexes {overlap} overlap with correct answers in {question['title']!r}"
         )
 
     time_limit = question["time_limit"]
@@ -378,7 +403,7 @@ def parse_quiz_markdown(path: str):
                 not in_code_fence
                 and (
                     stripped.startswith("- ")
-                    or re.match(r"(?i)^(answer|type|time|explanation)\s*:", stripped) is not None
+                    or re.match(r"(?i)^(answer|type|time|explanation|imposters)\s*:", stripped) is not None
                 )
             )
 
@@ -399,6 +424,7 @@ def parse_quiz_markdown(path: str):
         qtype = None
         time_limit = None
         explanation = ""
+        imposters = []
 
         for l in metadata_lines:
             stripped = l.strip()
@@ -408,7 +434,7 @@ def parse_quiz_markdown(path: str):
                 options.append(stripped[2:].strip())
                 continue
 
-            field_match = re.match(r"(?i)^(answer|type|time|explanation)\s*:\s*(.*)$", stripped)
+            field_match = re.match(r"(?i)^(answer|type|time|explanation|imposters)\s*:\s*(.*)$", stripped)
             if field_match:
                 key = field_match.group(1).lower()
                 value = field_match.group(2)
@@ -418,12 +444,14 @@ def parse_quiz_markdown(path: str):
                     qtype = value.strip().lower()
                 elif key == "time":
                     time_limit = parse_int_value(value, "time", title, source)
+                elif key == "imposters":
+                    imposters = parse_int_list(value, "imposters", title, source)
                 else:
                     explanation = value.strip()
             else:
                 raise ValueError(
                     f"{source}: unrecognized line {l!r} in question {title!r}. "
-                    "Expected options ('- ...') or fields: Answer, Type, Time, Explanation."
+                    "Expected options ('- ...') or fields: Answer, Type, Time, Explanation, Imposters."
                 )
 
         if not options or not answer or qtype is None:
@@ -445,7 +473,8 @@ def parse_quiz_markdown(path: str):
             "correct": sorted(answer),
             "type": qtype,
             "time_limit": time_limit,
-            "explanation": explanation
+            "explanation": explanation,
+            "imposters": sorted(imposters),
         }
         validate_question(question_data, source)
         questions.append(question_data)
@@ -676,6 +705,57 @@ def display_width(text: str) -> int:
     return width
 
 
+def truncate_for_display(text: str, max_width: int) -> str:
+    if max_width <= 0:
+        return ""
+    if display_width(text) <= max_width:
+        return text
+    ellipsis = "…"
+    allowed = max(1, max_width - display_width(ellipsis))
+    out = ""
+    for ch in text:
+        if display_width(out + ch) > allowed:
+            break
+        out += ch
+    return out + ellipsis
+
+
+def wrap_and_truncate_text(text: str, max_width: int, max_lines: int = 2) -> list[str]:
+    cleaned = " ".join(text.split())
+    if not cleaned:
+        return [""]
+    if max_width <= 0:
+        return [""]
+
+    words = cleaned.split(" ")
+    lines: list[str] = []
+    i = 0
+
+    while i < len(words) and len(lines) < max_lines:
+        current = words[i]
+        i += 1
+        if display_width(current) > max_width:
+            current = truncate_for_display(current, max_width)
+            lines.append(current)
+            continue
+
+        while i < len(words):
+            candidate = f"{current} {words[i]}"
+            if display_width(candidate) > max_width:
+                break
+            current = candidate
+            i += 1
+        lines.append(current)
+
+    if i < len(words):
+        last = lines[-1] if lines else ""
+        lines[-1] = truncate_for_display(last, max(1, max_width - 1))
+        if not lines[-1].endswith("…"):
+            lines[-1] = truncate_for_display(lines[-1] + " …", max_width)
+
+    return lines
+
+
 def slugify(text: str) -> str:
     slug = text.lower().strip()
     slug = re.sub(r"[^a-z0-9]+", "-", slug)
@@ -742,12 +822,21 @@ def prompt_input(prompt: str = "") -> str:
         raise RuntimeError("Interactive input is not available in this environment.") from exc
 
 
-def save_attempt(quiz_title: str, score: int, questions: list[dict], answers: list[dict]) -> Path:
+def save_attempt(
+    quiz_title: str,
+    score: int,
+    questions: list[dict],
+    answers: list[dict],
+    total_score_possible: int | None = None,
+) -> Path:
     attempt_dir = next_attempt_dir(quiz_title)
+    if total_score_possible is None:
+        total_score_possible = len(questions)
 
     payload = {
         "quiz_title": quiz_title,
         "score": score,
+        "score_total": total_score_possible,
         "total_questions": len(questions),
         "answers": answers,
     }
@@ -759,16 +848,20 @@ def save_attempt(quiz_title: str, score: int, questions: list[dict], answers: li
 
     lines = [
         f"Quiz: {quiz_title}",
-        f"Score: {score}/{len(questions)}",
+        f"Score: {score}/{total_score_possible}",
         "",
     ]
 
     for item in answers:
+        imposter_selected = item.get("selected_imposter_labels", "")
+        imposter_expected = item.get("expected_imposter_labels", "")
         lines.extend([
             item["question_title"],
             item["question_text"],
             f"Selected: {item['selected_labels'] or 'No answer'}",
             f"Correct: {item['correct_labels']}",
+            f"Imposters flagged: {imposter_selected or '-'}",
+            f"Expected imposters: {imposter_expected or '-'}",
             f"Result: {'Correct' if item['is_correct'] else 'Wrong'}",
             f"Explanation: {item['explanation'] or '-'}",
             "",
@@ -1311,6 +1404,36 @@ def _provider_display_name(ai_provider: str) -> str:
     return ai_provider
 
 
+def _platform_setup_hint_for_env_key(env_key: str) -> str:
+    if _is_windows():
+        return (
+            "Windows (PowerShell):\n"
+            f"$env:{env_key}='your_key_here'"
+        )
+    if os.name == "posix":
+        return (
+            "macOS/Linux:\n"
+            f"export {env_key}='your_key_here'"
+        )
+    return (
+        "macOS/Linux:\n"
+        f"export {env_key}='your_key_here'\n"
+        "Windows (PowerShell):\n"
+        f"$env:{env_key}='your_key_here'"
+    )
+
+
+def _platform_setup_hint_for_any_ai_key() -> str:
+    key_names = ("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")
+    if _is_windows():
+        return "\n".join(f"$env:{key}='your_key_here'" for key in key_names)
+    if os.name == "posix":
+        return "\n".join(f"export {key}='your_key_here'" for key in key_names)
+    mac_linux = "\n".join(f"export {key}='your_key_here'" for key in key_names)
+    windows = "\n".join(f"$env:{key}='your_key_here'" for key in key_names)
+    return f"macOS/Linux:\n{mac_linux}\nWindows (PowerShell):\n{windows}"
+
+
 def _resolve_ai_provider(ai_provider: str) -> str:
     if ai_provider != "auto":
         return ai_provider
@@ -1442,23 +1565,44 @@ def build_question_markup(
     selected: int,
     marked: set[int],
     remaining: int | None,
-    is_multiple: bool,
+    imposter_marked: set[int] | None = None,
+    is_multiple: bool = False,
+    imposter_mode: bool = False,
     question_index: int = 1,
     total_questions: int = 1,
     pulse: bool = False,
     timer_blink: bool = False,
     no_color: bool = False,
     compact: bool = False,
+    terminal_width: int | None = None,
 ) -> str:
-    ascii_compact = compact and _is_windows()
+    if imposter_marked is None:
+        imposter_marked = set()
+
+    ultra_compact = bool(terminal_width is not None and terminal_width < 70)
+    ascii_compact = compact and (_is_windows() or ultra_compact)
     separator = " | " if ascii_compact else " • "
-    instruction = "Space select | Enter submit" if ascii_compact else "Space select • Enter submit"
+    if imposter_mode:
+        instruction = (
+            "Sp/X/En"
+            if ultra_compact
+            else "Space/X/Enter"
+        )
+    else:
+        instruction = (
+            "Sp/En"
+            if ultra_compact
+            else ("Space select | Enter" if ascii_compact else "Space select • Enter")
+        )
+    mode_badge = "[I]" if (imposter_mode and ultra_compact) else ("[IMPOSTER]" if imposter_mode else "")
     question_type_badge = (
+        "[M]" if (is_multiple and ultra_compact) else
+        "[S]" if ((not is_multiple) and ultra_compact) else
         "[MULTI]" if (is_multiple and ascii_compact) else
         "[SINGLE]" if (not is_multiple and ascii_compact) else
         "[MULTI ☑]" if is_multiple else "[SINGLE ○]"
     )
-    progress_units = 10
+    progress_units = 6 if ultra_compact else 10
     progress_fraction = question_index / total_questions if total_questions else 1
     filled_units = max(0, min(progress_units, int(round(progress_fraction * progress_units))))
     progress_bar = "█" * filled_units + "░" * (progress_units - filled_units)
@@ -1488,8 +1632,9 @@ def build_question_markup(
         if remaining is not None:
             timer_text = f"{timer_prefix} {remaining}s"
         header = (
-            f"Question {question_index}/{total_questions} {progress_bar}"
+            f"{'Q' if ultra_compact else 'Question'} {question_index}/{total_questions} {progress_bar}"
             + (f"  {timer_text}" if timer_text else "")
+            + (f"{separator}{mode_badge}" if mode_badge else "")
             + f"{separator}{question_type_badge}{separator}{instruction}"
         )
         lines = [header, ""]
@@ -1509,9 +1654,9 @@ def build_question_markup(
             timer_part = f"  <style fg='{timer_color}'>{timer_value}</style>"
 
         header = (
-            f"<style fg='{theme['pt_instruction']}'><b>Question {question_index}/{total_questions}</b> {progress_bar}</style>"
+            f"<style fg='{theme['pt_instruction']}'><b>{'Q' if ultra_compact else 'Question'} {question_index}/{total_questions}</b> {progress_bar}</style>"
             + timer_part
-            + f" <style fg='{theme['pt_instruction']}'>{html.escape(separator + question_type_badge + separator + instruction)}</style>"
+            + f" <style fg='{theme['pt_instruction']}'>{html.escape((separator + mode_badge) if mode_badge else '')}{html.escape(separator + question_type_badge + separator + instruction)}</style>"
         )
         lines = [header, ""]
 
@@ -1537,6 +1682,10 @@ def build_question_markup(
                 marker = "(*)" if idx in marked else "( )"
             else:
                 marker = "◉" if idx in marked else "○"
+        if imposter_mode:
+            imposter_marker = ("[x]" if idx in imposter_marked else "[ ]") if (no_color or ascii_compact) else ("✖" if idx in imposter_marked else "·")
+        else:
+            imposter_marker = ""
 
         if idx in marked:
             style = f"fg='{theme['pt_marked_fg']}' bg='{theme['pt_marked_bg']}'"
@@ -1551,13 +1700,31 @@ def build_question_markup(
         else:
             style = f"fg='{theme['pt_primary']}'"
 
+        if ultra_compact:
+            option_plain = strip_prompt_toolkit_tags(render_inline_markdown_for_prompt_toolkit(opt))
+            prefix_plain = f"{'>' if i == selected else ' '} {idx}. {marker}{(' ' + imposter_marker) if imposter_mode else ''} "
+            continuation_prefix_plain = " " * len(prefix_plain)
+            max_option_width = max(18, (terminal_width or 70) - len(prefix_plain) - 1)
+            wrapped_lines = wrap_and_truncate_text(option_plain, max_option_width, max_lines=2)
+
+            if no_color:
+                lines.append(prefix_plain + wrapped_lines[0])
+                for extra in wrapped_lines[1:]:
+                    lines.append(continuation_prefix_plain + extra)
+            else:
+                first = f"<style {style}>{html.escape(prefix_plain + wrapped_lines[0])}</style>"
+                lines.append(first)
+                for extra in wrapped_lines[1:]:
+                    lines.append(f"<style {style}>{html.escape(continuation_prefix_plain + extra)}</style>")
+            continue
+
         lines.append(
             (
-                f"{'>' if i == selected else ' '} {idx}. {marker} "
+                f"{'>' if i == selected else ' '} {idx}. {marker}{(' ' + imposter_marker) if imposter_mode else ''} "
                 f"{strip_prompt_toolkit_tags(render_inline_markdown_for_prompt_toolkit(opt))}"
             )
             if no_color
-            else f"<style {style}>{pointer} {idx}. {html.escape(marker)} {render_inline_markdown_for_prompt_toolkit(opt)}</style>"
+            else f"<style {style}>{pointer} {idx}. {html.escape(marker)}{(' ' + html.escape(imposter_marker)) if imposter_mode else ''} {render_inline_markdown_for_prompt_toolkit(opt)}</style>"
         )
 
     lines.append("")
@@ -1573,6 +1740,7 @@ async def ask_question(
     total_questions: int = 1,
     no_color: bool = False,
     compact: bool = False,
+    full_screen: bool = False,
 ):
     try:
         from prompt_toolkit import Application
@@ -1587,13 +1755,53 @@ async def ask_question(
 
     selected = 0
     marked = set()
+    imposter_marked = set()
     pulse = False
     remaining = q["time_limit"]
     force_compact = compact
     current_columns = get_terminal_columns()
     current_compact = force_compact or should_use_compact_layout(columns=current_columns)
-    result = {"answer": None}
+    result = {"answer": None, "imposters": []}
+    submitted = False
     is_multiple = q.get("type", "single") == "multiple"
+    expected_imposters = sorted(q.get("imposters", []))
+    imposter_mode = bool(expected_imposters)
+
+    def evaluate_submission(answer_indexes, imposter_indexes) -> dict:
+        selected_answer = sorted(answer_indexes) if answer_indexes else []
+        selected_imposters = sorted(imposter_indexes) if imposter_indexes else []
+        answer_correct = selected_answer == q["correct"]
+
+        if imposter_mode:
+            expected_set = set(expected_imposters)
+            selected_set = set(selected_imposters)
+            true_positive = len(expected_set.intersection(selected_set))
+            false_positive = len(selected_set - expected_set)
+            false_negative = len(expected_set - selected_set)
+            imposter_points = max(0, true_positive - false_positive)
+            question_max_points = 1 + len(expected_imposters)
+        else:
+            true_positive = 0
+            false_positive = 0
+            false_negative = 0
+            imposter_points = 0
+            question_max_points = 1
+
+        question_points = (1 if answer_correct else 0) + imposter_points
+        is_perfect = answer_correct and (not imposter_mode or (false_positive == 0 and false_negative == 0))
+        return {
+            "answer_correct": answer_correct,
+            "imposter_mode": imposter_mode,
+            "expected_imposters": expected_imposters,
+            "imposters_selected": selected_imposters,
+            "imposter_true_positive": true_positive,
+            "imposter_false_positive": false_positive,
+            "imposter_false_negative": false_negative,
+            "imposter_points": imposter_points,
+            "question_points": question_points,
+            "question_max_points": question_max_points,
+            "is_perfect": is_perfect,
+        }
 
     def render():
         markup = build_question_markup(
@@ -1602,14 +1810,57 @@ async def ask_question(
             selected,
             marked,
             remaining,
+            imposter_marked,
             is_multiple,
+            imposter_mode=imposter_mode,
             question_index=question_index,
             total_questions=total_questions,
             pulse=pulse,
             timer_blink=bool(remaining is not None and remaining <= 10 and remaining % 2 == 0),
             no_color=no_color,
             compact=current_compact,
+            terminal_width=current_columns,
         )
+        if full_screen and submitted:
+            grading = evaluate_submission(result["answer"], result["imposters"])
+            is_answer_correct = grading["answer_correct"]
+            is_correct = grading["is_perfect"]
+            explanation = (q.get("explanation") or "").strip()
+            if no_color:
+                status = "Correct" if is_correct else "Wrong"
+                markup += "\n" + status + "\n"
+                markup += f"\nQuestion points: {grading['question_points']}/{grading['question_max_points']}\n"
+                if imposter_mode:
+                    flagged_labels = format_labels(q["options"], result["imposters"]) or "None"
+                    expected_labels = format_labels(q["options"], expected_imposters) or "None"
+                    markup += f"\nImposters flagged: {flagged_labels}\nExpected imposters: {expected_labels}\n"
+                if explanation:
+                    markup += f"\nExplanation\n{explanation}\n"
+                markup += "\nPress Enter for the next question..."
+                return markup
+
+            status_style = theme["success"] if is_correct else theme["danger"]
+            status = "Correct" if is_correct else "Wrong"
+            markup += f"\n<style fg='{status_style}'><b>{status}</b></style>\n"
+            markup += (
+                f"\n<style fg='{theme['pt_instruction']}'>"
+                f"Question points: {grading['question_points']}/{grading['question_max_points']}"
+                f"</style>\n"
+            )
+            if imposter_mode:
+                flagged_labels = format_labels(q["options"], result["imposters"]) or "None"
+                expected_labels = format_labels(q["options"], expected_imposters) or "None"
+                markup += (
+                    f"\n<style fg='{theme['pt_title']}'>"
+                    f"Imposters flagged: {html.escape(flagged_labels)}\n"
+                    f"Expected imposters: {html.escape(expected_labels)}"
+                    f"</style>\n"
+                )
+            if explanation:
+                explanation_lines = [render_inline_markdown_for_prompt_toolkit(line) for line in explanation.splitlines()]
+                markup += "\n<style fg='{0}'><b>Explanation</b></style>\n".format(theme["pt_title"])
+                markup += "\n".join(explanation_lines) + "\n"
+            markup += f"\n<style fg='{theme['pt_instruction']}'>Press Enter for the next question...</style>"
         if no_color:
             return markup
         return PromptHTML(markup)
@@ -1643,9 +1894,39 @@ async def ask_question(
             marked.add(idx)
         control.text = render()
 
+    @kb.add("x")
+    def _(_):
+        if not imposter_mode:
+            return
+        idx = selected + 1
+        if idx in imposter_marked:
+            imposter_marked.remove(idx)
+        else:
+            imposter_marked.add(idx)
+        control.text = render()
+
+    @kb.add("X")
+    def _(_):
+        if not imposter_mode:
+            return
+        idx = selected + 1
+        if idx in imposter_marked:
+            imposter_marked.remove(idx)
+        else:
+            imposter_marked.add(idx)
+        control.text = render()
+
     @kb.add("enter")
     def _(event):
-        result["answer"] = sorted(marked) if marked else None
+        nonlocal submitted
+        if not submitted:
+            result["answer"] = sorted(marked) if marked else None
+            result["imposters"] = sorted(imposter_marked)
+            if full_screen:
+                submitted = True
+                control.text = render()
+                app.invalidate()
+                return
         event.app.exit()
 
     @kb.add("c-c")
@@ -1655,28 +1936,47 @@ async def ask_question(
     app = Application(
         layout=Layout(HSplit([window])),
         key_bindings=kb,
-        full_screen=True,
-        erase_when_done=True,
+        full_screen=full_screen,
+        erase_when_done=full_screen,
     )
 
+    def pt_columns(default: int) -> int:
+        try:
+            return int(app.output.get_size().columns)
+        except Exception:
+            return get_terminal_columns(default=default)
+
+    current_columns = pt_columns(current_columns)
+    if not force_compact:
+        current_compact = should_use_compact_layout(columns=current_columns)
+    control.text = render()
+
     async def timer():
-        nonlocal remaining
+        nonlocal remaining, submitted
         if remaining is None:
             return
-        while remaining > 0:
+        while remaining > 0 and not submitted:
             await asyncio.sleep(1)
             remaining -= 1
+            if submitted:
+                break
             control.text = render()
             app.invalidate()
-        if remaining == 0:
+        if remaining == 0 and not submitted:
             result["answer"] = None
-            app.exit()
+            result["imposters"] = sorted(imposter_marked)
+            if full_screen:
+                submitted = True
+                control.text = render()
+                app.invalidate()
+            else:
+                app.exit()
 
     async def watch_resize():
         nonlocal current_columns, current_compact, pulse
         while True:
             await asyncio.sleep(0.2)
-            columns = get_terminal_columns(default=current_columns)
+            columns = pt_columns(current_columns)
             if columns == current_columns:
                 continue
             current_columns = columns
@@ -1703,7 +2003,9 @@ async def ask_question(
             pass
 
     ans = result["answer"]
-    return ans == q["correct"], ans
+    imposters_selected = result["imposters"]
+    grading = evaluate_submission(ans, imposters_selected)
+    return grading["is_perfect"], ans, imposters_selected, grading
 
 
 def run_coroutine_sync(coro):
@@ -1749,7 +2051,7 @@ def format_labels(options: list[str], indexes: list[int] | None) -> str:
     return "; ".join(labels)
 
 
-def run(title, questions, theme_name: str = "auto", no_color: bool = False):
+def run(title, questions, theme_name: str = "auto", no_color: bool = False, full_screen: bool = False):
     try:
         from rich.console import Console
         from rich.markdown import Markdown
@@ -1763,31 +2065,41 @@ def run(title, questions, theme_name: str = "auto", no_color: bool = False):
     console.print(LOGO)
 
     theme = select_theme(theme_name)
+    quiz_has_imposters = any(bool(q.get("imposters")) for q in questions)
     saved_answers = []
 
     try:
+        rules_text = (
+            "[bold]Rules:[/bold]\n"
+            "- Use ↑/↓ to move\n"
+            "- Press [bold]Space[/bold] to select an answer\n"
+            + ("- Press [bold]X[/bold] to mark/unmark imposter options\n" if quiz_has_imposters else "")
+            + "- Press [bold]Enter[/bold] to continue\n"
+            "- Press [bold]Ctrl+C[/bold] to exit the quiz at any time\n\n"
+            "Are you ready to start?\n"
+            f"[bold {theme['accent']}]Press Enter... Let's go! 🚀[/bold {theme['accent']}]"
+        )
         console.print(
             Panel(
                 f"[bold {theme['primary']}]{title}[/bold {theme['primary']}]\n\n"
-                "[bold]Rules:[/bold]\n"
-                "- Use ↑/↓ to move\n"
-                "- Press [bold]Space[/bold] to select an answer\n"
-                "- Press [bold]Enter[/bold] to continue\n"
-                "- Press [bold]Ctrl+C[/bold] to exit the quiz at any time\n\n"
-                "Are you ready to start?\n"
-                f"[bold {theme['accent']}]Press Enter... Let's go! 🚀[/bold {theme['accent']}]",
+                f"{rules_text}",
                 border_style=theme["panel"]
             )
         )
         prompt_input()
 
-        score = 0
+        points_earned = 0
+        total_points_possible = 0
+        correct_answers_count = 0
+        imposter_tp_total = 0
+        imposter_fp_total = 0
+        imposter_fn_total = 0
 
         for i, q in enumerate(questions, start=1):
-            if i > 1:
+            if i > 1 and not full_screen:
                 console.print("\n")
 
-            correct, ans = run_coroutine_sync(
+            perfect, ans, imposter_ans, grading = run_coroutine_sync(
                 ask_question(
                     q,
                     theme,
@@ -1795,19 +2107,43 @@ def run(title, questions, theme_name: str = "auto", no_color: bool = False):
                     total_questions=len(questions),
                     no_color=no_color,
                     compact=False,
+                    full_screen=full_screen,
                 )
             )
 
             selected_labels = format_labels(q["options"], ans)
             correct_labels = format_labels(q["options"], q["correct"])
+            selected_imposter_labels = format_labels(q["options"], imposter_ans)
+            expected_imposter_labels = format_labels(q["options"], q.get("imposters", []))
+            points_earned += grading["question_points"]
+            total_points_possible += grading["question_max_points"]
+            if grading["answer_correct"]:
+                correct_answers_count += 1
+            imposter_tp_total += grading["imposter_true_positive"]
+            imposter_fp_total += grading["imposter_false_positive"]
+            imposter_fn_total += grading["imposter_false_negative"]
 
-            if correct:
-                console.print(f"[{theme['success']}]Correct[/{theme['success']}]")
-                score += 1
-            else:
-                console.print(f"[{theme['danger']}]Wrong[/{theme['danger']}]")
+            if not full_screen:
+                if grading["answer_correct"]:
+                    console.print(f"[{theme['success']}]Correct[/{theme['success']}]")
+                else:
+                    console.print(f"[{theme['danger']}]Wrong[/{theme['danger']}]")
+                console.print(
+                    f"[{theme['secondary']}]Question points:[/{theme['secondary']}] "
+                    f"{grading['question_points']}/{grading['question_max_points']}"
+                )
 
-            if q.get("explanation"):
+            if q.get("imposters") and not full_screen:
+                console.print(
+                    f"[{theme['secondary']}]Imposters flagged:[/{theme['secondary']}] "
+                    f"{selected_imposter_labels or 'None'}"
+                )
+                console.print(
+                    f"[{theme['secondary']}]Expected imposters:[/{theme['secondary']}] "
+                    f"{expected_imposter_labels or 'None'}"
+                )
+
+            if not full_screen and q.get("explanation"):
                 console.print(
                     Panel(
                         Markdown(f"**Explanation**\n\n{q['explanation']}"),
@@ -1820,33 +2156,81 @@ def run(title, questions, theme_name: str = "auto", no_color: bool = False):
                 "question_text": q["question"],
                 "selected_indexes": ans or [],
                 "selected_labels": selected_labels,
+                "selected_imposters": imposter_ans or [],
+                "selected_imposter_labels": selected_imposter_labels,
                 "correct_indexes": q["correct"],
                 "correct_labels": correct_labels,
-                "is_correct": correct,
+                "expected_imposters": q.get("imposters", []),
+                "expected_imposter_labels": expected_imposter_labels,
+                "is_correct": perfect,
+                "answer_correct": grading["answer_correct"],
+                "question_points": grading["question_points"],
+                "question_max_points": grading["question_max_points"],
+                "imposter_true_positive": grading["imposter_true_positive"],
+                "imposter_false_positive": grading["imposter_false_positive"],
+                "imposter_false_negative": grading["imposter_false_negative"],
                 "explanation": q.get("explanation", ""),
             })
 
-            prompt_input("Press Enter for the next question...")
+            if not full_screen:
+                prompt_input("Press Enter for the next question...")
             
-        percentage = (score / len(questions)) * 100 if questions else 0.0
+        percentage = (points_earned / total_points_possible) * 100 if total_points_possible else 0.0
         wrong_topics = [item["question_title"] for item in saved_answers if not item["is_correct"]]
         if wrong_topics:
             quick_review = "\n".join(f"- {topic}" for topic in wrong_topics)
         else:
             quick_review = "- None, excellent work."
 
+        precision = None
+        recall = None
+        if quiz_has_imposters:
+            precision = (
+                (imposter_tp_total / (imposter_tp_total + imposter_fp_total))
+                if (imposter_tp_total + imposter_fp_total) > 0
+                else None
+            )
+            recall = (
+                (imposter_tp_total / (imposter_tp_total + imposter_fn_total))
+                if (imposter_tp_total + imposter_fn_total) > 0
+                else None
+            )
+
+        precision_text = f"{(precision * 100):.1f}%" if precision is not None else "N/A"
+        recall_text = f"{(recall * 100):.1f}%" if recall is not None else "N/A"
+
+        score_line = (
+            f"Score: [bold]{points_earned}/{total_points_possible}[/bold]\n"
+            if total_points_possible
+            else f"Score: [bold]{points_earned}/0[/bold]\n"
+        )
+
         summary = (
             f"[bold {theme['primary']}]Quiz Summary[/bold {theme['primary']}]\n\n"
-            f"Score: [bold]{score}/{len(questions)}[/bold]\n"
+            f"{score_line}"
             f"Percentage: [bold]{percentage:.1f}%[/bold]\n"
-            f"Correct Answers: [bold]{score}[/bold]\n\n"
+            f"Correct Answers: [bold]{correct_answers_count}[/bold]\n"
+            + (
+                f"Imposter Precision: [bold]{precision_text}[/bold]\n"
+                f"Imposter Recall: [bold]{recall_text}[/bold]\n"
+                f"False-flag Count: [bold]{imposter_fp_total}[/bold]\n"
+                if quiz_has_imposters
+                else ""
+            )
+            + "\n"
             f"[bold]Quick Review Topics:[/bold]\n{quick_review}"
         )
         console.print(Panel(summary, border_style=theme["panel"]))
 
         if ask_to_save_answers():
             try:
-                attempt_dir = save_attempt(title, score, questions, saved_answers)
+                attempt_dir = save_attempt(
+                    title,
+                    points_earned,
+                    questions,
+                    saved_answers,
+                    total_score_possible=total_points_possible,
+                )
                 console.print(
                     Panel(
                         f"[bold {theme['success']}]Answers saved successfully.[/bold {theme['success']}]\n{attempt_dir}",
@@ -1898,7 +2282,9 @@ def run_essay(
     if not provider_candidates:
         raise RuntimeError(
             "Essay mode with provider 'auto' requires at least one key.\n"
-            "Checked in priority order: GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY."
+            "Checked in priority order: GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY.\n"
+            "Set one before running, e.g.:\n"
+            f"{_platform_setup_hint_for_any_ai_key()}"
         )
 
     # Start with first candidate; this may be replaced by failover in auto mode.
@@ -1911,7 +2297,7 @@ def run_essay(
                 f"Essay mode with provider '{resolved_provider}' requires {env_key}.\n"
                 "Standard multiple-choice quizzes do not use AI and do not need this key.\n"
                 "Set it before running, e.g.:\n"
-                f"export {env_key}='your_key_here'"
+                f"{_platform_setup_hint_for_env_key(env_key)}"
             )
 
     theme = select_theme(theme_name)
@@ -2015,7 +2401,7 @@ def run_essay(
                     f"Essay mode with provider '{resolved_provider}' requires {env_key}.\n"
                     "Standard multiple-choice quizzes do not use AI and do not need this key.\n"
                     "Set it before running, e.g.:\n"
-                    f"export {env_key}='your_key_here'"
+                    f"{_platform_setup_hint_for_env_key(env_key)}"
                 )
             evaluator = _evaluator_for_provider(resolved_provider)
             try:
@@ -2186,10 +2572,8 @@ def main():
         print(f"quizmd --validate {created[0]}")
         print(f"quizmd {created[0]}")
         print(f"quizmd --validate {created[1]}")
-        if _is_windows():
-            print('$env:GEMINI_API_KEY="your_api_key_here"  # or $env:OPENAI_API_KEY / $env:ANTHROPIC_API_KEY')
-        else:
-            print('export GEMINI_API_KEY="your_api_key_here"  # or OPENAI_API_KEY / ANTHROPIC_API_KEY')
+        print("Set one AI key for essay mode (MCQ quizzes do not need keys):")
+        print(_platform_setup_hint_for_any_ai_key())
         print(f"quizmd {created[1]}")
         return
 
@@ -2215,6 +2599,11 @@ def main():
         "--no-color",
         action="store_true",
         help="Disable colors/styled symbols (also enabled automatically when NO_COLOR is set).",
+    )
+    parser.add_argument(
+        "--full-screen",
+        action="store_true",
+        help="Render each question in full-screen mode (one question view at a time).",
     )
     parser.add_argument(
         "--ai-provider",
@@ -2272,7 +2661,7 @@ def main():
                 ai_timeout=args.ai_timeout,
             )
         else:
-            run(title, questions, theme_name=args.theme, no_color=no_color)
+            run(title, questions, theme_name=args.theme, no_color=no_color, full_screen=args.full_screen)
     except RuntimeError as exc:
         print(safe_for_stream(f"Runtime error: {exc}", sys.stderr), file=sys.stderr)
         raise SystemExit(1) from exc

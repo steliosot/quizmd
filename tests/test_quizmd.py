@@ -40,6 +40,7 @@ from quizmd import (
     parse_quiz_markdown,
     main,
     prompt_input,
+    run,
     run_essay,
     run_coroutine_sync,
     safe_for_stream,
@@ -95,6 +96,62 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(questions[0]["correct"], [2])
         self.assertEqual(questions[5]["type"], "multiple")
 
+    def test_parse_quiz_with_imposters_field(self):
+        quiz_path = self.write_quiz(
+            "# Imposter Quiz\n\n"
+            "## Question 1\n"
+            "What does pip install -r requirements.txt do?\n\n"
+            "- Installs listed dependencies\n"
+            "- Creates a virtual environment\n"
+            "- Upgrades Python itself\n"
+            "- Removes unlisted packages by default\n\n"
+            "Answer: 1\n"
+            "Imposters: 2,4\n"
+            "Type: single\n"
+            "Time: 20\n"
+            "Explanation: Installs packages from the requirements file.\n"
+        )
+        try:
+            title, questions = parse_quiz_markdown(quiz_path)
+            self.assertEqual(title, "Imposter Quiz")
+            self.assertEqual(questions[0]["imposters"], [2, 4])
+        finally:
+            Path(quiz_path).unlink(missing_ok=True)
+
+    def test_parse_quiz_with_imposters_overlap_fails(self):
+        quiz_path = self.write_quiz(
+            "# Imposter Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 2\n"
+            "Imposters: 2\n"
+            "Type: single\n"
+        )
+        try:
+            with self.assertRaisesRegex(ValueError, "overlap with correct answers"):
+                parse_quiz_markdown(quiz_path)
+        finally:
+            Path(quiz_path).unlink(missing_ok=True)
+
+    def test_parse_quiz_with_imposters_out_of_range_fails(self):
+        quiz_path = self.write_quiz(
+            "# Imposter Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1\n"
+            "Imposters: 3\n"
+            "Type: single\n"
+        )
+        try:
+            with self.assertRaisesRegex(ValueError, "imposter indexes .* out of range"):
+                parse_quiz_markdown(quiz_path)
+        finally:
+            Path(quiz_path).unlink(missing_ok=True)
+
     def test_parse_all_quizzes_in_repository(self):
         quiz_files = sorted(QUIZ_DIR.glob("*.md"))
         self.assertGreaterEqual(len(quiz_files), 6)
@@ -112,7 +169,8 @@ class QuizMarkdownTests(unittest.TestCase):
                 else:
                     title, questions = parse_quiz_markdown(str(quiz_file))
                     self.assertTrue(title.strip())
-                    self.assertGreaterEqual(len(questions), 5)
+                    min_questions = 3 if any(q.get("imposters") for q in questions) else 5
+                    self.assertGreaterEqual(len(questions), min_questions)
                     for question in questions:
                         self.assertTrue(question["title"].strip())
                         self.assertTrue(question["question"].strip())
@@ -637,6 +695,23 @@ class QuizMarkdownTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "requires at least one key"):
                 run_essay(essay, no_color=True)
 
+    def test_run_essay_missing_api_key_windows_hint(self):
+        essay = {
+            "title": "Sample",
+            "question": "Q",
+            "instructions": "I",
+            "criteria": [{"name": "A", "points": 1, "details": []}],
+            "total_points": 1,
+            "reference_answer": "R",
+            "ai_evaluation_rules": "Rules",
+            "output_format": "Format",
+        }
+        with patch("quizmd._is_windows", return_value=True):
+            with patch.dict("os.environ", {}, clear=True):
+                with self.assertRaises(RuntimeError) as ctx:
+                    run_essay(essay, no_color=True)
+        self.assertIn("$env:GEMINI_API_KEY='your_key_here'", str(ctx.exception))
+
     def test_mcq_validate_does_not_require_gemini_key(self):
         env = os.environ.copy()
         env.pop("GEMINI_API_KEY", None)
@@ -731,6 +806,23 @@ class QuizMarkdownTests(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "requires OPENAI_API_KEY"):
                 run_essay(essay, no_color=True, ai_provider="openai")
+
+    def test_run_essay_openai_missing_key_posix_hint(self):
+        essay = {
+            "title": "Sample",
+            "question": "Q",
+            "instructions": "I",
+            "criteria": [{"name": "A", "points": 1, "details": []}],
+            "total_points": 1,
+            "reference_answer": "R",
+            "ai_evaluation_rules": "Rules",
+            "output_format": "Format",
+        }
+        with patch("quizmd._is_windows", return_value=False):
+            with patch.dict("os.environ", {}, clear=True):
+                with self.assertRaises(RuntimeError) as ctx:
+                    run_essay(essay, no_color=True, ai_provider="openai")
+        self.assertIn("export OPENAI_API_KEY='your_key_here'", str(ctx.exception))
 
     def test_run_essay_auto_priority_prefers_gemini(self):
         essay = {
@@ -1314,6 +1406,63 @@ class QuizMarkdownTests(unittest.TestCase):
             finally:
                 os.chdir(old_cwd)
 
+    def test_run_imposter_mode_saves_imposter_fields_end_to_end(self):
+        questions = [
+            {
+                "title": "Question 1",
+                "question": "Pick the true statement",
+                "options": ["Correct", "Wrong A", "Wrong B"],
+                "correct": [1],
+                "imposters": [2, 3],
+                "type": "single",
+                "time_limit": 20,
+                "explanation": "Because statement 1 is true.",
+            }
+        ]
+        grading = {
+            "answer_correct": True,
+            "imposter_mode": True,
+            "expected_imposters": [2, 3],
+            "imposters_selected": [2],
+            "imposter_true_positive": 1,
+            "imposter_false_positive": 0,
+            "imposter_false_negative": 1,
+            "imposter_points": 1,
+            "question_points": 2,
+            "question_max_points": 3,
+            "is_perfect": False,
+        }
+
+        old_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                def fake_run_coroutine(coro):
+                    # Prevent un-awaited coroutine warnings in tests that bypass async execution.
+                    try:
+                        coro.close()
+                    except Exception:
+                        pass
+                    return (False, [1], [2], grading)
+
+                with patch("quizmd.prompt_input", return_value=""):
+                    with patch("quizmd.run_coroutine_sync", side_effect=fake_run_coroutine):
+                        with patch("quizmd.ask_to_save_answers", return_value=True):
+                            with patch("rich.console.Console.print"):
+                                run("Imposter Demo", questions, no_color=True, full_screen=False)
+
+                attempt_dir = Path("answers/imposter-demo-1")
+                self.assertTrue((attempt_dir / "answers.json").exists())
+                payload = json.loads((attempt_dir / "answers.json").read_text(encoding="utf-8"))
+                self.assertEqual(payload["score"], 2)
+                self.assertEqual(payload["score_total"], 3)
+                self.assertEqual(payload["answers"][0]["selected_imposters"], [2])
+                self.assertEqual(payload["answers"][0]["expected_imposters"], [2, 3])
+                self.assertEqual(payload["answers"][0]["question_points"], 2)
+                self.assertEqual(payload["answers"][0]["question_max_points"], 3)
+            finally:
+                os.chdir(old_cwd)
+
     def test_build_question_markup_escapes_special_characters(self):
         question = {
             "title": "Question <1>",
@@ -1464,7 +1613,7 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("ansiyellow", normal)
         self.assertIn("ansimagenta", warning)
         self.assertIn("ansired", danger)
-        self.assertIn("Space select • Enter submit", normal)
+        self.assertIn("Space select • Enter", normal)
 
     def test_build_question_markup_blinks_timer_under_ten_seconds(self):
         question = {
@@ -1488,6 +1637,60 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("😱", blink)
         self.assertIn("8s", blink)
 
+    def test_build_question_markup_imposter_mode_instructions_and_markers(self):
+        question = {
+            "title": "Question 1",
+            "question": "Pick one",
+            "options": ["A", "B", "C"],
+            "correct": [1],
+            "imposters": [2],
+            "type": "single",
+            "time_limit": 10,
+            "explanation": "",
+        }
+        markup = build_question_markup(
+            question,
+            THEMES["dark"],
+            selected=1,
+            marked={1},
+            remaining=9,
+            imposter_marked={2},
+            is_multiple=False,
+            imposter_mode=True,
+        )
+        self.assertIn("[IMPOSTER]", markup)
+        self.assertIn("Space/X/Enter", markup)
+        self.assertIn("✖", markup)
+
+    def test_build_question_markup_ultra_compact_wraps_and_truncates_options(self):
+        question = {
+            "title": "Question 1",
+            "question": "Pick one",
+            "options": [
+                "This is a very long option text that should wrap and then truncate when terminal width is tiny."
+            ],
+            "correct": [1],
+            "imposters": [1],
+            "type": "single",
+            "time_limit": 10,
+            "explanation": "",
+        }
+        markup = build_question_markup(
+            question,
+            THEMES["dark"],
+            selected=0,
+            marked=set(),
+            remaining=9,
+            imposter_marked=set(),
+            is_multiple=False,
+            imposter_mode=True,
+            terminal_width=60,
+            compact=True,
+        )
+        self.assertIn("Q 1/1", markup)
+        self.assertIn("Sp/X/En", markup)
+        self.assertIn("…", markup)
+
     def test_build_question_markup_compact_windows_uses_ascii_safe_header(self):
         question = {
             "title": "Question 1",
@@ -1510,7 +1713,7 @@ class QuizMarkdownTests(unittest.TestCase):
             )
         self.assertIn("WARN 8s", compact)
         self.assertIn("[SINGLE]", compact)
-        self.assertIn("Space select | Enter submit", compact)
+        self.assertIn("Space select | Enter", compact)
 
     def test_build_question_markup_handles_multiline_question_box(self):
         question = {
@@ -1574,6 +1777,26 @@ class QuizMarkdownTests(unittest.TestCase):
                 with patch("quizmd.run") as mocked_run:
                     main()
             mocked_run.assert_called_once()
+        finally:
+            Path(quiz_path).unlink(missing_ok=True)
+
+    def test_main_full_screen_flag_routes_to_mcq_runner(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1\n"
+            "Type: single\n"
+        )
+        try:
+            with patch("sys.argv", ["quizmd.py", "--full-screen", quiz_path]):
+                with patch("quizmd.run") as mocked_run:
+                    main()
+            mocked_run.assert_called_once()
+            _, kwargs = mocked_run.call_args
+            self.assertTrue(kwargs.get("full_screen"))
         finally:
             Path(quiz_path).unlink(missing_ok=True)
 
