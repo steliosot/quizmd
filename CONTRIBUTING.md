@@ -20,6 +20,14 @@ python -m unittest discover -s tests -q
 5. Run the full test suite.
 6. Open a pull request with a clear description.
 
+## Release Process
+
+1. Update `CHANGELOG.md` for the new version.
+2. Bump version metadata in code/package files.
+3. Create a new tag (example: `v2.0.3`) on the release commit.
+4. Push commit + new tag.
+5. Never move or reuse an existing tag.
+
 ## Pull Request Checklist
 
 - Code is readable and follows existing style.

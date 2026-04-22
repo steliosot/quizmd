@@ -11,6 +11,8 @@ from pathlib import Path
 
 from quizmd import (
     _format_possessive,
+    _redacted_ai_error,
+    _score_encouragement,
     THEMES,
     build_question_markup,
     collect_essay_answer_via_editor,
@@ -23,6 +25,7 @@ from quizmd import (
     parse_int_list,
     parse_int_value,
     parse_quiz_markdown,
+    main,
     prompt_input,
     run_essay,
     run_coroutine_sync,
@@ -288,8 +291,20 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("# Why do we use .venv?", seen_template["value"])
 
     def test_format_possessive_handles_names_ending_with_s(self):
-        self.assertEqual(_format_possessive("Stelios"), "Stelios’")
+        self.assertEqual(_format_possessive("Stelios"), "Stelios'")
         self.assertEqual(_format_possessive("Anna"), "Anna's")
+
+    def test_score_encouragement_ranges(self):
+        self.assertEqual(_score_encouragement(49.99), "Don’t worry — try again! 💪")
+        self.assertEqual(
+            _score_encouragement(50.0),
+            "Great effort! With a bit more practice, you’ll be a star. ⭐",
+        )
+        self.assertEqual(
+            _score_encouragement(75.0),
+            "Great effort! With a bit more practice, you’ll be a star. ⭐",
+        )
+        self.assertEqual(_score_encouragement(75.01), "You’re rocking it! 🚀")
 
     def test_collect_essay_answer_windows_notepad_prompt(self):
         def fake_editor(cmd, check):
@@ -462,6 +477,19 @@ class QuizMarkdownTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "Gemini evaluation failed"):
                     evaluate_essay_with_gemini(essay, "student", "k", "gemini-1.5-flash", 5, max_retries=1)
 
+    def test_gemini_payload_too_large_fails_before_network(self):
+        essay = {
+            "question": "Q" * 30_000,
+            "criteria": [{"name": "A", "points": 1, "details": ["x"]}],
+            "total_points": 1,
+            "reference_answer": "R" * 30_000,
+            "ai_evaluation_rules": "Rules",
+        }
+        with patch("urllib.request.urlopen") as mocked_urlopen:
+            with self.assertRaisesRegex(RuntimeError, "payload_too_large"):
+                evaluate_essay_with_gemini(essay, "student", "k", "gemini-1.5-flash", 5, max_retries=0)
+        mocked_urlopen.assert_not_called()
+
     def test_deterministic_fallback_no_score(self):
         essay = {
             "criteria": [
@@ -479,6 +507,15 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIsNone(result["score_percent"])
         self.assertTrue(result["ai_unavailable"])
         self.assertEqual(result["ai_reason"], "network_error")
+        self.assertEqual(result["scoring_mode"], "heuristic_fallback")
+        self.assertEqual(result["scoring_confidence"], "low")
+
+    def test_redacted_ai_error_helper(self):
+        self.assertEqual(
+            _redacted_ai_error("network_error", True),
+            "AI unavailable (network_error). Detailed provider error omitted for privacy.",
+        )
+        self.assertEqual(_redacted_ai_error("none", False), "")
 
     def test_run_essay_missing_api_key_fails(self):
         essay = {
@@ -530,6 +567,8 @@ class QuizMarkdownTests(unittest.TestCase):
             "ai_unavailable": False,
             "ai_error": "",
             "ai_reason": "none",
+            "scoring_mode": "llm_rubric",
+            "scoring_confidence": "high",
         }
         with patch.dict("os.environ", {"GEMINI_API_KEY": "k"}, clear=True):
             with patch("quizmd.prompt_input", return_value=""):
@@ -555,6 +594,8 @@ class QuizMarkdownTests(unittest.TestCase):
             "ai_unavailable": False,
             "ai_error": "",
             "ai_reason": "none",
+            "scoring_mode": "llm_rubric",
+            "scoring_confidence": "high",
             "ai_provider": "gemini",
             "ai_model": "gemini-1.5-flash",
         }
@@ -565,6 +606,39 @@ class QuizMarkdownTests(unittest.TestCase):
                 attempt_dir = save_essay_attempt("Essay Quiz", payload)
                 self.assertTrue((attempt_dir / "answers.json").exists())
                 self.assertTrue((attempt_dir / "answers.txt").exists())
+            finally:
+                os.chdir(old_cwd)
+
+    def test_save_essay_attempt_redacts_ai_error(self):
+        payload = {
+            "mode": "essay",
+            "quiz_title": "Essay Quiz",
+            "question": "Q",
+            "student_answer": "A",
+            "points_awarded": None,
+            "total_points": 4,
+            "score_percent": None,
+            "did_well": [],
+            "missing": ["x"],
+            "suggestions": ["y"],
+            "ai_unavailable": True,
+            "ai_error": "HTTP 500 raw provider body ...",
+            "ai_reason": "server_error",
+            "scoring_mode": "heuristic_fallback",
+            "scoring_confidence": "low",
+            "ai_provider": "gemini",
+            "ai_model": "gemini-flash-latest",
+        }
+        old_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                attempt_dir = save_essay_attempt("Essay Quiz", payload)
+                stored = json.loads((attempt_dir / "answers.json").read_text(encoding="utf-8"))
+                self.assertEqual(
+                    stored["ai_error"],
+                    "AI unavailable (server_error). Detailed provider error omitted for privacy.",
+                )
             finally:
                 os.chdir(old_cwd)
 
@@ -598,6 +672,16 @@ class QuizMarkdownTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("File error", result.stderr)
+
+    def test_cli_ai_timeout_must_be_positive(self):
+        result = subprocess.run(
+            [sys.executable, "quizmd.py", "--ai-timeout", "0", "--validate", "quizzes/python-basics-quiz.md"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--ai-timeout must be greater than zero", result.stderr)
 
     def test_invalid_answer_value_raises_clear_error(self):
         quiz_path = self.write_quiz(
@@ -1178,6 +1262,34 @@ class QuizMarkdownTests(unittest.TestCase):
             pulse=True,
         )
         self.assertIn("bg='ansiwhite'", markup)
+
+    def test_main_smoke_routes_to_mcq_runner(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1\n"
+            "Type: single\n"
+        )
+        try:
+            with patch("sys.argv", ["quizmd.py", quiz_path]):
+                with patch("quizmd.run") as mocked_run:
+                    main()
+            mocked_run.assert_called_once()
+        finally:
+            Path(quiz_path).unlink(missing_ok=True)
+
+    def test_main_smoke_routes_to_essay_runner(self):
+        essay_path = self.write_valid_essay()
+        try:
+            with patch("sys.argv", ["quizmd.py", essay_path]):
+                with patch("quizmd.run_essay") as mocked_run_essay:
+                    main()
+            mocked_run_essay.assert_called_once()
+        finally:
+            Path(essay_path).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

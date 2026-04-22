@@ -10,6 +10,12 @@ Install the tool directly from GitHub:
 pip install "git+https://github.com/steliosot/quizmd.git"
 ```
 
+For a reproducible install, pin a release tag:
+
+```bash
+pip install "git+https://github.com/steliosot/quizmd.git@v2.0.2"
+```
+
 Then check the CLI:
 
 ```bash
@@ -63,10 +69,16 @@ Optional AI settings for essay mode:
 quizmd --ai-provider gemini --ai-model gemini-flash-latest --ai-timeout 30 essays/requirements-txt-essay.md
 ```
 
+`--ai-timeout` must be greater than zero.
+
 Security notes:
 - Never hardcode or commit API keys in source control.
 - Use environment variables (`GEMINI_API_KEY`) only.
 - If a key is exposed, rotate/revoke it immediately.
+
+Privacy note:
+- Essay answers are only saved if you choose `y` at the save prompt.
+- Choose `n` to keep answers out of local `answers/` files.
 
 Theme options for better readability on light or dark terminals:
 
@@ -196,6 +208,14 @@ source .venv/bin/activate
 pip install -r requirements.txt
 python -m unittest discover -s tests -q
 ```
+
+## Releases
+
+- Release tags are immutable.
+- Never retag an existing version.
+- Publish a new tag for every release (`v2.0.3`, `v2.0.4`, ...).
+- See [CHANGELOG.md](CHANGELOG.md) and [RELEASE.md](RELEASE.md).
+- PyPI publishing is configured via GitHub Trusted Publishing in `.github/workflows/release.yml`.
 
 ## Community
 

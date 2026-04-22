@@ -28,6 +28,7 @@ __version__ = "2.0.2"
 DEFAULT_AI_PROVIDER = "gemini"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 GEMINI_REQUESTS_PER_MINUTE = 15
+MAX_GEMINI_REQUEST_BYTES = 48_000
 _GEMINI_REQUEST_TIMES: deque[float] = deque()
 
 LOGO = r"""
@@ -586,7 +587,7 @@ def next_attempt_dir(quiz_title: str) -> Path:
 
 
 def ask_to_save_answers() -> bool:
-    return ask_yes_no("Do you want to save your answers? [y/n]: ")
+    return ask_yes_no("Save your answer locally on this device? (contains your text) [y/n]: ")
 
 
 def ask_yes_no(prompt: str) -> bool:
@@ -643,8 +644,13 @@ def save_attempt(quiz_title: str, score: int, questions: list[dict], answers: li
 
 def save_essay_attempt(quiz_title: str, payload: dict) -> Path:
     attempt_dir = next_attempt_dir(quiz_title)
+    stored_payload = dict(payload)
+    stored_payload["ai_error"] = _redacted_ai_error(
+        str(stored_payload.get("ai_reason", "unknown_error")),
+        bool(stored_payload.get("ai_unavailable", False)),
+    )
     (attempt_dir / "answers.json").write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False),
+        json.dumps(stored_payload, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
@@ -770,6 +776,8 @@ def _normalize_gemini_grade(raw_grade, expected_total_points: int) -> dict:
         "ai_unavailable": False,
         "ai_error": "",
         "ai_reason": "none",
+        "scoring_mode": "llm_rubric",
+        "scoring_confidence": "high",
     }
 
 
@@ -827,6 +835,11 @@ def evaluate_essay_with_gemini(
         },
     }
     body = json.dumps(payload).encode("utf-8")
+    if len(body) > MAX_GEMINI_REQUEST_BYTES:
+        raise RuntimeError(
+            "[payload_too_large] Essay content is too large for AI grading. "
+            "Shorten the question/reference answer or reduce student answer length and retry."
+        )
     endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
     last_error = None
@@ -939,6 +952,8 @@ def evaluate_essay_deterministic_fallback(
         "ai_unavailable": True,
         "ai_error": error_message,
         "ai_reason": reason_code,
+        "scoring_mode": "heuristic_fallback",
+        "scoring_confidence": "low",
     }
 
 
@@ -947,12 +962,28 @@ def _format_possessive(name: str) -> str:
     if not text:
         return ""
     if text.lower().endswith("s"):
-        return f"{text}’"
+        return f"{text}'"
     return f"{text}'s"
 
 
 def _is_windows() -> bool:
     return os.name == "nt"
+
+
+def _score_encouragement(score_percent: float | None) -> str:
+    if score_percent is None:
+        return ""
+    if score_percent < 50:
+        return "Don’t worry — try again! 💪"
+    if score_percent <= 75:
+        return "Great effort! With a bit more practice, you’ll be a star. ⭐"
+    return "You’re rocking it! 🚀"
+
+
+def _redacted_ai_error(reason_code: str, ai_unavailable: bool) -> str:
+    if not ai_unavailable:
+        return ""
+    return f"AI unavailable ({reason_code or 'unknown_error'}). Detailed provider error omitted for privacy."
 
 
 def collect_essay_answer_via_editor(question_title: str, question_text: str = "") -> str:
@@ -1606,6 +1637,7 @@ def run_essay(
             score_text = "N/A (AI unavailable)"
         else:
             score_text = f"{grade['score_percent']:.2f}%"
+        encouragement = _score_encouragement(grade["score_percent"])
 
         feedback_lines = []
         for item in grade["did_well"]:
@@ -1626,6 +1658,7 @@ def run_essay(
                 "timeout": "request timeout",
                 "network_error": "network error",
                 "invalid_response": "unexpected model response shape",
+                "payload_too_large": "payload too large",
                 "unknown_error": "unknown error",
             }
             reason_label = reason_labels.get(grade.get("ai_reason", ""), "unknown error")
@@ -1633,17 +1666,22 @@ def run_essay(
             feedback_lines.append(
                 f"- Note: AI unavailable ({reason_label}); deterministic fallback used."
             )
+            feedback_lines.append("- Scoring mode: heuristic fallback (approximate).")
 
         feedback_heading = "Feedback"
         instructor_name = str(essay.get("instructor_name", "")).strip()
         if instructor_name:
             feedback_heading = f"Feedback from {_format_possessive(instructor_name)} notes"
 
+        feedback_body = (
+            f"[bold {theme['primary']}]Score: {score_text}[/bold {theme['primary']}]\n\n"
+            + (f"[bold]{encouragement}[/bold]\n\n" if encouragement else "")
+            + f"[bold]{feedback_heading}[/bold]\n"
+            + "\n".join(feedback_lines)
+        )
         console.print(
             Panel(
-                f"[bold {theme['primary']}]Score: {score_text}[/bold {theme['primary']}]\n\n"
-                f"[bold]{feedback_heading}[/bold]\n"
-                + "\n".join(feedback_lines),
+                feedback_body,
                 border_style=theme["panel"],
             )
         )
@@ -1670,8 +1708,10 @@ def run_essay(
             "missing": grade["missing"],
             "suggestions": grade["suggestions"],
             "ai_unavailable": grade["ai_unavailable"],
-            "ai_error": grade["ai_error"],
+            "ai_error": _redacted_ai_error(grade.get("ai_reason", "unknown_error"), grade["ai_unavailable"]),
             "ai_reason": grade.get("ai_reason", "none"),
+            "scoring_mode": grade.get("scoring_mode", "unknown"),
+            "scoring_confidence": grade.get("scoring_confidence", "unknown"),
             "ai_provider": ai_provider,
             "ai_model": ai_model,
         }
@@ -1745,6 +1785,8 @@ def main():
         help="HTTP timeout in seconds for AI evaluation requests.",
     )
     args = parser.parse_args()
+    if args.ai_timeout <= 0:
+        parser.error("--ai-timeout must be greater than zero")
     no_color = is_no_color_requested(args.no_color)
 
     try:
