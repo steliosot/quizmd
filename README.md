@@ -19,7 +19,7 @@ pip install "git+https://github.com/steliosot/quizmd.git"
 For a reproducible install, pin a release tag:
 
 ```bash
-pip install "git+https://github.com/steliosot/quizmd.git@v2.1.0"
+pip install "git+https://github.com/steliosot/quizmd.git@v2.1.1"
 ```
 
 Then check the CLI:

@@ -24,7 +24,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.1.0"
+__version__ = "2.1.1"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -239,11 +239,17 @@ def select_theme(name: str = "auto") -> dict:
     return THEMES["light"] if _is_light_terminal() else THEMES["dark"]
 
 
-def should_use_compact_layout(min_width: int = 100) -> bool:
+def should_use_compact_layout(min_width: int = 100, columns: int | None = None) -> bool:
+    if columns is None:
+        columns = get_terminal_columns(default=min_width)
+    return columns < min_width
+
+
+def get_terminal_columns(default: int = 120) -> int:
     try:
-        return os.get_terminal_size().columns < min_width
+        return os.get_terminal_size().columns
     except OSError:
-        return False
+        return default
 
 
 def is_no_color_requested(cli_no_color: bool = False) -> bool:
@@ -1295,6 +1301,16 @@ def _env_key_for_provider(ai_provider: str) -> str:
     raise RuntimeError(f"Unsupported AI provider {ai_provider!r}.")
 
 
+def _provider_display_name(ai_provider: str) -> str:
+    if ai_provider == "gemini":
+        return "Gemini"
+    if ai_provider == "openai":
+        return "OpenAI"
+    if ai_provider == "anthropic":
+        return "Claude"
+    return ai_provider
+
+
 def _resolve_ai_provider(ai_provider: str) -> str:
     if ai_provider != "auto":
         return ai_provider
@@ -1343,10 +1359,13 @@ def collect_essay_answer_via_editor(question_title: str, question_text: str = ""
     try:
         command = shlex.split(editor) + [str(temp_path)]
         try:
+            if _is_windows() and editor.lower() == "notepad":
+                print("When ready, save and close Notepad, then return to this terminal.")
             subprocess.run(command, check=True)
         except (FileNotFoundError, subprocess.CalledProcessError) as exc:
             if _is_windows() and editor.lower() != "notepad":
                 if ask_yes_no(f"Could not open '{editor}'. Open Notepad instead? [y/n]: "):
+                    print("When ready, save and close Notepad, then return to this terminal.")
                     subprocess.run(["notepad", str(temp_path)], check=True)
                 else:
                     raise RuntimeError(
@@ -1427,25 +1446,32 @@ def build_question_markup(
     question_index: int = 1,
     total_questions: int = 1,
     pulse: bool = False,
+    timer_blink: bool = False,
     no_color: bool = False,
     compact: bool = False,
 ) -> str:
-    instruction = "Select with Space, then Enter"
-    question_type_badge = "[MULTI ☑]" if is_multiple else "[SINGLE ○]"
+    ascii_compact = compact and _is_windows()
+    separator = " | " if ascii_compact else " • "
+    instruction = "Space select | Enter submit" if ascii_compact else "Space select • Enter submit"
+    question_type_badge = (
+        "[MULTI]" if (is_multiple and ascii_compact) else
+        "[SINGLE]" if (not is_multiple and ascii_compact) else
+        "[MULTI ☑]" if is_multiple else "[SINGLE ○]"
+    )
     progress_units = 10
     progress_fraction = question_index / total_questions if total_questions else 1
     filled_units = max(0, min(progress_units, int(round(progress_fraction * progress_units))))
     progress_bar = "█" * filled_units + "░" * (progress_units - filled_units)
 
     timer_color = theme["pt_timer"]
-    timer_prefix = "⏱"
+    timer_prefix = "TIME" if ascii_compact else "⏱"
     if remaining is not None:
         if remaining < 5:
             timer_color = theme["pt_timer_danger"]
-            timer_prefix = "😱"
+            timer_prefix = "WARN" if ascii_compact else "😱"
         elif remaining <= 10:
             timer_color = theme["pt_timer_warning"]
-            timer_prefix = "😱"
+            timer_prefix = "WARN" if ascii_compact else "😱"
 
     parsed_question_lines = parse_question_lines(q["question"])
     rendered_question_lines: list[tuple[str, bool]] = []
@@ -1457,120 +1483,60 @@ def build_question_markup(
             rendered_question_lines.append((render_inline_markdown_for_prompt_toolkit(raw_line), False))
 
     code_side_margin = 2
-    visible_widths = [
-        display_width(html.unescape(strip_prompt_toolkit_tags(line))) + (code_side_margin * 2 if is_code else 0)
-        for line, is_code in rendered_question_lines
-    ] or [0]
-    question_width = max(40, max(visible_widths))
-    question_box_top = "┌" + ("─" * (question_width + 2)) + "┐"
-    question_box_bot = "└" + ("─" * (question_width + 2)) + "┘"
-
     if no_color:
-        plain_progress = f"Question {question_index}/{total_questions} {progress_bar}"
+        timer_text = ""
         if remaining is not None:
-            plain_progress += f"  {timer_prefix} {remaining}s"
-        plain_progress += f"  {question_type_badge}"
+            timer_text = f"{timer_prefix} {remaining}s"
+        header = (
+            f"Question {question_index}/{total_questions} {progress_bar}"
+            + (f"  {timer_text}" if timer_text else "")
+            + f"{separator}{question_type_badge}{separator}{instruction}"
+        )
+        lines = [header, ""]
 
-        lines = [plain_progress]
-        if not compact:
-            lines.append("")
-            lines.append(question_box_top)
-
-        for idx, (line, is_code) in enumerate(rendered_question_lines):
-            visible = html.unescape(strip_prompt_toolkit_tags(line))
-            current_width = display_width(visible)
+        for line, is_code in rendered_question_lines:
             plain_line = strip_prompt_toolkit_tags(line)
             if is_code:
-                is_code_start = idx == 0 or not rendered_question_lines[idx - 1][1]
-                is_code_end = idx == len(rendered_question_lines) - 1 or not rendered_question_lines[idx + 1][1]
-                code_inner_width = max(0, question_width - (code_side_margin * 2))
-                code_padding = " " * max(0, code_inner_width - current_width)
-                if is_code_start and not compact:
-                    lines.append(f"│ {' ' * question_width} │")
-                code_line = f"{' ' * code_side_margin}{plain_line}{code_padding}{' ' * code_side_margin}"
-                if compact:
-                    lines.append(code_line)
-                else:
-                    lines.append(f"│ {code_line} │")
-                if is_code_end and not compact:
-                    lines.append(f"│ {' ' * question_width} │")
+                lines.append(f"  {plain_line}")
             else:
-                padding = " " * max(0, question_width - current_width)
-                if compact:
-                    lines.append(f"{plain_line}")
-                else:
-                    lines.append(f"│ {plain_line}{padding} │")
+                lines.append(plain_line)
 
-        if not compact:
-            lines.extend([question_box_bot, "", instruction, "", "-------- Choices --------", ""])
-        else:
-            lines.extend(["", instruction, "", "Choices:", ""])
+        lines.extend(["", ""])
     else:
-        lines = [
+        timer_part = ""
+        if remaining is not None:
+            timer_value = f"{timer_prefix} {remaining}s"
+            timer_part = f"  <style fg='{timer_color}'>{timer_value}</style>"
+
+        header = (
             f"<style fg='{theme['pt_instruction']}'><b>Question {question_index}/{total_questions}</b> {progress_bar}</style>"
-            + (f"  <style fg='{timer_color}'>{timer_prefix} {remaining}s</style>" if remaining is not None else "")
-            + f"  <style fg='{theme['pt_instruction']}'>{html.escape(question_type_badge)}</style>",
-            "",
-        ]
-        if not compact:
-            lines.append(f"<style fg='{theme['pt_title']}'>{question_box_top}</style>")
+            + timer_part
+            + f" <style fg='{theme['pt_instruction']}'>{html.escape(separator + question_type_badge + separator + instruction)}</style>"
+        )
+        lines = [header, ""]
 
-        for idx, (line, is_code) in enumerate(rendered_question_lines):
-            visible = html.unescape(strip_prompt_toolkit_tags(line))
-            current_width = display_width(visible)
+        for line, is_code in rendered_question_lines:
             if is_code:
-                is_code_start = idx == 0 or not rendered_question_lines[idx - 1][1]
-                is_code_end = idx == len(rendered_question_lines) - 1 or not rendered_question_lines[idx + 1][1]
-                code_inner_width = max(0, question_width - (code_side_margin * 2))
-                code_padding = " " * max(0, code_inner_width - current_width)
                 code_style = f"fg='{theme.get('pt_code', theme['pt_primary'])}' bg='{theme['pt_code_bg']}'"
-                if is_code_start and not compact:
-                    spacer = f"<style {code_style}>{' ' * question_width}</style>"
-                    lines.append(f"<style fg='{theme['pt_title']}'>│ {spacer} │</style>")
-                code_line = (
-                    f"<style {code_style}>"
-                    f"{' ' * code_side_margin}{line}{code_padding}{' ' * code_side_margin}"
-                    f"</style>"
-                )
-                if compact:
-                    lines.append(code_line)
-                else:
-                    lines.append(f"<style fg='{theme['pt_title']}'>│ {code_line} │</style>")
-                if is_code_end and not compact:
-                    spacer = f"<style {code_style}>{' ' * question_width}</style>"
-                    lines.append(f"<style fg='{theme['pt_title']}'>│ {spacer} │</style>")
+                lines.append(f"<style {code_style}>  {line}</style>")
             else:
-                padding = " " * max(0, question_width - current_width)
-                if compact:
-                    lines.append(line)
-                else:
-                    lines.append(f"<style fg='{theme['pt_title']}'>│ {line}{padding} │</style>")
+                lines.append(line)
 
-        if not compact:
-            lines.extend([
-                f"<style fg='{theme['pt_title']}'>{question_box_bot}</style>",
-                "",
-                f"<style fg='{theme['pt_instruction']}'>{html.escape(instruction)}</style>",
-                "",
-                f"<style fg='{theme['pt_instruction']}'>──────── Choices ────────</style>",
-                "",
-            ])
-        else:
-            lines.extend([
-                "",
-                f"<style fg='{theme['pt_instruction']}'>{html.escape(instruction)}</style>",
-                "",
-                f"<style fg='{theme['pt_instruction']}'>Choices:</style>",
-                "",
-            ])
+        lines.extend(["", ""])
 
     for i, opt in enumerate(q["options"]):
         idx = i + 1
         pointer = "&gt;" if i == selected else " "
         if is_multiple:
-            marker = ("[x]" if idx in marked else "[ ]") if no_color else ("☑" if idx in marked else "☐")
+            if no_color or ascii_compact:
+                marker = "[x]" if idx in marked else "[ ]"
+            else:
+                marker = "☑" if idx in marked else "☐"
         else:
-            marker = ("(*)" if idx in marked else "( )") if no_color else ("◉" if idx in marked else "○")
+            if no_color or ascii_compact:
+                marker = "(*)" if idx in marked else "( )"
+            else:
+                marker = "◉" if idx in marked else "○"
 
         if idx in marked:
             style = f"fg='{theme['pt_marked_fg']}' bg='{theme['pt_marked_bg']}'"
@@ -1623,6 +1589,9 @@ async def ask_question(
     marked = set()
     pulse = False
     remaining = q["time_limit"]
+    force_compact = compact
+    current_columns = get_terminal_columns()
+    current_compact = force_compact or should_use_compact_layout(columns=current_columns)
     result = {"answer": None}
     is_multiple = q.get("type", "single") == "multiple"
 
@@ -1637,15 +1606,16 @@ async def ask_question(
             question_index=question_index,
             total_questions=total_questions,
             pulse=pulse,
+            timer_blink=bool(remaining is not None and remaining <= 10 and remaining % 2 == 0),
             no_color=no_color,
-            compact=compact,
+            compact=current_compact,
         )
         if no_color:
             return markup
         return PromptHTML(markup)
 
     control = FormattedTextControl(text=render)
-    window = Window(content=control)
+    window = Window(content=control, wrap_lines=True, always_hide_cursor=True)
     kb = KeyBindings()
 
     @kb.add("up")
@@ -1682,7 +1652,12 @@ async def ask_question(
     def _(event):
         event.app.exit(exception=KeyboardInterrupt())
 
-    app = Application(layout=Layout(HSplit([window])), key_bindings=kb)
+    app = Application(
+        layout=Layout(HSplit([window])),
+        key_bindings=kb,
+        full_screen=True,
+        erase_when_done=True,
+    )
 
     async def timer():
         nonlocal remaining
@@ -1697,13 +1672,33 @@ async def ask_question(
             result["answer"] = None
             app.exit()
 
+    async def watch_resize():
+        nonlocal current_columns, current_compact, pulse
+        while True:
+            await asyncio.sleep(0.2)
+            columns = get_terminal_columns(default=current_columns)
+            if columns == current_columns:
+                continue
+            current_columns = columns
+            if not force_compact:
+                current_compact = should_use_compact_layout(columns=columns)
+            pulse = not pulse
+            control.text = render()
+            app.invalidate()
+
     task = asyncio.create_task(timer())
+    resize_task = asyncio.create_task(watch_resize())
     try:
         await app.run_async()
     finally:
         task.cancel()
+        resize_task.cancel()
         try:
             await task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await resize_task
         except asyncio.CancelledError:
             pass
 
@@ -1768,7 +1763,6 @@ def run(title, questions, theme_name: str = "auto", no_color: bool = False):
     console.print(LOGO)
 
     theme = select_theme(theme_name)
-    compact = should_use_compact_layout()
     saved_answers = []
 
     try:
@@ -1800,7 +1794,7 @@ def run(title, questions, theme_name: str = "auto", no_color: bool = False):
                     question_index=i,
                     total_questions=len(questions),
                     no_color=no_color,
-                    compact=compact,
+                    compact=False,
                 )
             )
 
@@ -1931,7 +1925,7 @@ def run_essay(
         f"## Question\n\n{question}\n\n"
         f"## Instructions\n\n{instructions}\n\n"
         f"## Hint\n\n{hint_text}\n\n"
-        f"**✓ Press Enter to open your editor and write your answer.**"
+        f"**⏎ Press Enter to open your editor and write your answer.**"
     )
 
     try:
@@ -1949,6 +1943,20 @@ def run_essay(
             console.print("✓ Answer captured.")
         else:
             console.print(f"[bold {theme['success']}]✓ Answer captured.[/bold {theme['success']}]")
+
+        provider_name = _provider_display_name(resolved_provider)
+        provider_chip = f"✓ Connected: {provider_name} ({resolved_model})"
+        if no_color:
+            console.print(provider_chip)
+        else:
+            console.print(
+                Panel(
+                    f"[bold {theme['success']}]✓[/bold {theme['success']}] "
+                    f"[bold {theme['primary']}]{provider_name}[/bold {theme['primary']}] "
+                    f"[{theme['pt_instruction']}]({resolved_model})[/]",
+                    border_style=theme["success"],
+                )
+            )
 
         grade = None
         fallback_message = ""
@@ -2178,7 +2186,10 @@ def main():
         print(f"quizmd --validate {created[0]}")
         print(f"quizmd {created[0]}")
         print(f"quizmd --validate {created[1]}")
-        print('export GEMINI_API_KEY="your_key_here"  # or OPENAI_API_KEY / ANTHROPIC_API_KEY')
+        if _is_windows():
+            print('$env:GEMINI_API_KEY="your_api_key_here"  # or $env:OPENAI_API_KEY / $env:ANTHROPIC_API_KEY')
+        else:
+            print('export GEMINI_API_KEY="your_api_key_here"  # or OPENAI_API_KEY / ANTHROPIC_API_KEY')
         print(f"quizmd {created[1]}")
         return
 

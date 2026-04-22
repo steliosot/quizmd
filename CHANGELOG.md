@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## v2.1.1 - 2026-04-22
+
+- Fixed low-time countdown rendering so timer always keeps visible seconds (no blank `😱  s` state).
+- Improved terminal resize behavior in interactive quiz mode:
+  - full-screen prompt rendering and clean redraws
+  - dynamic compact-layout switching on width changes
+  - safer ASCII-first compact header/badges on Windows narrow terminals
+- Added tests for compact Windows header rendering and kept full suite green.
+
 ## v2.1.0 - 2026-04-22
 
 - Added `quizmd init` fast-start scaffolding with starter MCQ/essay templates.

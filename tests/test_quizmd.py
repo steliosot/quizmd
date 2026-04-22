@@ -6,6 +6,8 @@ import os
 import json
 import re
 import urllib.error
+import io
+import contextlib
 from unittest.mock import patch
 from pathlib import Path
 
@@ -17,6 +19,7 @@ from quizmd import (
     _available_ai_providers_by_priority,
     _env_key_for_provider,
     _evaluator_for_provider,
+    _provider_display_name,
     _redacted_ai_error,
     _resolve_ai_provider,
     _score_encouragement,
@@ -324,8 +327,10 @@ class QuizMarkdownTests(unittest.TestCase):
             with patch.dict("os.environ", {}, clear=True):
                 with patch("quizmd.ask_yes_no", return_value=True):
                     with patch("subprocess.run", side_effect=fake_editor):
-                        answer = collect_essay_answer_via_editor("Sample")
+                        with patch("builtins.print") as mocked_print:
+                            answer = collect_essay_answer_via_editor("Sample")
         self.assertEqual(answer, "Windows answer")
+        self.assertTrue(any("save and close Notepad" in str(call) for call in mocked_print.call_args_list))
 
     def test_collect_essay_answer_windows_notepad_prompt_declined(self):
         with patch("quizmd._is_windows", return_value=True):
@@ -587,6 +592,8 @@ class QuizMarkdownTests(unittest.TestCase):
             self.assertEqual(_resolve_ai_provider("auto"), "anthropic")
         with patch.dict("os.environ", {"GEMINI_API_KEY": "g", "OPENAI_API_KEY": "o"}, clear=True):
             self.assertEqual(_available_ai_providers_by_priority(), ["gemini", "openai"])
+        self.assertEqual(_provider_display_name("openai"), "OpenAI")
+        self.assertEqual(_provider_display_name("anthropic"), "Claude")
 
     def test_deterministic_fallback_no_score(self):
         essay = {
@@ -1457,7 +1464,53 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("ansiyellow", normal)
         self.assertIn("ansimagenta", warning)
         self.assertIn("ansired", danger)
-        self.assertIn("Select with Space, then Enter", normal)
+        self.assertIn("Space select • Enter submit", normal)
+
+    def test_build_question_markup_blinks_timer_under_ten_seconds(self):
+        question = {
+            "title": "Question 1",
+            "question": "Pick one",
+            "options": ["A", "B"],
+            "correct": [1],
+            "type": "single",
+            "time_limit": 10,
+            "explanation": "",
+        }
+        blink = build_question_markup(
+            question,
+            THEMES["dark"],
+            selected=0,
+            marked=set(),
+            remaining=8,
+            is_multiple=False,
+            timer_blink=True,
+        )
+        self.assertIn("😱", blink)
+        self.assertIn("8s", blink)
+
+    def test_build_question_markup_compact_windows_uses_ascii_safe_header(self):
+        question = {
+            "title": "Question 1",
+            "question": "Pick one",
+            "options": ["A", "B"],
+            "correct": [1],
+            "type": "single",
+            "time_limit": 10,
+            "explanation": "",
+        }
+        with patch("quizmd._is_windows", return_value=True):
+            compact = build_question_markup(
+                question,
+                THEMES["dark"],
+                selected=0,
+                marked=set(),
+                remaining=8,
+                is_multiple=False,
+                compact=True,
+            )
+        self.assertIn("WARN 8s", compact)
+        self.assertIn("[SINGLE]", compact)
+        self.assertIn("Space select | Enter submit", compact)
 
     def test_build_question_markup_handles_multiline_question_box(self):
         question = {
@@ -1479,8 +1532,6 @@ class QuizMarkdownTests(unittest.TestCase):
             question_index=1,
             total_questions=2,
         )
-        self.assertIn("┌", markup)
-        self.assertIn("└", markup)
         self.assertIn("print", markup)
         self.assertNotIn("```", markup)
         self.assertIn("bg='#1d2630'", markup)
@@ -1573,6 +1624,21 @@ class QuizMarkdownTests(unittest.TestCase):
                     main()
                 self.assertTrue(Path("hello-quiz.md").exists())
                 self.assertTrue(Path("hello-essay.md").exists())
+            finally:
+                os.chdir(old_cwd)
+
+    def test_main_init_prints_platform_specific_env_hint(self):
+        old_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                with patch("quizmd._is_windows", return_value=True):
+                    with patch("sys.argv", ["quizmd.py", "init"]):
+                        buf = io.StringIO()
+                        with contextlib.redirect_stdout(buf):
+                            main()
+                out = buf.getvalue()
+                self.assertIn("$env:GEMINI_API_KEY=", out)
             finally:
                 os.chdir(old_cwd)
 
