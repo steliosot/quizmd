@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## v2.1.0 - 2026-04-22
+
+- Added `quizmd init` fast-start scaffolding with starter MCQ/essay templates.
+- Added multi-provider essay evaluation support for Gemini, OpenAI, and Anthropic.
+- Added `--ai-provider auto` with key-priority and runtime failover (gemini -> openai -> anthropic).
+- Improved provider-specific key errors and CLI help/docs for AI setup.
+- Expanded test coverage for provider routing, auto fallback, and starter generation.
+
 ## v2.0.2 - 2026-04-21
 
 - Hardened essay AI response normalization and retry fallback reason categories.

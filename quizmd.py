@@ -24,11 +24,14 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.0.2"
-DEFAULT_AI_PROVIDER = "gemini"
+__version__ = "2.1.0"
+DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_ANTHROPIC_MODEL = "claude-3-5-haiku-latest"
+AI_PROVIDER_PRIORITY = ("gemini", "openai", "anthropic")
 GEMINI_REQUESTS_PER_MINUTE = 15
-MAX_GEMINI_REQUEST_BYTES = 48_000
+MAX_AI_REQUEST_BYTES = 48_000
 _GEMINI_REQUEST_TIMES: deque[float] = deque()
 
 LOGO = r"""
@@ -36,6 +39,109 @@ LOGO = r"""
 ▌ ▌▌ ▌▄ ▀▜▘▌▘▌▌ ▌
 ▌▚▘▌ ▌▐ ▗▘ ▌ ▌▌ ▌
 ▝▘▘▝▀▘▀▘▀▀▘▘ ▘▀▀ 
+"""
+
+HELLO_QUIZ_TEMPLATE = """# Hello Quiz
+
+## Question 1
+What is 2 + 2?
+
+- 3
+- 4
+- 5
+
+Answer: 2
+Type: single
+Time: 20
+Explanation: 2 + 2 equals 4.
+
+## Question 2
+Which are Python data types?
+
+- list
+- banana
+- dict
+- integer
+
+Answer: 1,3,4
+Type: multiple
+Time: 25
+Explanation: list, dict, and integer are valid Python data types.
+
+## Question 3
+What does this print?
+```python
+name = "Stelios"
+print(name.upper())
+```
+
+- stelios
+- STELIOS
+- Name
+- upper
+
+Answer: 2
+Type: single
+Time: 25
+Explanation: .upper() converts text to uppercase.
+"""
+
+HELLO_ESSAY_TEMPLATE = """# Essay Question: requirements basics
+
+## Question
+What is `requirements.txt` and why is it useful in Python projects?
+
+## Instructions for Students
+Write 5-10 lines.
+Be clear and practical.
+
+## Instructor Name
+Stelios
+
+## Hint
+🤔 Hint: Think about dependencies, reproducibility, and collaboration.
+
+## Evaluation Criteria (Total: 3 points)
+1. **Dependency listing (1 point)**
+- Mentions project packages are listed in one file
+2. **Reproducibility (1 point)**
+- Mentions same environment across machines
+3. **Collaboration (1 point)**
+- Mentions easier teamwork and avoids "works on my machine"
+
+## Reference Answer
+`requirements.txt` lists dependencies (often with pinned versions) so everyone can install the same environment and run the project consistently.
+
+## AI Evaluation Rules
+Evaluate only by the rubric above.
+Do not use external knowledge.
+Score = (points achieved / 3) x 100.
+
+## Output Format
+Score: XX%
+
+Feedback:
+- What the student did well
+- What is missing
+- 1-2 suggestions for improvement
+"""
+
+QUIZ_GUIDE_TEMPLATE = """# QuizMD Quick Start
+
+## Run the MCQ starter
+
+```bash
+quizmd --validate hello-quiz.md
+quizmd hello-quiz.md
+```
+
+## Run the essay starter
+
+```bash
+quizmd --validate hello-essay.md
+export GEMINI_API_KEY="your_key_here"  # or OPENAI_API_KEY / ANTHROPIC_API_KEY
+quizmd hello-essay.md
+```
 """
 
 THEMES = {
@@ -599,6 +705,30 @@ def ask_yes_no(prompt: str) -> bool:
             return False
 
 
+def init_starter_files(target_dir: str = ".", force: bool = False) -> list[Path]:
+    base = Path(target_dir).expanduser()
+    base.mkdir(parents=True, exist_ok=True)
+    files_to_create = [
+        ("hello-quiz.md", HELLO_QUIZ_TEMPLATE),
+        ("hello-essay.md", HELLO_ESSAY_TEMPLATE),
+        ("QUIZ_GUIDE.md", QUIZ_GUIDE_TEMPLATE),
+    ]
+
+    existing = [str(base / name) for name, _ in files_to_create if (base / name).exists()]
+    if existing and not force:
+        raise RuntimeError(
+            "Refusing to overwrite existing file(s). Re-run with --force.\n"
+            + "\n".join(existing)
+        )
+
+    created: list[Path] = []
+    for name, content in files_to_create:
+        out = base / name
+        out.write_text(content, encoding="utf-8")
+        created.append(out)
+    return created
+
+
 def prompt_input(prompt: str = "") -> str:
     try:
         return input(prompt)
@@ -721,14 +851,14 @@ def _coerce_text_list(value) -> list[str]:
     return [str(value).strip()] if str(value).strip() else []
 
 
-def _normalize_gemini_grade(raw_grade, expected_total_points: int) -> dict:
+def _normalize_model_grade(raw_grade, expected_total_points: int, provider_name: str = "model") -> dict:
     if isinstance(raw_grade, list):
         if len(raw_grade) == 1 and isinstance(raw_grade[0], dict):
             raw_grade = raw_grade[0]
         else:
-            raise ValueError("Gemini JSON returned a list instead of a single object")
+            raise ValueError(f"{provider_name} JSON returned a list instead of a single object")
     if not isinstance(raw_grade, dict):
-        raise ValueError("Gemini JSON must be an object")
+        raise ValueError(f"{provider_name} JSON must be an object")
 
     required_keys = {
         "points_awarded",
@@ -740,21 +870,21 @@ def _normalize_gemini_grade(raw_grade, expected_total_points: int) -> dict:
     }
     missing_keys = sorted(required_keys - set(raw_grade.keys()))
     if missing_keys:
-        raise ValueError(f"Gemini JSON missing key(s): {', '.join(missing_keys)}")
+        raise ValueError(f"{provider_name} JSON missing key(s): {', '.join(missing_keys)}")
 
     try:
         graded_total = int(raw_grade["total_points"])
         points_awarded = float(raw_grade["points_awarded"])
         score_percent = float(raw_grade["score_percent"])
     except (TypeError, ValueError) as exc:
-        raise ValueError("Gemini JSON has invalid numeric values") from exc
+        raise ValueError(f"{provider_name} JSON has invalid numeric values") from exc
 
     if graded_total != expected_total_points:
         raise ValueError(
-            f"Gemini JSON total_points={graded_total} does not match rubric total={expected_total_points}"
+            f"{provider_name} JSON total_points={graded_total} does not match rubric total={expected_total_points}"
         )
     if points_awarded < 0 or points_awarded > graded_total:
-        raise ValueError("Gemini JSON points_awarded is out of valid range")
+        raise ValueError(f"{provider_name} JSON points_awarded is out of valid range")
 
     expected_percent = (points_awarded / graded_total) * 100 if graded_total else 0.0
     if abs(expected_percent - score_percent) > 0.5:
@@ -779,6 +909,53 @@ def _normalize_gemini_grade(raw_grade, expected_total_points: int) -> dict:
         "scoring_mode": "llm_rubric",
         "scoring_confidence": "high",
     }
+
+
+def _normalize_gemini_grade(raw_grade, expected_total_points: int) -> dict:
+    return _normalize_model_grade(raw_grade, expected_total_points, provider_name="Gemini")
+
+
+def _build_essay_eval_prompt(essay: dict, student_answer: str) -> str:
+    rubric_text = "\n".join(_rubric_lines(essay["criteria"]))
+    return (
+        "You are grading one student answer using ONLY the supplied rubric and rules.\n"
+        "Do not use external knowledge.\n\n"
+        f"Question:\n{essay['question']}\n\n"
+        f"Student Answer:\n{student_answer}\n\n"
+        f"Evaluation Criteria (Total {essay['total_points']} points):\n{rubric_text}\n\n"
+        f"Reference Answer:\n{essay['reference_answer']}\n\n"
+        f"AI Evaluation Rules:\n{essay['ai_evaluation_rules']}\n\n"
+        "Return strict JSON with keys:\n"
+        "points_awarded (number), total_points (number), score_percent (number), "
+        "did_well (array of strings), missing (array of strings), suggestions (array of strings).\n"
+        "Ensure total_points matches the rubric total."
+    )
+
+
+def _classify_provider_error(exc: Exception) -> tuple[bool, str]:
+    code = getattr(exc, "code", None)
+    if isinstance(code, int):
+        retryable = code == 429 or 500 <= code < 600
+        if code == 429:
+            return retryable, "rate_limit"
+        if code == 401:
+            return retryable, "unauthorized"
+        if code == 403:
+            return retryable, "forbidden"
+        if code == 404:
+            return retryable, "not_found"
+        if 500 <= code < 600:
+            return retryable, "server_error"
+        return retryable, "http_error"
+
+    retryable = isinstance(exc, (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError))
+    if isinstance(exc, TimeoutError):
+        return retryable, "timeout"
+    if isinstance(exc, urllib.error.URLError):
+        return retryable, "network_error"
+    if isinstance(exc, (ValueError, json.JSONDecodeError)):
+        return retryable, "invalid_response"
+    return retryable, "unknown_error"
 
 
 def _rubric_lines(criteria: list[dict]) -> list[str]:
@@ -807,20 +984,7 @@ def evaluate_essay_with_gemini(
     timeout: int,
     max_retries: int = 3,
 ) -> dict:
-    rubric_text = "\n".join(_rubric_lines(essay["criteria"]))
-    prompt = (
-        "You are grading one student answer using ONLY the supplied rubric and rules.\n"
-        "Do not use external knowledge.\n\n"
-        f"Question:\n{essay['question']}\n\n"
-        f"Student Answer:\n{student_answer}\n\n"
-        f"Evaluation Criteria (Total {essay['total_points']} points):\n{rubric_text}\n\n"
-        f"Reference Answer:\n{essay['reference_answer']}\n\n"
-        f"AI Evaluation Rules:\n{essay['ai_evaluation_rules']}\n\n"
-        "Return strict JSON with keys:\n"
-        "points_awarded (number), total_points (number), score_percent (number), "
-        "did_well (array of strings), missing (array of strings), suggestions (array of strings).\n"
-        "Ensure total_points matches the rubric total."
-    )
+    prompt = _build_essay_eval_prompt(essay, student_answer)
 
     payload = {
         "contents": [
@@ -835,7 +999,7 @@ def evaluate_essay_with_gemini(
         },
     }
     body = json.dumps(payload).encode("utf-8")
-    if len(body) > MAX_GEMINI_REQUEST_BYTES:
+    if len(body) > MAX_AI_REQUEST_BYTES:
         raise RuntimeError(
             "[payload_too_large] Essay content is too large for AI grading. "
             "Shorten the question/reference answer or reduce student answer length and retry."
@@ -867,32 +1031,12 @@ def evaluate_essay_with_gemini(
                 if not text.strip():
                     raise ValueError("Gemini response did not contain text output")
                 graded = _extract_json_object(text)
-                return _normalize_gemini_grade(graded, int(essay["total_points"]))
+                return _normalize_model_grade(graded, int(essay["total_points"]), provider_name="Gemini")
         except Exception as exc:  # network/parser/HTTP handling
             if isinstance(exc, KeyboardInterrupt):
                 raise
             last_error = exc
-            code = getattr(exc, "code", None)
-            if isinstance(code, int):
-                retryable = code == 429 or 500 <= code < 600
-                if code == 429:
-                    reason_code = "rate_limit"
-                elif code == 404:
-                    reason_code = "not_found"
-                elif 500 <= code < 600:
-                    reason_code = "server_error"
-                else:
-                    reason_code = "http_error"
-            else:
-                retryable = isinstance(exc, (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError))
-                if isinstance(exc, TimeoutError):
-                    reason_code = "timeout"
-                elif isinstance(exc, urllib.error.URLError):
-                    reason_code = "network_error"
-                elif isinstance(exc, (ValueError, json.JSONDecodeError)):
-                    reason_code = "invalid_response"
-                else:
-                    reason_code = "unknown_error"
+            retryable, reason_code = _classify_provider_error(exc)
 
         if attempt >= max_retries or not retryable:
             break
@@ -900,6 +1044,141 @@ def evaluate_essay_with_gemini(
         time.sleep(sleep_seconds)
 
     raise RuntimeError(f"[{reason_code}] Gemini evaluation failed after retries: {last_error}")
+
+
+def evaluate_essay_with_openai(
+    essay: dict,
+    student_answer: str,
+    api_key: str,
+    model: str,
+    timeout: int,
+    max_retries: int = 3,
+) -> dict:
+    prompt = _build_essay_eval_prompt(essay, student_answer)
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "Return valid JSON only. Follow the rubric exactly.",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0,
+    }
+    body = json.dumps(payload).encode("utf-8")
+    if len(body) > MAX_AI_REQUEST_BYTES:
+        raise RuntimeError(
+            "[payload_too_large] Essay content is too large for AI grading. "
+            "Shorten the question/reference answer or reduce student answer length and retry."
+        )
+
+    endpoint = "https://api.openai.com/v1/chat/completions"
+    last_error = None
+    reason_code = "unknown_error"
+    for attempt in range(max_retries + 1):
+        request = urllib.request.Request(
+            endpoint,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+                choices = response_payload.get("choices", [])
+                if not choices:
+                    raise ValueError("OpenAI response missing choices")
+                message = choices[0].get("message", {})
+                text = message.get("content", "")
+                if isinstance(text, list):
+                    text = "".join(item.get("text", "") for item in text if isinstance(item, dict))
+                if not isinstance(text, str) or not text.strip():
+                    raise ValueError("OpenAI response did not contain text output")
+                graded = _extract_json_object(text)
+                return _normalize_model_grade(graded, int(essay["total_points"]), provider_name="OpenAI")
+        except Exception as exc:  # network/parser/HTTP handling
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            last_error = exc
+            retryable, reason_code = _classify_provider_error(exc)
+
+        if attempt >= max_retries or not retryable:
+            break
+        sleep_seconds = (2 ** attempt) + random.uniform(0.1, 0.35)
+        time.sleep(sleep_seconds)
+
+    raise RuntimeError(f"[{reason_code}] OpenAI evaluation failed after retries: {last_error}")
+
+
+def evaluate_essay_with_anthropic(
+    essay: dict,
+    student_answer: str,
+    api_key: str,
+    model: str,
+    timeout: int,
+    max_retries: int = 3,
+) -> dict:
+    prompt = _build_essay_eval_prompt(essay, student_answer)
+    payload = {
+        "model": model,
+        "max_tokens": 1000,
+        "temperature": 0,
+        "system": "Return valid JSON only. Follow the rubric exactly.",
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    body = json.dumps(payload).encode("utf-8")
+    if len(body) > MAX_AI_REQUEST_BYTES:
+        raise RuntimeError(
+            "[payload_too_large] Essay content is too large for AI grading. "
+            "Shorten the question/reference answer or reduce student answer length and retry."
+        )
+
+    endpoint = "https://api.anthropic.com/v1/messages"
+    last_error = None
+    reason_code = "unknown_error"
+    for attempt in range(max_retries + 1):
+        request = urllib.request.Request(
+            endpoint,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+                blocks = response_payload.get("content", [])
+                if not isinstance(blocks, list) or not blocks:
+                    raise ValueError("Anthropic response missing content")
+                text = "".join(
+                    block.get("text", "")
+                    for block in blocks
+                    if isinstance(block, dict) and block.get("type") == "text"
+                )
+                if not text.strip():
+                    raise ValueError("Anthropic response did not contain text output")
+                graded = _extract_json_object(text)
+                return _normalize_model_grade(graded, int(essay["total_points"]), provider_name="Anthropic")
+        except Exception as exc:  # network/parser/HTTP handling
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            last_error = exc
+            retryable, reason_code = _classify_provider_error(exc)
+
+        if attempt >= max_retries or not retryable:
+            break
+        sleep_seconds = (2 ** attempt) + random.uniform(0.1, 0.35)
+        time.sleep(sleep_seconds)
+
+    raise RuntimeError(f"[{reason_code}] Anthropic evaluation failed after retries: {last_error}")
 
 
 def evaluate_essay_deterministic_fallback(
@@ -984,6 +1263,55 @@ def _redacted_ai_error(reason_code: str, ai_unavailable: bool) -> str:
     if not ai_unavailable:
         return ""
     return f"AI unavailable ({reason_code or 'unknown_error'}). Detailed provider error omitted for privacy."
+
+
+def _default_model_for_provider(ai_provider: str) -> str:
+    if ai_provider == "gemini":
+        return DEFAULT_GEMINI_MODEL
+    if ai_provider == "openai":
+        return DEFAULT_OPENAI_MODEL
+    if ai_provider == "anthropic":
+        return DEFAULT_ANTHROPIC_MODEL
+    raise RuntimeError(f"Unsupported AI provider {ai_provider!r}.")
+
+
+def _evaluator_for_provider(ai_provider: str):
+    if ai_provider == "gemini":
+        return evaluate_essay_with_gemini
+    if ai_provider == "openai":
+        return evaluate_essay_with_openai
+    if ai_provider == "anthropic":
+        return evaluate_essay_with_anthropic
+    raise RuntimeError(f"Unsupported AI provider {ai_provider!r}.")
+
+
+def _env_key_for_provider(ai_provider: str) -> str:
+    if ai_provider == "gemini":
+        return "GEMINI_API_KEY"
+    if ai_provider == "openai":
+        return "OPENAI_API_KEY"
+    if ai_provider == "anthropic":
+        return "ANTHROPIC_API_KEY"
+    raise RuntimeError(f"Unsupported AI provider {ai_provider!r}.")
+
+
+def _resolve_ai_provider(ai_provider: str) -> str:
+    if ai_provider != "auto":
+        return ai_provider
+    for provider in AI_PROVIDER_PRIORITY:
+        env_key = _env_key_for_provider(provider)
+        if os.environ.get(env_key, "").strip():
+            return provider
+    return "auto"
+
+
+def _available_ai_providers_by_priority() -> list[str]:
+    providers = []
+    for provider in AI_PROVIDER_PRIORITY:
+        env_key = _env_key_for_provider(provider)
+        if os.environ.get(env_key, "").strip():
+            providers.append(provider)
+    return providers
 
 
 def collect_essay_answer_via_editor(question_title: str, question_text: str = "") -> str:
@@ -1555,7 +1883,7 @@ def run_essay(
     theme_name: str = "auto",
     no_color: bool = False,
     ai_provider: str = DEFAULT_AI_PROVIDER,
-    ai_model: str = DEFAULT_GEMINI_MODEL,
+    ai_model: str = "",
     ai_timeout: int = 30,
 ):
     try:
@@ -1567,17 +1895,30 @@ def run_essay(
             "Running the quiz requires rich. Install dependencies from requirements.txt."
         ) from exc
 
-    if ai_provider != "gemini":
-        raise RuntimeError(f"Unsupported AI provider {ai_provider!r}. Only 'gemini' is supported in essay mode.")
+    requested_provider = ai_provider
+    if ai_provider == "auto":
+        provider_candidates = _available_ai_providers_by_priority()
+    else:
+        provider_candidates = [_resolve_ai_provider(ai_provider)]
 
-    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if not api_key:
+    if not provider_candidates:
         raise RuntimeError(
-            "Essay mode requires GEMINI_API_KEY.\n"
-            "Standard multiple-choice quizzes do not use AI and do not need this key.\n"
-            "Set it before running, e.g.:\n"
-            "export GEMINI_API_KEY='your_key_here'"
+            "Essay mode with provider 'auto' requires at least one key.\n"
+            "Checked in priority order: GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY."
         )
+
+    # Start with first candidate; this may be replaced by failover in auto mode.
+    resolved_provider = provider_candidates[0]
+    resolved_model = ai_model.strip() if ai_model else _default_model_for_provider(resolved_provider)
+    if requested_provider != "auto":
+        env_key = _env_key_for_provider(resolved_provider)
+        if not os.environ.get(env_key, "").strip():
+            raise RuntimeError(
+                f"Essay mode with provider '{resolved_provider}' requires {env_key}.\n"
+                "Standard multiple-choice quizzes do not use AI and do not need this key.\n"
+                "Set it before running, e.g.:\n"
+                f"export {env_key}='your_key_here'"
+            )
 
     theme = select_theme(theme_name)
     console = Console(no_color=no_color)
@@ -1609,29 +1950,88 @@ def run_essay(
         else:
             console.print(f"[bold {theme['success']}]✓ Answer captured.[/bold {theme['success']}]")
 
-        try:
-            grade = evaluate_essay_with_loading(
-                console,
-                theme,
-                evaluate_essay_with_gemini,
-                instructor_name=essay.get("instructor_name", ""),
-                essay=essay,
-                student_answer=student_answer,
-                api_key=api_key,
-                model=ai_model,
-                timeout=ai_timeout,
-            )
-        except RuntimeError as exc:
-            fallback_reason = "unknown_error"
-            fallback_message = str(exc)
-            if fallback_message.startswith("[") and "]" in fallback_message:
-                fallback_reason = fallback_message[1 : fallback_message.index("]")]
-            grade = evaluate_essay_deterministic_fallback(
-                essay,
-                student_answer,
-                fallback_message,
-                reason_code=fallback_reason,
-            )
+        grade = None
+        fallback_message = ""
+        fallback_reason = "unknown_error"
+        attempted_providers: list[str] = []
+
+        if requested_provider == "auto":
+            for idx, provider in enumerate(provider_candidates):
+                env_key = _env_key_for_provider(provider)
+                api_key = os.environ.get(env_key, "").strip()
+                if not api_key:
+                    continue
+                evaluator = _evaluator_for_provider(provider)
+                model_for_provider = (
+                    ai_model.strip() if ai_model and idx == 0 else _default_model_for_provider(provider)
+                )
+                attempted_providers.append(provider)
+                try:
+                    grade = evaluate_essay_with_loading(
+                        console,
+                        theme,
+                        evaluator,
+                        instructor_name=essay.get("instructor_name", ""),
+                        essay=essay,
+                        student_answer=student_answer,
+                        api_key=api_key,
+                        model=model_for_provider,
+                        timeout=ai_timeout,
+                    )
+                    resolved_provider = provider
+                    resolved_model = model_for_provider
+                    break
+                except RuntimeError as exc:
+                    fallback_message = str(exc)
+                    if fallback_message.startswith("[") and "]" in fallback_message:
+                        fallback_reason = fallback_message[1 : fallback_message.index("]")]
+
+            if grade is None:
+                grade = evaluate_essay_deterministic_fallback(
+                    essay,
+                    student_answer,
+                    fallback_message or "All AI providers failed.",
+                    reason_code=fallback_reason,
+                )
+                if attempted_providers:
+                    attempted_chain = " -> ".join(attempted_providers)
+                    grade["suggestions"] = list(grade.get("suggestions", []))
+                    grade["suggestions"].append(
+                        f"Auto provider failover attempted: {attempted_chain}"
+                    )
+        else:
+            env_key = _env_key_for_provider(resolved_provider)
+            api_key = os.environ.get(env_key, "").strip()
+            if not api_key:
+                raise RuntimeError(
+                    f"Essay mode with provider '{resolved_provider}' requires {env_key}.\n"
+                    "Standard multiple-choice quizzes do not use AI and do not need this key.\n"
+                    "Set it before running, e.g.:\n"
+                    f"export {env_key}='your_key_here'"
+                )
+            evaluator = _evaluator_for_provider(resolved_provider)
+            try:
+                grade = evaluate_essay_with_loading(
+                    console,
+                    theme,
+                    evaluator,
+                    instructor_name=essay.get("instructor_name", ""),
+                    essay=essay,
+                    student_answer=student_answer,
+                    api_key=api_key,
+                    model=resolved_model,
+                    timeout=ai_timeout,
+                )
+            except RuntimeError as exc:
+                fallback_message = str(exc)
+                if fallback_message.startswith("[") and "]" in fallback_message:
+                    fallback_reason = fallback_message[1 : fallback_message.index("]")]
+                grade = evaluate_essay_deterministic_fallback(
+                    essay,
+                    student_answer,
+                    fallback_message,
+                    reason_code=fallback_reason,
+                )
 
         if grade["score_percent"] is None:
             score_text = "N/A (AI unavailable)"
@@ -1659,6 +2059,8 @@ def run_essay(
                 "network_error": "network error",
                 "invalid_response": "unexpected model response shape",
                 "payload_too_large": "payload too large",
+                "unauthorized": "invalid API key or auth",
+                "forbidden": "forbidden by provider",
                 "unknown_error": "unknown error",
             }
             reason_label = reason_labels.get(grade.get("ai_reason", ""), "unknown error")
@@ -1712,8 +2114,9 @@ def run_essay(
             "ai_reason": grade.get("ai_reason", "none"),
             "scoring_mode": grade.get("scoring_mode", "unknown"),
             "scoring_confidence": grade.get("scoring_confidence", "unknown"),
-            "ai_provider": ai_provider,
-            "ai_model": ai_model,
+            "ai_provider": resolved_provider,
+            "ai_provider_requested": requested_provider,
+            "ai_model": resolved_model,
         }
 
         if ask_to_save_answers():
@@ -1744,6 +2147,41 @@ def main():
             except (ValueError, OSError):
                 pass
 
+    raw_args = sys.argv[1:]
+    if raw_args and raw_args[0] == "init":
+        init_parser = argparse.ArgumentParser(description="Create starter quiz files.")
+        init_parser.add_argument(
+            "--dir",
+            default=".",
+            help="Directory where starter files will be created (default: current directory).",
+        )
+        init_parser.add_argument(
+            "--force",
+            action="store_true",
+            help="Overwrite existing starter files if they already exist.",
+        )
+        args = init_parser.parse_args(raw_args[1:])
+        try:
+            created = init_starter_files(args.dir, force=args.force)
+        except OSError as exc:
+            print(safe_for_stream(f"File error: {exc}", sys.stderr), file=sys.stderr)
+            raise SystemExit(1) from exc
+        except RuntimeError as exc:
+            print(safe_for_stream(f"Runtime error: {exc}", sys.stderr), file=sys.stderr)
+            raise SystemExit(1) from exc
+
+        print("Created starter files:")
+        for path in created:
+            print(f"- {path}")
+        print("")
+        print("Next steps:")
+        print(f"quizmd --validate {created[0]}")
+        print(f"quizmd {created[0]}")
+        print(f"quizmd --validate {created[1]}")
+        print('export GEMINI_API_KEY="your_key_here"  # or OPENAI_API_KEY / ANTHROPIC_API_KEY')
+        print(f"quizmd {created[1]}")
+        return
+
     parser = argparse.ArgumentParser(description="Run markdown quizzes in the terminal.")
     parser.add_argument("file", help="Path to a quiz markdown file.")
     parser.add_argument(
@@ -1770,13 +2208,13 @@ def main():
     parser.add_argument(
         "--ai-provider",
         default=DEFAULT_AI_PROVIDER,
-        choices=["gemini"],
-        help="AI provider for essay mode.",
+        choices=["auto", "gemini", "openai", "anthropic"],
+        help="AI provider for essay mode. 'auto' priority: gemini -> openai -> anthropic.",
     )
     parser.add_argument(
         "--ai-model",
-        default=DEFAULT_GEMINI_MODEL,
-        help="AI model name for essay mode.",
+        default="",
+        help="AI model name for essay mode (defaults by provider).",
     )
     parser.add_argument(
         "--ai-timeout",

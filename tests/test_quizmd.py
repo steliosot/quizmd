@@ -10,16 +10,26 @@ from unittest.mock import patch
 from pathlib import Path
 
 from quizmd import (
+    DEFAULT_ANTHROPIC_MODEL,
+    DEFAULT_OPENAI_MODEL,
     _format_possessive,
+    _default_model_for_provider,
+    _available_ai_providers_by_priority,
+    _env_key_for_provider,
+    _evaluator_for_provider,
     _redacted_ai_error,
+    _resolve_ai_provider,
     _score_encouragement,
     THEMES,
     build_question_markup,
     collect_essay_answer_via_editor,
     detect_quiz_mode,
     evaluate_essay_deterministic_fallback,
+    evaluate_essay_with_anthropic,
     evaluate_essay_with_gemini,
+    evaluate_essay_with_openai,
     format_labels,
+    init_starter_files,
     display_width,
     parse_essay_markdown,
     parse_int_list,
@@ -490,6 +500,94 @@ class QuizMarkdownTests(unittest.TestCase):
                 evaluate_essay_with_gemini(essay, "student", "k", "gemini-1.5-flash", 5, max_retries=0)
         mocked_urlopen.assert_not_called()
 
+    def test_openai_evaluation_success(self):
+        essay = {
+            "question": "Q",
+            "criteria": [{"name": "A", "points": 1, "details": ["x"]}],
+            "total_points": 1,
+            "reference_answer": "R",
+            "ai_evaluation_rules": "Rules",
+        }
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                return False
+            def read(self):
+                payload = {
+                    "choices": [
+                        {"message": {"content": json.dumps({
+                            "points_awarded": 1,
+                            "total_points": 1,
+                            "score_percent": 100,
+                            "did_well": ["A"],
+                            "missing": [],
+                            "suggestions": ["Good"],
+                        })}}
+                    ]
+                }
+                return json.dumps(payload).encode("utf-8")
+
+        with patch("urllib.request.urlopen", return_value=FakeResponse()):
+            result = evaluate_essay_with_openai(essay, "student", "k", "gpt-4o-mini", 5, max_retries=0)
+        self.assertEqual(result["score_percent"], 100.0)
+        self.assertFalse(result["ai_unavailable"])
+
+    def test_anthropic_evaluation_success(self):
+        essay = {
+            "question": "Q",
+            "criteria": [{"name": "A", "points": 1, "details": ["x"]}],
+            "total_points": 1,
+            "reference_answer": "R",
+            "ai_evaluation_rules": "Rules",
+        }
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                return False
+            def read(self):
+                payload = {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps({
+                                "points_awarded": 1,
+                                "total_points": 1,
+                                "score_percent": 100,
+                                "did_well": ["A"],
+                                "missing": [],
+                                "suggestions": ["Good"],
+                            }),
+                        }
+                    ]
+                }
+                return json.dumps(payload).encode("utf-8")
+
+        with patch("urllib.request.urlopen", return_value=FakeResponse()):
+            result = evaluate_essay_with_anthropic(essay, "student", "k", "claude-3-5-haiku-latest", 5, max_retries=0)
+        self.assertEqual(result["score_percent"], 100.0)
+        self.assertFalse(result["ai_unavailable"])
+
+    def test_provider_helpers(self):
+        self.assertEqual(_env_key_for_provider("gemini"), "GEMINI_API_KEY")
+        self.assertEqual(_env_key_for_provider("openai"), "OPENAI_API_KEY")
+        self.assertEqual(_env_key_for_provider("anthropic"), "ANTHROPIC_API_KEY")
+        self.assertEqual(_default_model_for_provider("openai"), DEFAULT_OPENAI_MODEL)
+        self.assertEqual(_default_model_for_provider("anthropic"), DEFAULT_ANTHROPIC_MODEL)
+        self.assertIs(_evaluator_for_provider("openai"), evaluate_essay_with_openai)
+        self.assertIs(_evaluator_for_provider("anthropic"), evaluate_essay_with_anthropic)
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "g", "OPENAI_API_KEY": "o", "ANTHROPIC_API_KEY": "a"}, clear=True):
+            self.assertEqual(_resolve_ai_provider("auto"), "gemini")
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "o", "ANTHROPIC_API_KEY": "a"}, clear=True):
+            self.assertEqual(_resolve_ai_provider("auto"), "openai")
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "a"}, clear=True):
+            self.assertEqual(_resolve_ai_provider("auto"), "anthropic")
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "g", "OPENAI_API_KEY": "o"}, clear=True):
+            self.assertEqual(_available_ai_providers_by_priority(), ["gemini", "openai"])
+
     def test_deterministic_fallback_no_score(self):
         essay = {
             "criteria": [
@@ -529,7 +627,7 @@ class QuizMarkdownTests(unittest.TestCase):
             "output_format": "Format",
         }
         with patch.dict("os.environ", {}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "do not use AI and do not need this key"):
+            with self.assertRaisesRegex(RuntimeError, "requires at least one key"):
                 run_essay(essay, no_color=True)
 
     def test_mcq_validate_does_not_require_gemini_key(self):
@@ -578,6 +676,141 @@ class QuizMarkdownTests(unittest.TestCase):
                             with patch("quizmd.evaluate_essay_with_loading", return_value=fake_grade):
                                 with patch("rich.console.Console.print"):
                                     run_essay(essay, no_color=True)
+
+    def test_run_essay_openai_uses_default_model_and_key(self):
+        essay = {
+            "title": "Sample",
+            "question": "Q",
+            "instructions": "I",
+            "criteria": [{"name": "A", "points": 1, "details": []}],
+            "total_points": 1,
+            "reference_answer": "R",
+            "ai_evaluation_rules": "Rules",
+            "output_format": "Format",
+        }
+        fake_grade = {
+            "points_awarded": 1,
+            "total_points": 1,
+            "score_percent": 100.0,
+            "did_well": ["A"],
+            "missing": [],
+            "suggestions": ["Great"],
+            "ai_unavailable": False,
+            "ai_error": "",
+            "ai_reason": "none",
+            "scoring_mode": "llm_rubric",
+            "scoring_confidence": "high",
+        }
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "k"}, clear=True):
+            with patch("quizmd.prompt_input", return_value=""):
+                with patch("quizmd.collect_essay_answer_via_editor", return_value="student answer"):
+                    with patch("quizmd.ask_yes_no", return_value=False):
+                        with patch("quizmd.evaluate_essay_with_loading", return_value=fake_grade) as mocked_loading:
+                            with patch("rich.console.Console.print"):
+                                run_essay(essay, no_color=True, ai_provider="openai", ai_model="")
+        self.assertEqual(mocked_loading.call_args.kwargs["model"], DEFAULT_OPENAI_MODEL)
+
+    def test_run_essay_openai_missing_key_fails(self):
+        essay = {
+            "title": "Sample",
+            "question": "Q",
+            "instructions": "I",
+            "criteria": [{"name": "A", "points": 1, "details": []}],
+            "total_points": 1,
+            "reference_answer": "R",
+            "ai_evaluation_rules": "Rules",
+            "output_format": "Format",
+        }
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "requires OPENAI_API_KEY"):
+                run_essay(essay, no_color=True, ai_provider="openai")
+
+    def test_run_essay_auto_priority_prefers_gemini(self):
+        essay = {
+            "title": "Sample",
+            "question": "Q",
+            "instructions": "I",
+            "criteria": [{"name": "A", "points": 1, "details": []}],
+            "total_points": 1,
+            "reference_answer": "R",
+            "ai_evaluation_rules": "Rules",
+            "output_format": "Format",
+        }
+        fake_grade = {
+            "points_awarded": 1,
+            "total_points": 1,
+            "score_percent": 100.0,
+            "did_well": ["A"],
+            "missing": [],
+            "suggestions": ["Great"],
+            "ai_unavailable": False,
+            "ai_error": "",
+            "ai_reason": "none",
+            "scoring_mode": "llm_rubric",
+            "scoring_confidence": "high",
+        }
+        with patch.dict(
+            "os.environ",
+            {"GEMINI_API_KEY": "g", "OPENAI_API_KEY": "o", "ANTHROPIC_API_KEY": "a"},
+            clear=True,
+        ):
+            with patch("quizmd.prompt_input", return_value=""):
+                with patch("quizmd.collect_essay_answer_via_editor", return_value="student answer"):
+                    with patch("quizmd.ask_yes_no", return_value=False):
+                        with patch("quizmd.evaluate_essay_with_loading", return_value=fake_grade) as mocked_loading:
+                            with patch("rich.console.Console.print"):
+                                run_essay(essay, no_color=True, ai_provider="auto", ai_model="")
+        self.assertIs(mocked_loading.call_args.args[2], evaluate_essay_with_gemini)
+
+    def test_run_essay_auto_falls_back_to_openai_if_gemini_fails(self):
+        essay = {
+            "title": "Sample",
+            "question": "Q",
+            "instructions": "I",
+            "criteria": [{"name": "A", "points": 1, "details": []}],
+            "total_points": 1,
+            "reference_answer": "R",
+            "ai_evaluation_rules": "Rules",
+            "output_format": "Format",
+        }
+        fake_grade = {
+            "points_awarded": 1,
+            "total_points": 1,
+            "score_percent": 100.0,
+            "did_well": ["A"],
+            "missing": [],
+            "suggestions": ["Great"],
+            "ai_unavailable": False,
+            "ai_error": "",
+            "ai_reason": "none",
+            "scoring_mode": "llm_rubric",
+            "scoring_confidence": "high",
+        }
+
+        calls = {"n": 0}
+        seen_evaluators = []
+
+        def fake_loading(*args, **kwargs):
+            calls["n"] += 1
+            seen_evaluators.append(args[2])
+            if calls["n"] == 1:
+                raise RuntimeError("[timeout] Gemini timeout")
+            return fake_grade
+
+        with patch.dict(
+            "os.environ",
+            {"GEMINI_API_KEY": "g", "OPENAI_API_KEY": "o"},
+            clear=True,
+        ):
+            with patch("quizmd.prompt_input", return_value=""):
+                with patch("quizmd.collect_essay_answer_via_editor", return_value="student answer"):
+                    with patch("quizmd.ask_yes_no", return_value=False):
+                        with patch("quizmd.evaluate_essay_with_loading", side_effect=fake_loading):
+                            with patch("rich.console.Console.print"):
+                                run_essay(essay, no_color=True, ai_provider="auto", ai_model="")
+        self.assertEqual(calls["n"], 2)
+        self.assertIs(seen_evaluators[0], evaluate_essay_with_gemini)
+        self.assertIs(seen_evaluators[1], evaluate_essay_with_openai)
 
     def test_save_essay_attempt_outputs_files(self):
         payload = {
@@ -682,6 +915,18 @@ class QuizMarkdownTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--ai-timeout must be greater than zero", result.stderr)
+
+    def test_cli_help_mentions_auto_provider_priority(self):
+        result = subprocess.run(
+            [sys.executable, "quizmd.py", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("auto", result.stdout)
+        self.assertIn("'auto' priority: gemini ->", result.stdout)
+        self.assertIn("openai -> anthropic", result.stdout)
 
     def test_invalid_answer_value_raises_clear_error(self):
         quiz_path = self.write_quiz(
@@ -1290,6 +1535,46 @@ class QuizMarkdownTests(unittest.TestCase):
             mocked_run_essay.assert_called_once()
         finally:
             Path(essay_path).unlink(missing_ok=True)
+
+    def test_init_starter_files_creates_expected_files(self):
+        old_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                created = init_starter_files(".")
+                created_names = sorted(path.name for path in created)
+                self.assertEqual(created_names, ["QUIZ_GUIDE.md", "hello-essay.md", "hello-quiz.md"])
+                self.assertTrue(Path("hello-quiz.md").exists())
+                self.assertTrue(Path("hello-essay.md").exists())
+                self.assertTrue(Path("QUIZ_GUIDE.md").exists())
+                # Ensure starter templates are valid with current strict parsers.
+                parse_quiz_markdown("hello-quiz.md")
+                parse_essay_markdown("hello-essay.md")
+            finally:
+                os.chdir(old_cwd)
+
+    def test_init_starter_files_refuses_overwrite_without_force(self):
+        old_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                init_starter_files(".")
+                with self.assertRaisesRegex(RuntimeError, "Refusing to overwrite"):
+                    init_starter_files(".")
+            finally:
+                os.chdir(old_cwd)
+
+    def test_main_init_subcommand_runs(self):
+        old_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                with patch("sys.argv", ["quizmd.py", "init"]):
+                    main()
+                self.assertTrue(Path("hello-quiz.md").exists())
+                self.assertTrue(Path("hello-essay.md").exists())
+            finally:
+                os.chdir(old_cwd)
 
 
 if __name__ == "__main__":

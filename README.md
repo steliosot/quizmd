@@ -4,7 +4,13 @@
 
 ## Install
 
-Install the tool directly from GitHub:
+Install from PyPI (recommended):
+
+```bash
+pip install quizmd
+```
+
+Install directly from GitHub (latest repo state):
 
 ```bash
 pip install "git+https://github.com/steliosot/quizmd.git"
@@ -13,7 +19,7 @@ pip install "git+https://github.com/steliosot/quizmd.git"
 For a reproducible install, pin a release tag:
 
 ```bash
-pip install "git+https://github.com/steliosot/quizmd.git@v2.0.2"
+pip install "git+https://github.com/steliosot/quizmd.git@v2.1.0"
 ```
 
 Then check the CLI:
@@ -49,6 +55,14 @@ cd quizmd
 quizmd quizzes/harry-potter-quiz.md
 ```
 
+Quickest start for new users:
+
+```bash
+quizmd init
+quizmd --validate hello-quiz.md
+quizmd hello-quiz.md
+```
+
 Validate quiz files without running the interactive UI:
 
 ```bash
@@ -66,14 +80,22 @@ quizmd essays/requirements-txt-essay.md
 Optional AI settings for essay mode:
 
 ```bash
+quizmd --ai-provider auto --ai-timeout 30 essays/requirements-txt-essay.md
 quizmd --ai-provider gemini --ai-model gemini-flash-latest --ai-timeout 30 essays/requirements-txt-essay.md
+quizmd --ai-provider openai --ai-model gpt-4o-mini --ai-timeout 30 essays/requirements-txt-essay.md
+quizmd --ai-provider anthropic --ai-model claude-3-5-haiku-latest --ai-timeout 30 essays/requirements-txt-essay.md
 ```
 
 `--ai-timeout` must be greater than zero.
+`--ai-provider auto` (default) checks keys in this order: `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`.
+If the first provider fails at runtime, auto mode tries the next available provider before falling back to deterministic feedback.
 
 Security notes:
 - Never hardcode or commit API keys in source control.
-- Use environment variables (`GEMINI_API_KEY`) only.
+- Use environment variables only:
+  - `GEMINI_API_KEY`
+  - `OPENAI_API_KEY`
+  - `ANTHROPIC_API_KEY`
 - If a key is exposed, rotate/revoke it immediately.
 
 Privacy note:
