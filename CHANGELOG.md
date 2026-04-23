@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## v2.2.1 - 2026-04-23
+
+- Added `hello-imposter.md` starter generation in `quizmd init`.
+- Updated init next-step output to include validate/run commands for imposter starter.
+- Updated `QUIZ_GUIDE.md` scaffold with imposter starter commands.
+- Extended init tests to cover imposter starter file creation and parsing.
+
 ## v2.2.0 - 2026-04-22
 
 - Added Imposter Mode for MCQ quizzes via `Imposters:` metadata in quiz markdown.

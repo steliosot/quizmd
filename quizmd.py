@@ -24,7 +24,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.2.0"
+__version__ = "2.2.1"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -86,6 +86,51 @@ Time: 25
 Explanation: .upper() converts text to uppercase.
 """
 
+HELLO_IMPOSTER_TEMPLATE = """# Hello Imposter Quiz
+
+## Question 1
+What happens when you do `arr = [1,2,3]; b = arr`?
+
+- Both variables reference the same list in memory
+- A new copy of the list is created for `b`
+- Python prevents modification through `b`
+- Only the first element is shared between them
+
+Answer: 1
+Imposters: 2
+Type: single
+Time: 30
+Explanation: Assignment creates a reference, not a copy. Changes via `b` affect `arr`.
+
+## Question 2
+What does `arr * 3` do for a list?
+
+- Repeats the list three times
+- Converts all elements to strings
+- Extends the list with three new empty elements
+- Multiplies each element by 3
+
+Answer: 1
+Imposters: 4
+Type: single
+Time: 30
+Explanation: `*` repeats the list, it does not apply multiplication to each element.
+
+## Question 3
+What does `arr.append([4,5])` do?
+
+- Adds the list `[4,5]` as a single element
+- Adds `4` and `5` as separate elements
+- Replaces the last element with `[4,5]`
+- Extends the list with `[4,5]`
+
+Answer: 1
+Imposters: 2,4
+Type: single
+Time: 30
+Explanation: `append` adds one element, even if that element is a list. Using `extend` would add elements separately.
+"""
+
 HELLO_ESSAY_TEMPLATE = """# Essay Question: requirements basics
 
 ## Question
@@ -133,6 +178,13 @@ QUIZ_GUIDE_TEMPLATE = """# QuizMD Quick Start
 ```bash
 quizmd --validate hello-quiz.md
 quizmd hello-quiz.md
+```
+
+## Run the imposter starter
+
+```bash
+quizmd --validate hello-imposter.md
+quizmd hello-imposter.md
 ```
 
 ## Run the essay starter
@@ -796,6 +848,7 @@ def init_starter_files(target_dir: str = ".", force: bool = False) -> list[Path]
     base.mkdir(parents=True, exist_ok=True)
     files_to_create = [
         ("hello-quiz.md", HELLO_QUIZ_TEMPLATE),
+        ("hello-imposter.md", HELLO_IMPOSTER_TEMPLATE),
         ("hello-essay.md", HELLO_ESSAY_TEMPLATE),
         ("QUIZ_GUIDE.md", QUIZ_GUIDE_TEMPLATE),
     ]
@@ -2569,12 +2622,22 @@ def main():
             print(f"- {path}")
         print("")
         print("Next steps:")
-        print(f"quizmd --validate {created[0]}")
-        print(f"quizmd {created[0]}")
-        print(f"quizmd --validate {created[1]}")
+        created_by_name = {path.name: path for path in created}
+        hello_quiz = created_by_name.get("hello-quiz.md")
+        hello_imposter = created_by_name.get("hello-imposter.md")
+        hello_essay = created_by_name.get("hello-essay.md")
+        if hello_quiz:
+            print(f"quizmd --validate {hello_quiz}")
+            print(f"quizmd {hello_quiz}")
+        if hello_imposter:
+            print(f"quizmd --validate {hello_imposter}")
+            print(f"quizmd {hello_imposter}")
+        if hello_essay:
+            print(f"quizmd --validate {hello_essay}")
         print("Set one AI key for essay mode (MCQ quizzes do not need keys):")
         print(_platform_setup_hint_for_any_ai_key())
-        print(f"quizmd {created[1]}")
+        if hello_essay:
+            print(f"quizmd {hello_essay}")
         return
 
     parser = argparse.ArgumentParser(description="Run markdown quizzes in the terminal.")

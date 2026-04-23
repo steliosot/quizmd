@@ -19,7 +19,7 @@ pip install "git+https://github.com/steliosot/quizmd.git"
 For a reproducible install, pin a release tag:
 
 ```bash
-pip install "git+https://github.com/steliosot/quizmd.git@v2.1.1"
+pip install "git+https://github.com/steliosot/quizmd.git@v2.2.1"
 ```
 
 Then check the CLI:
@@ -61,6 +61,8 @@ Quickest start for new users:
 quizmd init
 quizmd --validate hello-quiz.md
 quizmd hello-quiz.md
+quizmd --validate hello-imposter.md
+quizmd hello-imposter.md
 ```
 
 Validate quiz files without running the interactive UI:
@@ -133,6 +135,7 @@ quizmd .\quizzes\harry-potter-quiz.md
 - `quizzes/harry-potter-quiz.md`
 - `quizzes/world-geography-quiz.md`
 - `quizzes/python-basics-quiz.md`
+- `quizzes/python-basics-imposter.md`
 - `quizzes/math-foundations-quiz.md`
 - `quizzes/history-and-civics-quiz.md`
 - `quizzes/general-science-quiz.md`

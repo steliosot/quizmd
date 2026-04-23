@@ -1817,12 +1817,17 @@ class QuizMarkdownTests(unittest.TestCase):
             try:
                 created = init_starter_files(".")
                 created_names = sorted(path.name for path in created)
-                self.assertEqual(created_names, ["QUIZ_GUIDE.md", "hello-essay.md", "hello-quiz.md"])
+                self.assertEqual(
+                    created_names,
+                    ["QUIZ_GUIDE.md", "hello-essay.md", "hello-imposter.md", "hello-quiz.md"],
+                )
                 self.assertTrue(Path("hello-quiz.md").exists())
+                self.assertTrue(Path("hello-imposter.md").exists())
                 self.assertTrue(Path("hello-essay.md").exists())
                 self.assertTrue(Path("QUIZ_GUIDE.md").exists())
                 # Ensure starter templates are valid with current strict parsers.
                 parse_quiz_markdown("hello-quiz.md")
+                parse_quiz_markdown("hello-imposter.md")
                 parse_essay_markdown("hello-essay.md")
             finally:
                 os.chdir(old_cwd)
@@ -1846,6 +1851,7 @@ class QuizMarkdownTests(unittest.TestCase):
                 with patch("sys.argv", ["quizmd.py", "init"]):
                     main()
                 self.assertTrue(Path("hello-quiz.md").exists())
+                self.assertTrue(Path("hello-imposter.md").exists())
                 self.assertTrue(Path("hello-essay.md").exists())
             finally:
                 os.chdir(old_cwd)
