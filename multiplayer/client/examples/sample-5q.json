@@ -1,0 +1,75 @@
+{
+  "quiz_title": "Python Basics Beta (5Q)",
+  "questions": [
+    {
+      "title": "Variables",
+      "question": "What happens after: arr = [1, 2, 3]; b = arr ?",
+      "options": [
+        "Both variables reference the same list",
+        "A new copy is created for b",
+        "Only arr[0] is shared",
+        "Python blocks writes through b"
+      ],
+      "correct": [1],
+      "type": "single",
+      "time_limit": 25,
+      "explanation": "Assignment binds another reference to the same list object."
+    },
+    {
+      "title": "List Repeat",
+      "question": "What does arr * 3 do for a list?",
+      "options": [
+        "Repeats the list three times",
+        "Multiplies each element by 3",
+        "Adds three empty slots",
+        "Converts each item to string"
+      ],
+      "correct": [1],
+      "type": "single",
+      "time_limit": 25,
+      "explanation": "The list sequence is repeated; element-wise math is not applied."
+    },
+    {
+      "title": "append vs extend",
+      "question": "What does arr.append([4, 5]) do?",
+      "options": [
+        "Adds [4, 5] as one new element",
+        "Adds 4 and 5 as separate elements",
+        "Replaces the last element",
+        "Same as extend([4, 5])"
+      ],
+      "correct": [1],
+      "type": "single",
+      "time_limit": 25,
+      "explanation": "append adds exactly one element, even if it is a list."
+    },
+    {
+      "title": "Time Complexity",
+      "question": "Pick all operations that are typically O(1) average in Python.",
+      "options": [
+        "dict key lookup",
+        "list append",
+        "list insert at index 0",
+        "set membership test"
+      ],
+      "correct": [1, 2, 4],
+      "type": "multiple",
+      "time_limit": 30,
+      "explanation": "dict/set hash operations and list append are average O(1); insert at front is O(n)."
+    },
+    {
+      "title": "Virtual Env",
+      "question": "Why do we use a virtual environment (.venv)?",
+      "options": [
+        "To isolate project dependencies",
+        "To speed up Python bytecode",
+        "To avoid version conflicts across projects",
+        "To replace requirements.txt"
+      ],
+      "correct": [1, 3],
+      "type": "multiple",
+      "time_limit": 30,
+      "explanation": ".venv isolates packages per project and helps avoid dependency conflicts."
+    }
+  ]
+}

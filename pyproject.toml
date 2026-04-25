@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quizmd"
-version = "2.2.1"
+version = "2.4.0rc1"
 description = "Run markdown quizzes in the terminal"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -15,7 +15,8 @@ authors = [
 dependencies = [
   "rich==13.7.0",
   "prompt_toolkit==3.0.36",
-  "wcwidth==0.2.13"
+  "wcwidth==0.2.13",
+  "websockets==12.0"
 ]
 keywords = ["quiz", "markdown", "education", "cli"]
 classifiers = [

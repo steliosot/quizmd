@@ -1,110 +1,165 @@
 # quizmd
 
-`quizmd` runs markdown-based quizzes in the terminal with timers, single/multiple choice support, and answer export.
+`quizmd` is a terminal quiz app for:
+- Markdown MCQs (single/multiple)
+- Imposter quizzes (spot misleading options)
+- Essay quizzes (AI rubric scoring)
+- Online room modes (compete/collaborate/boxing)
 
 ## Install
 
-Install from PyPI (recommended):
+Recommended:
 
 ```bash
 pip install quizmd
 ```
 
-Install directly from GitHub (latest repo state):
+Update to latest:
+
+```bash
+pip install -U quizmd
+```
+
+From GitHub (latest repo state):
 
 ```bash
 pip install "git+https://github.com/steliosot/quizmd.git"
 ```
 
-For a reproducible install, pin a release tag:
-
-```bash
-pip install "git+https://github.com/steliosot/quizmd.git@v2.2.1"
-```
-
-Then check the CLI:
+Check install:
 
 ```bash
 quizmd --version
 ```
 
-If you already installed it and want the latest updates:
+## Quick Start
 
-```bash
-pip install --upgrade --force-reinstall "git+https://github.com/steliosot/quizmd.git"
-```
-
-Add it to `requirements.txt` if you want teammates/students to install from GitHub:
-
-```txt
-git+https://github.com/steliosot/quizmd.git
-```
-
-## Install vs Examples
-
-- `pip install ...` installs the `quizmd` command.
-- `git clone ...` downloads this repository so you can use the bundled example quizzes.
-
-## Run a Quiz
-
-If you want the bundled examples, clone the repo:
-
-```bash
-git clone https://github.com/steliosot/quizmd.git
-cd quizmd
-quizmd quizzes/harry-potter-quiz.md
-```
-
-Quickest start for new users:
+Create starter files:
 
 ```bash
 quizmd init
+```
+
+This creates:
+- `hello-quiz.md` (single + multiple MCQ)
+- `hello-imposter.md` (imposter mode)
+- `hello-essay.md` (essay mode)
+- `QUIZ_GUIDE.md` (quick commands)
+
+Run starters:
+
+```bash
 quizmd --validate hello-quiz.md
 quizmd hello-quiz.md
+
 quizmd --validate hello-imposter.md
+quizmd hello-imposter.md
+
+quizmd --validate hello-essay.md
+export GEMINI_API_KEY="your_key_here"  # or OPENAI_API_KEY / ANTHROPIC_API_KEY
+quizmd hello-essay.md
+```
+
+## Modes (What + How to Start)
+
+### 1) Single / Multiple (Local MCQ)
+- What: classic MCQ practice with timers.
+- Start:
+
+```bash
+quizmd hello-quiz.md
+```
+
+### 2) Imposter (Local MCQ + Distractors)
+- What: answer normally and flag misleading options.
+- Start:
+
+```bash
 quizmd hello-imposter.md
 ```
 
-Validate quiz files without running the interactive UI:
+### 3) Essay (AI Rubric Grading)
+- What: write in editor, get rubric-based score + feedback.
+- Start:
+
+```bash
+quizmd hello-essay.md
+```
+
+### 4) Room: Compete (Online)
+- What: fastest correct answers win points.
+- Start room:
+
+```bash
+quizmd room --create --mode compete --quiz hello-quiz.md
+```
+
+### 5) Room: Collaborate (Online)
+- What: team must reach full consensus.
+- Start room:
+
+```bash
+quizmd room --create --mode collaborate --quiz hello-quiz.md
+```
+
+### 6) Room: Boxing (Online Teacher/Student)
+- What: live chat Q&A, teacher can score with `/score <0-100>`.
+- Start room:
+
+```bash
+quizmd room --create --mode boxing --quiz hello-quiz.md
+```
+
+Join any room:
+
+```bash
+quizmd room --join <room-name> --token <room-token>
+```
+
+Room quiz requirement:
+- In online room modes, each question `Time`/`time_limit` must be **5 seconds or higher**.
+
+## `quizmd init` Coverage
+
+Yes, `quizmd init` covers all mode types:
+- MCQ single/multiple via `hello-quiz.md`
+- Imposter via `hello-imposter.md`
+- Essay via `hello-essay.md`
+- Room modes by using `hello-quiz.md` with `--mode compete|collaborate|boxing`
+
+## Essay Keys (Essay Mode Only)
+
+MCQ quizzes do not require API keys.
+
+Supported keys:
+- `GEMINI_API_KEY`
+- `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
+
+Auto provider order:
+1. Gemini
+2. OpenAI
+3. Anthropic
+
+Mac/Linux example:
+
+```bash
+export GEMINI_API_KEY="your_key_here"
+```
+
+Windows PowerShell example:
+
+```powershell
+$env:GEMINI_API_KEY="your_key_here"
+```
+
+## Validate Any Quiz
 
 ```bash
 quizmd --validate quizzes/harry-potter-quiz.md
 ```
 
-Validate and run an essay quiz:
-
-```bash
-quizmd --validate essays/requirements-txt-essay.md
-export GEMINI_API_KEY="your_key_here"
-quizmd essays/requirements-txt-essay.md
-```
-
-Optional AI settings for essay mode:
-
-```bash
-quizmd --ai-provider auto --ai-timeout 30 essays/requirements-txt-essay.md
-quizmd --ai-provider gemini --ai-model gemini-flash-latest --ai-timeout 30 essays/requirements-txt-essay.md
-quizmd --ai-provider openai --ai-model gpt-4o-mini --ai-timeout 30 essays/requirements-txt-essay.md
-quizmd --ai-provider anthropic --ai-model claude-3-5-haiku-latest --ai-timeout 30 essays/requirements-txt-essay.md
-```
-
-`--ai-timeout` must be greater than zero.
-`--ai-provider auto` (default) checks keys in this order: `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`.
-If the first provider fails at runtime, auto mode tries the next available provider before falling back to deterministic feedback.
-
-Security notes:
-- Never hardcode or commit API keys in source control.
-- Use environment variables only:
-  - `GEMINI_API_KEY`
-  - `OPENAI_API_KEY`
-  - `ANTHROPIC_API_KEY`
-- If a key is exposed, rotate/revoke it immediately.
-
-Privacy note:
-- Essay answers are only saved if you choose `y` at the save prompt.
-- Choose `n` to keep answers out of local `answers/` files.
-
-Theme options for better readability on light or dark terminals:
+## Theme
 
 ```bash
 quizmd --theme auto quizzes/harry-potter-quiz.md
@@ -112,118 +167,13 @@ quizmd --theme light quizzes/harry-potter-quiz.md
 quizmd --theme dark quizzes/harry-potter-quiz.md
 ```
 
-## Windows Setup Notes
+## Notes
 
-Create and activate a virtual environment on Windows:
-
-```powershell
-python -m venv .venv
-.venv\Scripts\activate
-```
-
-Install and run:
-
-```powershell
-pip install "git+https://github.com/steliosot/quizmd.git"
-quizmd --version
-quizmd --validate .\quizzes\harry-potter-quiz.md
-quizmd .\quizzes\harry-potter-quiz.md
-```
-
-## Example Quizzes Included (No LLM Needed)
-
-- `quizzes/harry-potter-quiz.md`
-- `quizzes/world-geography-quiz.md`
-- `quizzes/python-basics-quiz.md`
-- `quizzes/python-basics-imposter.md`
-- `quizzes/math-foundations-quiz.md`
-- `quizzes/history-and-civics-quiz.md`
-- `quizzes/general-science-quiz.md`
-
-## Essay Examples (LLM-Based)
-
-Essay files are separate and use Gemini evaluation:
-- `essays/requirements-txt-essay.md`
-- `essays/venv-essay.md`
-- `essays/pinned-versions-essay.md`
-
-MCQ quizzes in `quizzes/` do not call LLMs and do not need `GEMINI_API_KEY`.
-
-## Simple Quiz Example
-
-Create a file named `my-quiz.md`:
-
-```markdown
-# My First Quiz
-
-## Question 1
-What is 2 + 2?
-
-- 3
-- 4
-- 5
-
-Answer: 2
-Type: single
-Time: 20
-Explanation: 2 + 2 is 4.
-```
-
-Run it:
-
-```bash
-quizmd --validate my-quiz.md
-quizmd my-quiz.md
-```
-
-## Guide: How to Create a Quiz
-
-1. Start with a single `#` quiz title.
-2. Add each question as a `##` block.
-3. Put the question text on the next line.
-4. Add answer options using `- ` bullet lines.
-5. Add required fields:
-   - `Answer:` (1-based indexes, comma-separated for multiple)
-   - `Type:` (`single` or `multiple`)
-6. Add optional fields:
-   - `Time:` positive integer seconds
-   - `Explanation:` any text
-7. Run `quizmd --validate your-quiz.md` before sharing.
-
-## Quiz File Rules
-
-- Each question must start with `##`.
-- Text outside the title and `##` blocks is rejected.
-- `Answer:` is required and must be valid indexes.
-- `Type:` is required and must be `single` or `multiple`.
-- Duplicate answers like `Answer: 2,2` are rejected.
-- `Time:` (if present) must be greater than zero.
-
-## Common Validation Errors
-
-- `missing required field(s): options`
-- `missing required field(s): answer`
-- `missing required field(s): type`
-- `duplicate answer indexes`
-- `unsupported question type`
-- `unexpected content outside question blocks`
-- `no valid questions found`
-
-## Student End-to-End Check (Clean Environment)
-
-Use these exact steps before class to confirm everything works:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install "git+https://github.com/steliosot/quizmd.git"
-quizmd --version
-git clone https://github.com/steliosot/quizmd.git
-cd quizmd
-quizmd --validate quizzes/harry-potter-quiz.md
-quizmd quizzes/harry-potter-quiz.md
-```
+- Boxing mode requires a boxing-capable room server revision.
+- If cloud server is older, quizmd shows a friendly unsupported-mode message.
+- Press `Ctrl+C` at any time to exit.
+- Each multiple-choice question must have at least 2 non-empty options.
+- If your question text includes markdown bullet lines, add an `Options:` line before answer choices to disambiguate parsing.
 
 ## Development
 
@@ -234,17 +184,12 @@ pip install -r requirements.txt
 python -m unittest discover -s tests -q
 ```
 
-## Releases
-
-- Release tags are immutable.
-- Never retag an existing version.
-- Publish a new tag for every release (`v2.0.3`, `v2.0.4`, ...).
-- See [CHANGELOG.md](CHANGELOG.md) and [RELEASE.md](RELEASE.md).
-- PyPI publishing is configured via GitHub Trusted Publishing in `.github/workflows/release.yml`.
+Multiplayer server local dev note:
+- Use Python 3.13 in `multiplayer/server` (`python3.13 -m venv .venv`), since Python 3.14 may fail dependency builds (`pydantic-core`).
 
 ## Community
 
-- Contributing guide: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Code of Conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
-- Security policy: [SECURITY.md](SECURITY.md)
-- License: [LICENSE](LICENSE)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- [SECURITY.md](SECURITY.md)
+- [LICENSE](LICENSE)

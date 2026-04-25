@@ -8,13 +8,26 @@ import re
 import urllib.error
 import io
 import contextlib
-from unittest.mock import patch
+import argparse
+from unittest.mock import AsyncMock, patch
 from pathlib import Path
 
 from quizmd import (
     DEFAULT_ANTHROPIC_MODEL,
     DEFAULT_OPENAI_MODEL,
+    DEFAULT_ROOM_SERVER_CLOUD,
     _format_possessive,
+    _room_connected_players,
+    _room_configured_servers,
+    _room_default_server,
+    _room_player_label,
+    _room_quiz_payload_from_markdown,
+    _room_quiz_payload_from_json,
+    _save_room_session_transcript,
+    _room_validate_name,
+    _room_resolve_server,
+    _room_server_online,
+    _room_supported_modes,
     _default_model_for_provider,
     _available_ai_providers_by_priority,
     _env_key_for_provider,
@@ -32,6 +45,7 @@ from quizmd import (
     evaluate_essay_with_gemini,
     evaluate_essay_with_openai,
     format_labels,
+    question_status_label,
     init_starter_files,
     display_width,
     parse_essay_markdown,
@@ -41,6 +55,7 @@ from quizmd import (
     main,
     prompt_input,
     run,
+    run_room_command,
     run_essay,
     run_coroutine_sync,
     safe_for_stream,
@@ -911,6 +926,53 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIs(seen_evaluators[0], evaluate_essay_with_gemini)
         self.assertIs(seen_evaluators[1], evaluate_essay_with_openai)
 
+    def test_run_essay_auto_failover_displays_actual_connected_provider(self):
+        essay = {
+            "title": "Sample",
+            "question": "Q",
+            "instructions": "I",
+            "criteria": [{"name": "A", "points": 1, "details": []}],
+            "total_points": 1,
+            "reference_answer": "R",
+            "ai_evaluation_rules": "Rules",
+            "output_format": "Format",
+        }
+        fake_grade = {
+            "points_awarded": 1,
+            "total_points": 1,
+            "score_percent": 100.0,
+            "did_well": ["A"],
+            "missing": [],
+            "suggestions": ["Great"],
+            "ai_unavailable": False,
+            "ai_error": "",
+            "ai_reason": "none",
+            "scoring_mode": "llm_rubric",
+            "scoring_confidence": "high",
+        }
+        calls = {"n": 0}
+
+        def fake_loading(*args, **kwargs):
+            calls["n"] += 1
+            evaluator = args[2]
+            if evaluator is evaluate_essay_with_gemini:
+                raise RuntimeError("[timeout] Gemini timeout")
+            return fake_grade
+
+        out = io.StringIO()
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "g", "OPENAI_API_KEY": "o"}, clear=True):
+            with patch("quizmd.prompt_input", return_value=""):
+                with patch("quizmd.collect_essay_answer_via_editor", return_value="student answer"):
+                    with patch("quizmd.ask_yes_no", return_value=False):
+                        with patch("quizmd.evaluate_essay_with_loading", side_effect=fake_loading):
+                            with contextlib.redirect_stdout(out):
+                                run_essay(essay, no_color=True, ai_provider="auto", ai_model="")
+
+        output = out.getvalue()
+        self.assertEqual(calls["n"], 2)
+        self.assertIn("Connected: OpenAI", output)
+        self.assertNotIn("Connected: Gemini", output)
+
     def test_save_essay_attempt_outputs_files(self):
         payload = {
             "mode": "essay",
@@ -1122,6 +1184,37 @@ class QuizMarkdownTests(unittest.TestCase):
 
         Path(quiz_path).unlink()
 
+    def test_blank_option_text_raises_clear_error(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- \n"
+            "- B\n\n"
+            "Answer: 2\n"
+            "Type: single\n"
+        )
+
+        with self.assertRaisesRegex(ValueError, "blank option text"):
+            parse_quiz_markdown(quiz_path)
+
+        Path(quiz_path).unlink()
+
+    def test_question_must_have_at_least_two_options(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n\n"
+            "Answer: 1\n"
+            "Type: single\n"
+        )
+
+        with self.assertRaisesRegex(ValueError, "at least two options"):
+            parse_quiz_markdown(quiz_path)
+
+        Path(quiz_path).unlink()
+
     def test_missing_type_raises_clear_error(self):
         quiz_path = self.write_quiz(
             "# Test Quiz\n\n"
@@ -1276,6 +1369,40 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(questions[0]["correct"], [2])
         Path(quiz_path).unlink()
 
+    def test_question_bullet_list_requires_options_marker(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Read this list first:\n"
+            "- A key fact\n"
+            "- Another fact\n\n"
+            "- Correct option\n"
+            "- Wrong option\n\n"
+            "Answer: 1\n"
+            "Type: single\n"
+        )
+        with self.assertRaisesRegex(ValueError, "Add an 'Options:' line"):
+            parse_quiz_markdown(quiz_path)
+        Path(quiz_path).unlink()
+
+    def test_question_bullet_list_with_options_marker_is_allowed(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Read this list first:\n"
+            "- A key fact\n"
+            "- Another fact\n\n"
+            "Options:\n"
+            "- Correct option\n"
+            "- Wrong option\n\n"
+            "Answer: 1\n"
+            "Type: single\n"
+        )
+        _, questions = parse_quiz_markdown(quiz_path)
+        self.assertIn("- A key fact", questions[0]["question"])
+        self.assertEqual(questions[0]["options"], ["Correct option", "Wrong option"])
+        Path(quiz_path).unlink()
+
     def test_blank_explanation_is_allowed(self):
         quiz_path = self.write_quiz(
             "# Test Quiz\n\n"
@@ -1406,6 +1533,36 @@ class QuizMarkdownTests(unittest.TestCase):
             finally:
                 os.chdir(old_cwd)
 
+    def test_question_status_label_non_imposter(self):
+        self.assertEqual(
+            question_status_label({"imposter_mode": False, "answer_correct": True}),
+            "Correct",
+        )
+        self.assertEqual(
+            question_status_label({"imposter_mode": False, "answer_correct": False}),
+            "Wrong",
+        )
+
+    def test_question_status_label_imposter_mode(self):
+        self.assertEqual(
+            question_status_label(
+                {"imposter_mode": True, "is_perfect": True, "question_points": 2}
+            ),
+            "Correct",
+        )
+        self.assertEqual(
+            question_status_label(
+                {"imposter_mode": True, "is_perfect": False, "question_points": 1}
+            ),
+            "Partially Correct",
+        )
+        self.assertEqual(
+            question_status_label(
+                {"imposter_mode": True, "is_perfect": False, "question_points": 0}
+            ),
+            "Wrong",
+        )
+
     def test_run_imposter_mode_saves_imposter_fields_end_to_end(self):
         questions = [
             {
@@ -1460,6 +1617,7 @@ class QuizMarkdownTests(unittest.TestCase):
                 self.assertEqual(payload["answers"][0]["expected_imposters"], [2, 3])
                 self.assertEqual(payload["answers"][0]["question_points"], 2)
                 self.assertEqual(payload["answers"][0]["question_max_points"], 3)
+                self.assertEqual(payload["answers"][0]["result_label"], "Partially Correct")
             finally:
                 os.chdir(old_cwd)
 
@@ -1643,7 +1801,7 @@ class QuizMarkdownTests(unittest.TestCase):
             "question": "Pick one",
             "options": ["A", "B", "C"],
             "correct": [1],
-            "imposters": [2],
+            "imposters": [2, 3],
             "type": "single",
             "time_limit": 10,
             "explanation": "",
@@ -1658,9 +1816,55 @@ class QuizMarkdownTests(unittest.TestCase):
             is_multiple=False,
             imposter_mode=True,
         )
-        self.assertIn("[IMPOSTER]", markup)
+        self.assertIn("[2 IMPOSTERS]", markup)
         self.assertIn("Space/X/Enter", markup)
         self.assertIn("✖", markup)
+
+    def test_build_question_markup_single_imposter_badge(self):
+        question = {
+            "title": "Question 1",
+            "question": "Pick one",
+            "options": ["A", "B", "C"],
+            "correct": [1],
+            "imposters": [2],
+            "type": "single",
+            "time_limit": 10,
+            "explanation": "",
+        }
+        markup = build_question_markup(
+            question,
+            THEMES["dark"],
+            selected=0,
+            marked=set(),
+            remaining=12,
+            imposter_marked=set(),
+            is_multiple=False,
+            imposter_mode=True,
+        )
+        self.assertIn("[1 IMPOSTER]", markup)
+        self.assertNotIn("[2 IMPOSTERS]", markup)
+
+    def test_build_question_markup_no_imposter_badge_without_imposters(self):
+        question = {
+            "title": "Question 1",
+            "question": "Pick one",
+            "options": ["A", "B"],
+            "correct": [1],
+            "type": "single",
+            "time_limit": 10,
+            "explanation": "",
+        }
+        markup = build_question_markup(
+            question,
+            THEMES["dark"],
+            selected=0,
+            marked=set(),
+            remaining=12,
+            imposter_marked=set(),
+            is_multiple=False,
+            imposter_mode=False,
+        )
+        self.assertNotIn("IMPOSTER", markup)
 
     def test_build_question_markup_ultra_compact_wraps_and_truncates_options(self):
         question = {
@@ -1870,6 +2074,503 @@ class QuizMarkdownTests(unittest.TestCase):
                 self.assertIn("$env:GEMINI_API_KEY=", out)
             finally:
                 os.chdir(old_cwd)
+
+    def test_room_validate_name_rejects_empty_after_normalization(self):
+        with self.assertRaisesRegex(RuntimeError, "Invalid room name"):
+            _room_validate_name("!!!")
+
+    def test_room_validate_name_rejects_too_short(self):
+        with self.assertRaisesRegex(RuntimeError, "Minimum length"):
+            _room_validate_name("ab")
+
+    def test_room_validate_name_normalizes_valid_input(self):
+        normalized = _room_validate_name("Berlin Elephant 3")
+        self.assertEqual(normalized, "berlin-elephant-3")
+
+    def test_room_default_server_uses_env_override(self):
+        with patch.dict(os.environ, {"QUIZMD_ROOM_SERVER": "http://localhost:9000"}, clear=False):
+            self.assertEqual(_room_default_server(), "http://localhost:9000")
+
+    def test_room_default_server_falls_back_to_cloud(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(_room_default_server(), DEFAULT_ROOM_SERVER_CLOUD)
+
+    def test_room_configured_servers_parses_multiple(self):
+        with patch.dict(
+            os.environ,
+            {"QUIZMD_ROOM_SERVERS": "Belgium|https://a.example;US|https://b.example"},
+            clear=True,
+        ):
+            servers = _room_configured_servers()
+        self.assertEqual(
+            servers,
+            [("Belgium", "https://a.example"), ("US", "https://b.example")],
+        )
+
+    def test_room_resolve_server_uses_single_without_prompt(self):
+        with patch("quizmd._room_configured_servers", return_value=[("Belgium", "https://a.example")]):
+            with patch("quizmd._select_with_space") as mocked_select:
+                label, server = _room_resolve_server(
+                    explicit_server="",
+                    theme_name="auto",
+                    no_color=True,
+                )
+        self.assertEqual((label, server), ("Belgium", "https://a.example"))
+        mocked_select.assert_not_called()
+
+    def test_room_server_online_falls_back_to_openapi(self):
+        with patch("quizmd._room_get_json", side_effect=[RuntimeError("404"), {"openapi": "3.1.0"}]):
+            self.assertTrue(_room_server_online("https://quizmd-server.example"))
+
+    def test_room_supported_modes_from_openapi_schema_ref(self):
+        openapi_payload = {
+            "openapi": "3.1.0",
+            "components": {
+                "schemas": {
+                    "Mode": {"type": "string", "enum": ["compete", "collaborate", "boxing"]},
+                    "CreateRoomRequest": {
+                        "type": "object",
+                        "properties": {"mode": {"$ref": "#/components/schemas/Mode"}},
+                    },
+                }
+            },
+        }
+        with patch("quizmd._room_get_json", return_value=openapi_payload):
+            self.assertEqual(
+                _room_supported_modes("https://quizmd-server.example"),
+                {"compete", "collaborate", "boxing"},
+            )
+
+    def test_room_supported_modes_returns_none_when_openapi_unavailable(self):
+        with patch("quizmd._room_get_json", side_effect=RuntimeError("boom")):
+            self.assertIsNone(_room_supported_modes("https://quizmd-server.example"))
+
+    def test_room_connected_players_keeps_roles(self):
+        payload = {
+            "players": [
+                {"name": "Mary", "role": "student", "connected": True},
+                {"name": "Tim", "role": "teacher", "connected": True},
+                {"name": "Offline", "role": "teacher", "connected": False},
+            ]
+        }
+        rows = _room_connected_players(payload)
+        self.assertEqual(rows, [{"name": "Mary", "role": "student"}, {"name": "Tim", "role": "teacher"}])
+        self.assertEqual(_room_player_label("Mary", "student"), "Mary (student)")
+        self.assertEqual(_room_player_label("Alex", "participant"), "Alex")
+
+    def test_save_room_session_transcript_outputs_json(self):
+        old_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                path = _save_room_session_transcript(
+                    room_name="berlin-elephant",
+                    mode="boxing",
+                    display_name="Mary",
+                    role="student",
+                    transcript=[{"type": "chat", "ts": 1.0, "payload": {"text": "Hi"}}],
+                    final_score=80,
+                    scored_by="Tim",
+                    ended_by="Mary",
+                    ended_by_role="student",
+                )
+                self.assertTrue(path.exists())
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(payload["mode"], "boxing")
+                self.assertEqual(payload["participant"]["role"], "student")
+                self.assertEqual(payload["final_score"], 80)
+            finally:
+                os.chdir(old_cwd)
+
+    def test_run_room_command_create_boxing_passes_host_role(self):
+        args = argparse.Namespace(
+            create="__AUTO__",
+            join=None,
+            name="Mary",
+            server="http://127.0.0.1:8011",
+            mode="boxing",
+            quiz="",
+            theme="auto",
+            no_color=True,
+            full_screen=False,
+            role="teacher",
+        )
+        created = {
+            "ws_url": "ws://127.0.0.1:8011/rooms/ABCDEFGH/ws",
+            "room_code": "ABCDEFGH",
+            "host_player_id": "p_host",
+            "host_player_token": "tok",
+            "host_display_name": "Mary",
+            "room_name": "berlin-elephant-1",
+            "mode": "boxing",
+            "host_role": "teacher",
+        }
+        with patch("quizmd._room_supported_modes", return_value={"compete", "collaborate", "boxing"}):
+            with patch("quizmd._room_load_quiz_payload", return_value=("Sample", [{"question": "q"}])):
+                with patch("quizmd._room_generate_name", return_value="berlin-elephant-1"):
+                    with patch("quizmd._room_create_request", return_value=created) as mocked_create:
+                        with patch("quizmd._room_ensure_server_ready", return_value=None):
+                            with patch("quizmd._run_room_waiting_loop", new=AsyncMock(return_value=0)):
+                                result = run_room_command(args)
+        self.assertEqual(result, 0)
+        self.assertEqual(mocked_create.call_args.kwargs["host_role"], "teacher")
+
+    def test_run_room_command_create_boxing_unsupported_shows_friendly_error(self):
+        args = argparse.Namespace(
+            create="__AUTO__",
+            join=None,
+            name="Mary",
+            server="https://quizmd-server.example",
+            mode="boxing",
+            quiz="",
+            theme="auto",
+            no_color=True,
+            full_screen=False,
+            role="teacher",
+        )
+        with patch("quizmd._room_ensure_server_ready", return_value=None):
+            with patch("quizmd._room_supported_modes", return_value={"compete", "collaborate"}):
+                with self.assertRaisesRegex(RuntimeError, "not supported by this cloud server"):
+                    run_room_command(args)
+
+    def test_run_room_command_join_boxing_prompts_role(self):
+        args = argparse.Namespace(
+            create=None,
+            join="berlin-elephant-1",
+            name="Stelios",
+            token="tok_12345678",
+            server="http://127.0.0.1:8011",
+            mode="",
+            quiz="",
+            theme="auto",
+            no_color=True,
+            full_screen=False,
+            role="",
+        )
+        joined = {
+            "ws_url": "ws://127.0.0.1:8011/rooms/ABCDEFGH/ws",
+            "room_code": "ABCDEFGH",
+            "player_id": "p_1",
+            "player_token": "tok",
+            "display_name": "Stelios",
+            "room_name": "berlin-elephant-1",
+            "mode": "boxing",
+            "player_role": "student",
+        }
+        with patch("quizmd._room_info_request", return_value={"mode": "boxing"}):
+            with patch("quizmd._select_with_space", return_value="student"):
+                with patch("quizmd._room_join_by_name_request", return_value=joined) as mocked_join:
+                    with patch("quizmd._room_ensure_server_ready", return_value=None):
+                        with patch("quizmd._run_room_waiting_loop", new=AsyncMock(return_value=0)):
+                            result = run_room_command(args)
+        self.assertEqual(result, 0)
+        self.assertEqual(mocked_join.call_args.kwargs["role"], "student")
+        self.assertEqual(mocked_join.call_args.kwargs["room_token"], "tok_12345678")
+
+    def test_run_room_command_join_ignores_role_for_non_boxing_room(self):
+        args = argparse.Namespace(
+            create=None,
+            join="berlin-elephant-1",
+            name="Stelios",
+            token="tok_12345678",
+            server="http://127.0.0.1:8011",
+            mode="",
+            quiz="",
+            theme="auto",
+            no_color=True,
+            full_screen=False,
+            role="teacher",
+        )
+        joined = {
+            "ws_url": "ws://127.0.0.1:8011/rooms/ABCDEFGH/ws",
+            "room_code": "ABCDEFGH",
+            "player_id": "p_1",
+            "player_token": "tok",
+            "display_name": "Stelios",
+            "room_name": "berlin-elephant-1",
+            "mode": "compete",
+            "player_role": "participant",
+        }
+        with patch("quizmd._room_info_request", return_value={"mode": "compete"}):
+            with patch("quizmd._room_join_by_name_request", return_value=joined) as mocked_join:
+                with patch("quizmd._room_ensure_server_ready", return_value=None):
+                    with patch("quizmd._run_room_waiting_loop", new=AsyncMock(return_value=0)):
+                        result = run_room_command(args)
+        self.assertEqual(result, 0)
+        self.assertEqual(mocked_join.call_args.kwargs["role"], "")
+        self.assertEqual(mocked_join.call_args.kwargs["room_token"], "tok_12345678")
+
+    def test_run_room_command_join_retries_without_role_on_legacy_server(self):
+        args = argparse.Namespace(
+            create=None,
+            join="berlin-elephant-1",
+            name="Stelios",
+            token="tok_12345678",
+            server="http://127.0.0.1:8011",
+            mode="",
+            quiz="",
+            theme="auto",
+            no_color=True,
+            full_screen=False,
+            role="student",
+        )
+        joined = {
+            "ws_url": "ws://127.0.0.1:8011/rooms/ABCDEFGH/ws",
+            "room_code": "ABCDEFGH",
+            "player_id": "p_1",
+            "player_token": "tok",
+            "display_name": "Stelios",
+            "room_name": "berlin-elephant-1",
+            "mode": "boxing",
+            "player_role": "student",
+        }
+        side_effects = [
+            RuntimeError("Request failed: 422 body.role: Extra inputs are not permitted"),
+            joined,
+        ]
+        with patch("quizmd._room_info_request", return_value={}):
+            with patch("quizmd._room_join_by_name_request", side_effect=side_effects) as mocked_join:
+                with patch("quizmd._room_ensure_server_ready", return_value=None):
+                    with patch("quizmd._run_room_waiting_loop", new=AsyncMock(return_value=0)):
+                        result = run_room_command(args)
+        self.assertEqual(result, 0)
+        self.assertEqual(mocked_join.call_count, 2)
+        self.assertEqual(mocked_join.call_args_list[0].kwargs["role"], "student")
+        self.assertEqual(mocked_join.call_args_list[0].kwargs["room_token"], "tok_12345678")
+        self.assertEqual(mocked_join.call_args_list[1].kwargs["role"], "")
+        self.assertEqual(mocked_join.call_args_list[1].kwargs["room_token"], "tok_12345678")
+
+    def test_run_room_command_join_prompts_for_token_when_required(self):
+        args = argparse.Namespace(
+            create=None,
+            join="berlin-elephant-1",
+            name="Stelios",
+            token="",
+            server="http://127.0.0.1:8011",
+            mode="",
+            quiz="",
+            theme="auto",
+            no_color=True,
+            full_screen=False,
+            role="",
+        )
+        joined = {
+            "ws_url": "ws://127.0.0.1:8011/rooms/ABCDEFGH/ws",
+            "room_code": "ABCDEFGH",
+            "player_id": "p_1",
+            "player_token": "tok",
+            "display_name": "Stelios",
+            "room_name": "berlin-elephant-1",
+            "mode": "compete",
+            "player_role": "participant",
+        }
+        with patch("quizmd._room_info_request", return_value={"mode": "compete", "token_required": True}):
+            with patch("quizmd.prompt_input", return_value="secure_token_123"):
+                with patch("quizmd._room_join_by_name_request", return_value=joined) as mocked_join:
+                    with patch("quizmd._room_ensure_server_ready", return_value=None):
+                        with patch("quizmd._run_room_waiting_loop", new=AsyncMock(return_value=0)):
+                            result = run_room_command(args)
+        self.assertEqual(result, 0)
+        self.assertEqual(mocked_join.call_args.kwargs["room_token"], "secure_token_123")
+
+    def test_run_room_command_join_retries_after_missing_token_error(self):
+        args = argparse.Namespace(
+            create=None,
+            join="berlin-elephant-1",
+            name="Stelios",
+            token="",
+            server="http://127.0.0.1:8011",
+            mode="",
+            quiz="",
+            theme="auto",
+            no_color=True,
+            full_screen=False,
+            role="",
+        )
+        joined = {
+            "ws_url": "ws://127.0.0.1:8011/rooms/ABCDEFGH/ws",
+            "room_code": "ABCDEFGH",
+            "player_id": "p_1",
+            "player_token": "tok",
+            "display_name": "Stelios",
+            "room_name": "berlin-elephant-1",
+            "mode": "compete",
+            "player_role": "participant",
+        }
+        side_effects = [
+            RuntimeError("Request failed: 422 body.room_token: Field required"),
+            joined,
+        ]
+        with patch("quizmd._room_info_request", return_value={"mode": "compete"}):
+            with patch("quizmd.prompt_input", return_value="secure_token_123"):
+                with patch("quizmd._room_join_by_name_request", side_effect=side_effects) as mocked_join:
+                    with patch("quizmd._room_ensure_server_ready", return_value=None):
+                        with patch("quizmd._run_room_waiting_loop", new=AsyncMock(return_value=0)):
+                            result = run_room_command(args)
+        self.assertEqual(result, 0)
+        self.assertEqual(mocked_join.call_count, 2)
+        self.assertEqual(mocked_join.call_args_list[0].kwargs["room_token"], "")
+        self.assertEqual(mocked_join.call_args_list[1].kwargs["room_token"], "secure_token_123")
+
+    def test_run_room_command_server_unavailable_friendly_error(self):
+        args = argparse.Namespace(
+            create=None,
+            join="berlin-elephant-1",
+            name="Stelios",
+            token="",
+            server="https://quizmd-server.example",
+            mode="",
+            quiz="",
+            theme="auto",
+            no_color=True,
+            full_screen=False,
+            role="",
+        )
+        with patch(
+            "quizmd._room_ensure_server_ready",
+            side_effect=RuntimeError(
+                "Unfortunately, the cloud server is not available for the moment. Please try again later."
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "not available for the moment"):
+                run_room_command(args)
+
+    def test_room_json_payload_validation_rejects_bad_options(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "quiz_title": "Bad Quiz",
+                        "questions": [
+                            {
+                                "title": "Q1",
+                                "question": "Pick one",
+                                "options": ["A"],
+                                "correct": [1],
+                                "type": "single",
+                                "time_limit": 20,
+                            }
+                        ],
+                    }
+                )
+            )
+            path = handle.name
+        try:
+            with self.assertRaisesRegex(ValueError, "must have at least 2 options"):
+                _room_quiz_payload_from_json(path)
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+    def test_room_json_payload_validation_rejects_duplicate_correct(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "quiz_title": "Bad Quiz",
+                        "questions": [
+                            {
+                                "title": "Q1",
+                                "question": "Pick one",
+                                "options": ["A", "B"],
+                                "correct": [1, 1],
+                                "type": "single",
+                                "time_limit": 20,
+                            }
+                        ],
+                    }
+                )
+            )
+            path = handle.name
+        try:
+            with self.assertRaisesRegex(ValueError, "must have exactly one answer"):
+                _room_quiz_payload_from_json(path)
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+    def test_room_json_payload_validation_rejects_time_limit_below_5(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "quiz_title": "Bad Quiz",
+                        "questions": [
+                            {
+                                "title": "Q1",
+                                "question": "Pick one",
+                                "options": ["A", "B"],
+                                "correct": [1],
+                                "type": "single",
+                                "time_limit": 4,
+                            }
+                        ],
+                    }
+                )
+            )
+            path = handle.name
+        try:
+            with self.assertRaisesRegex(ValueError, "requires Time/time_limit >= 5 seconds"):
+                _room_quiz_payload_from_json(path)
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+    def test_room_markdown_payload_validation_rejects_time_below_5(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as handle:
+            handle.write(
+                "# Demo\n\n"
+                "## Q1\n"
+                "What is 2+2?\n\n"
+                "- 4\n"
+                "- 5\n\n"
+                "Answer: 1\n"
+                "Type: single\n"
+                "Time: 4\n"
+                "Explanation: test\n"
+            )
+            path = handle.name
+        try:
+            with self.assertRaisesRegex(ValueError, "requires Time/time_limit >= 5 seconds"):
+                _room_quiz_payload_from_markdown(path)
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+    def test_run_room_command_create_rejects_time_below_5_before_request(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as handle:
+            handle.write(
+                "# Demo Quiz\n\n"
+                "## Q1\n"
+                "Pick one\n\n"
+                "- A\n"
+                "- B\n\n"
+                "Answer: 1\n"
+                "Type: single\n"
+                "Time: 4\n"
+                "Explanation: test\n"
+            )
+            quiz_path = handle.name
+
+        args = argparse.Namespace(
+            create="__AUTO__",
+            join=None,
+            name="Mary",
+            token="",
+            server="http://127.0.0.1:8011",
+            mode="compete",
+            quiz=quiz_path,
+            theme="auto",
+            no_color=True,
+            full_screen=False,
+            role="",
+        )
+        try:
+            with patch("quizmd._room_supported_modes", return_value={"compete", "collaborate", "boxing"}):
+                with patch("quizmd._room_generate_name", return_value="berlin-elephant-1"):
+                    with patch("quizmd._room_ensure_server_ready", return_value=None):
+                        with patch("quizmd._room_create_request") as mocked_create:
+                            with self.assertRaisesRegex(RuntimeError, "requires Time/time_limit >= 5 seconds"):
+                                run_room_command(args)
+                            mocked_create.assert_not_called()
+        finally:
+            Path(quiz_path).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

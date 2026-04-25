@@ -15,6 +15,7 @@ import tempfile
 import time
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import deque
 from pathlib import Path
@@ -24,7 +25,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.2.1"
+__version__ = "2.4.0rc1"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -33,6 +34,71 @@ AI_PROVIDER_PRIORITY = ("gemini", "openai", "anthropic")
 GEMINI_REQUESTS_PER_MINUTE = 15
 MAX_AI_REQUEST_BYTES = 48_000
 _GEMINI_REQUEST_TIMES: deque[float] = deque()
+DEFAULT_ROOM_SERVER_CLOUD = "https://quizmd-server-1096434233875.europe-west1.run.app"
+DEFAULT_ROOM_SERVER_LABEL = "Belgium"
+ROOM_NAME_CITIES = ("berlin", "oslo", "london", "athens", "madrid", "dublin", "rome", "lisbon")
+ROOM_NAME_ANIMALS = ("elephant", "fox", "otter", "panda", "koala", "falcon", "tiger", "whale")
+ROOM_NAME_MIN_LEN = 3
+ROOM_NAME_MAX_LEN = 64
+ROOM_MIN_TIME_LIMIT_SECONDS = 5
+ROOM_SAMPLE_QUIZ_TITLE = "Python Basics Beta (5Q)"
+ROOM_SAMPLE_QUESTIONS = [
+    {
+        "title": "Question 1",
+        "question": "What is 2 + 2?",
+        "options": ["3", "4", "5", "6"],
+        "correct": [2],
+        "type": "single",
+        "time_limit": 20,
+        "explanation": "2 + 2 equals 4.",
+    },
+    {
+        "title": "Question 2",
+        "question": "Which are Python data types?",
+        "options": ["list", "banana", "dict", "integer"],
+        "correct": [1, 3, 4],
+        "type": "multiple",
+        "time_limit": 25,
+        "explanation": "list, dict, and integer are valid Python data types.",
+    },
+    {
+        "title": "Question 3",
+        "question": "What does this print?\n```python\nname = \"Stelios\"\nprint(name.upper())\n```",
+        "options": ["stelios", "STELIOS", "Name", "upper"],
+        "correct": [2],
+        "type": "single",
+        "time_limit": 25,
+        "explanation": ".upper() converts text to uppercase.",
+    },
+    {
+        "title": "Question 4",
+        "question": "What does `arr.append([4,5])` do?",
+        "options": [
+            "Adds the list [4,5] as a single element",
+            "Adds 4 and 5 as separate elements",
+            "Replaces the last element with [4,5]",
+            "Extends the list with [4,5]",
+        ],
+        "correct": [1],
+        "type": "single",
+        "time_limit": 30,
+        "explanation": "append adds one element, even when that element is another list.",
+    },
+    {
+        "title": "Question 5",
+        "question": "What happens after `arr = [1,2,3]; b = arr`?",
+        "options": [
+            "Both variables reference the same list in memory",
+            "A new copy is created for b",
+            "Only the first element is shared",
+            "Python blocks updates through b",
+        ],
+        "correct": [1],
+        "type": "single",
+        "time_limit": 30,
+        "explanation": "Assignment binds b to the same list object as arr.",
+    },
+]
 
 LOGO = r"""
 ▞▀▖   ▗    ▙▗▌▛▀▖
@@ -173,27 +239,34 @@ Feedback:
 
 QUIZ_GUIDE_TEMPLATE = """# QuizMD Quick Start
 
-## Run the MCQ starter
+## Local modes
 
 ```bash
 quizmd --validate hello-quiz.md
 quizmd hello-quiz.md
-```
-
-## Run the imposter starter
-
-```bash
 quizmd --validate hello-imposter.md
 quizmd hello-imposter.md
 ```
 
-## Run the essay starter
+## Essay mode
 
 ```bash
 quizmd --validate hello-essay.md
 export GEMINI_API_KEY="your_key_here"  # or OPENAI_API_KEY / ANTHROPIC_API_KEY
 quizmd hello-essay.md
 ```
+
+## Room modes (online)
+
+```bash
+quizmd room --create --mode compete --quiz hello-quiz.md
+quizmd room --create --mode collaborate --quiz hello-quiz.md
+quizmd room --create --mode boxing --quiz hello-quiz.md
+quizmd room --join <room-name> --token <room-token>
+```
+
+Room quiz requirement:
+- For online room modes, each question `Time`/`time_limit` must be 5 seconds or higher.
 """
 
 THEMES = {
@@ -346,6 +419,17 @@ def validate_question(question: dict, source: Path) -> None:
     imposters = question.get("imposters", [])
     option_count = len(question["options"])
 
+    blank_options = [idx for idx, option in enumerate(question["options"], start=1) if not str(option).strip()]
+    if blank_options:
+        raise ValueError(
+            f"{source}: blank option text at indexes {blank_options} in {question['title']!r}"
+        )
+
+    if option_count < 2:
+        raise ValueError(
+            f"{source}: question {question['title']!r} must include at least two options"
+        )
+
     if qtype not in {"single", "multiple"}:
         raise ValueError(
             f"{source}: unsupported question type {qtype!r} in {question['title']!r}"
@@ -441,29 +525,94 @@ def parse_quiz_markdown(path: str):
         title = lines[0].strip()
         body_lines = lines[1:]
 
-        question_lines = []
-        metadata_lines = []
-        in_code_fence = False
-        found_metadata = False
+        field_pattern = re.compile(r"(?i)^(answer|type|time|explanation|imposters)\s*:\s*(.*)$")
+        option_pattern = re.compile(r"^\s*-\s*(.*)$")
+        option_with_content_pattern = re.compile(r"^\s*-\s+\S.*$")
 
+        # Track code-fence state per line so markdown in question text doesn't get parsed as metadata.
+        line_info = []
+        in_code_fence = False
         for raw_line in body_lines:
             stripped = raw_line.strip()
+            line_info.append({
+                "raw": raw_line,
+                "stripped": stripped,
+                "in_code": in_code_fence,
+            })
             if stripped.startswith("```"):
                 in_code_fence = not in_code_fence
 
-            is_metadata_or_option = (
-                not in_code_fence
-                and (
-                    stripped.startswith("- ")
-                    or re.match(r"(?i)^(answer|type|time|explanation|imposters)\s*:", stripped) is not None
-                )
-            )
+        first_field_idx = None
+        for idx, info in enumerate(line_info):
+            if info["in_code"]:
+                continue
+            if field_pattern.match(info["stripped"]):
+                first_field_idx = idx
+                break
 
-            if found_metadata or is_metadata_or_option:
-                found_metadata = True
-                metadata_lines.append(raw_line)
-            else:
-                question_lines.append(raw_line)
+        option_start_idx = None
+        option_end_idx = None
+        if first_field_idx is not None:
+            scan = first_field_idx - 1
+            while (
+                scan >= 0
+                and not line_info[scan]["in_code"]
+                and not line_info[scan]["stripped"]
+            ):
+                scan -= 1
+
+            option_end_idx = scan
+            while (
+                scan >= 0
+                and not line_info[scan]["in_code"]
+                and (
+                    option_with_content_pattern.match(line_info[scan]["raw"]) is not None
+                    or line_info[scan]["stripped"] == "-"
+                )
+            ):
+                scan -= 1
+            option_start_idx = scan + 1
+
+            if option_start_idx > option_end_idx:
+                option_start_idx = None
+                option_end_idx = None
+
+            # If options are present but not directly adjacent to the first metadata field,
+            # keep legacy behavior by treating from the first option onward as metadata.
+            # This preserves clear "unrecognized line" failures for malformed mixes like:
+            # options -> unexpected line -> Answer/Type.
+            if option_start_idx is None:
+                for idx, info in enumerate(line_info[:first_field_idx]):
+                    if info["in_code"]:
+                        continue
+                    if option_with_content_pattern.match(info["raw"]) is not None or info["stripped"] == "-":
+                        option_start_idx = idx
+                        break
+
+        if option_start_idx is None:
+            question_lines = body_lines[:first_field_idx] if first_field_idx is not None else body_lines
+            metadata_lines = body_lines[first_field_idx:] if first_field_idx is not None else []
+        else:
+            question_lines = body_lines[:option_start_idx]
+            metadata_lines = body_lines[option_start_idx:]
+
+        # Optional explicit separator to disambiguate question markdown lists from answer options.
+        question_nonempty_indexes = [idx for idx, raw in enumerate(question_lines) if raw.strip()]
+        has_explicit_options_marker = False
+        if question_nonempty_indexes:
+            marker_idx = question_nonempty_indexes[-1]
+            marker_text = question_lines[marker_idx].strip().lower().rstrip(":")
+            if marker_text in {"options", "choices"}:
+                has_explicit_options_marker = True
+                question_lines = question_lines[:marker_idx]
+
+        question_has_bullets = any(
+            (
+                not line_info[idx]["in_code"]
+                and option_with_content_pattern.match(line_info[idx]["raw"]) is not None
+            )
+            for idx in range(len(question_lines))
+        )
 
         question = "\n".join(question_lines).strip()
         if not question:
@@ -477,19 +626,31 @@ def parse_quiz_markdown(path: str):
         time_limit = None
         explanation = ""
         imposters = []
+        seen_field = False
 
         for l in metadata_lines:
             stripped = l.strip()
             if not stripped:
                 continue
-            if stripped.startswith("- "):
-                options.append(stripped[2:].strip())
+            option_match = option_pattern.match(l)
+            if option_match:
+                if seen_field:
+                    raise ValueError(
+                        f"{source}: options must appear before metadata fields in question {title!r}"
+                    )
+                option_text = option_match.group(1).strip()
+                if not option_text:
+                    raise ValueError(
+                        f"{source}: blank option text in question {title!r} is not allowed"
+                    )
+                options.append(option_text)
                 continue
 
-            field_match = re.match(r"(?i)^(answer|type|time|explanation|imposters)\s*:\s*(.*)$", stripped)
+            field_match = field_pattern.match(stripped)
             if field_match:
                 key = field_match.group(1).lower()
                 value = field_match.group(2)
+                seen_field = True
                 if key == "answer":
                     answer = parse_int_list(value, "answer", title, source)
                 elif key == "type":
@@ -516,6 +677,12 @@ def parse_quiz_markdown(path: str):
                 missing_parts.append("type")
             raise ValueError(
                 f"{source}: question {title!r} is missing required field(s): {', '.join(missing_parts)}"
+            )
+
+        if question_has_bullets and options and not has_explicit_options_marker:
+            raise ValueError(
+                f"{source}: question {title!r} contains markdown bullet lines and answer options. "
+                "Add an 'Options:' line before answer choices to disambiguate."
             )
 
         question_data = {
@@ -875,6 +1042,1315 @@ def prompt_input(prompt: str = "") -> str:
         raise RuntimeError("Interactive input is not available in this environment.") from exc
 
 
+def _room_http_base(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw:
+        return DEFAULT_ROOM_SERVER_CLOUD
+    if "://" not in raw:
+        if raw.startswith("localhost") or raw.startswith("127."):
+            raw = f"http://{raw}"
+        else:
+            raw = f"https://{raw}"
+    parsed = urllib.parse.urlparse(raw)
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if scheme == "http" and host.endswith(".run.app"):
+        parsed = parsed._replace(scheme="https")
+    return urllib.parse.urlunparse(parsed).rstrip("/")
+
+
+def _room_default_server() -> str:
+    servers = _room_configured_servers()
+    return servers[0][1]
+
+
+def _room_configured_servers() -> list[tuple[str, str]]:
+    raw_list = os.environ.get("QUIZMD_ROOM_SERVERS", "").strip()
+    if raw_list:
+        servers: list[tuple[str, str]] = []
+        seen_urls: set[str] = set()
+        for token in re.split(r"[,\n;]+", raw_list):
+            item = token.strip()
+            if not item:
+                continue
+            label = ""
+            url = ""
+            if "|" in item:
+                label, url = item.split("|", 1)
+            elif "=" in item:
+                label, url = item.split("=", 1)
+            else:
+                url = item
+            normalized = _room_http_base(url)
+            if not normalized or normalized in seen_urls:
+                continue
+            parsed = urllib.parse.urlparse(normalized)
+            fallback_label = parsed.hostname or "Cloud"
+            servers.append(((label.strip() or fallback_label), normalized))
+            seen_urls.add(normalized)
+        if servers:
+            return servers
+
+    env_server = os.environ.get("QUIZMD_ROOM_SERVER", "").strip()
+    if env_server:
+        return [(DEFAULT_ROOM_SERVER_LABEL, _room_http_base(env_server))]
+    return [(DEFAULT_ROOM_SERVER_LABEL, DEFAULT_ROOM_SERVER_CLOUD)]
+
+
+def _room_resolve_server(
+    *,
+    explicit_server: str,
+    theme_name: str,
+    no_color: bool,
+) -> tuple[str, str]:
+    if explicit_server.strip():
+        return "Cloud", _room_http_base(explicit_server)
+
+    servers = _room_configured_servers()
+    if len(servers) == 1:
+        return servers[0]
+
+    options = [(f"{label} ({url})", url) for label, url in servers]
+    selected_url = _select_with_space(
+        "Server:",
+        options,
+        theme_name=theme_name,
+        no_color=no_color,
+    )
+    for label, url in servers:
+        if url == selected_url:
+            return label, url
+    return "Cloud", selected_url
+
+
+def _room_server_online(server: str) -> bool:
+    base = _room_http_base(server)
+    try:
+        payload = _room_get_json(f"{base}/healthz", timeout=5)
+        if str(payload.get("status", "")).lower() == "ok":
+            return True
+    except RuntimeError:
+        pass
+    try:
+        payload = _room_get_json(f"{base}/openapi.json", timeout=5)
+    except RuntimeError:
+        return False
+    return isinstance(payload, dict) and "openapi" in payload
+
+
+def _room_supported_modes(server: str) -> set[str] | None:
+    """Return supported room modes from OpenAPI when available."""
+    base = _room_http_base(server)
+    try:
+        payload = _room_get_json(f"{base}/openapi.json", timeout=6)
+    except RuntimeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    components = payload.get("components", {})
+    if not isinstance(components, dict):
+        return None
+    schemas = components.get("schemas", {})
+    if not isinstance(schemas, dict):
+        return None
+
+    def _normalize_enum(values: object) -> set[str] | None:
+        if not isinstance(values, list):
+            return None
+        normalized = {str(item).strip().lower() for item in values if str(item).strip()}
+        return normalized or None
+
+    mode_schema = schemas.get("Mode")
+    if isinstance(mode_schema, dict):
+        enum_values = _normalize_enum(mode_schema.get("enum"))
+        if enum_values:
+            return enum_values
+
+    create_schema = schemas.get("CreateRoomRequest")
+    if not isinstance(create_schema, dict):
+        return None
+    properties = create_schema.get("properties", {})
+    if not isinstance(properties, dict):
+        return None
+    mode_property = properties.get("mode")
+    if not isinstance(mode_property, dict):
+        return None
+
+    enum_values = _normalize_enum(mode_property.get("enum"))
+    if enum_values:
+        return enum_values
+
+    ref = mode_property.get("$ref")
+    if not isinstance(ref, str) or "/" not in ref:
+        return None
+    ref_name = ref.rsplit("/", 1)[-1]
+    ref_schema = schemas.get(ref_name)
+    if not isinstance(ref_schema, dict):
+        return None
+    return _normalize_enum(ref_schema.get("enum"))
+
+
+def _room_ensure_server_ready(server_label: str, server: str) -> None:
+    print(f"Checking cloud server status ({server_label})...", flush=True)
+    if _room_server_online(server):
+        print("Cloud server is online.", flush=True)
+        return
+
+    print("Cloud server is getting ready...", flush=True)
+    for _ in range(3):
+        time.sleep(1.5)
+        if _room_server_online(server):
+            print("Cloud server is ready.", flush=True)
+            return
+
+    raise RuntimeError(
+        "Unfortunately, the cloud server is not available for the moment. "
+        "Please try again later."
+    )
+
+
+def _room_ws_base(url: str) -> str:
+    parsed = urllib.parse.urlparse(url)
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    force_tls = host.endswith(".run.app")
+    if scheme == "https":
+        parsed = parsed._replace(scheme="wss")
+    elif scheme == "http":
+        parsed = parsed._replace(scheme="wss" if force_tls else "ws")
+    elif scheme == "ws" and force_tls:
+        parsed = parsed._replace(scheme="wss")
+    return urllib.parse.urlunparse(parsed).rstrip("/")
+
+
+def _room_ws_url_with_auth(ws_base: str, room_code: str, player_id: str, token: str) -> str:
+    parsed = urllib.parse.urlparse(_room_ws_base(ws_base))
+    path = parsed.path or f"/rooms/{room_code}/ws"
+    if not path.endswith("/ws"):
+        path = f"/rooms/{room_code}/ws"
+    query = urllib.parse.urlencode({"player_id": player_id, "token": token})
+    return urllib.parse.urlunparse(parsed._replace(path=path, query=query))
+
+
+def _room_http_error(exc: urllib.error.HTTPError) -> str:
+    def _format_detail(detail: object) -> str:
+        if isinstance(detail, list):
+            parts: list[str] = []
+            for item in detail:
+                if isinstance(item, dict):
+                    message = str(item.get("msg") or item.get("message") or "").strip()
+                    location = item.get("loc")
+                    if isinstance(location, (list, tuple)) and location:
+                        location_text = ".".join(str(x) for x in location)
+                        if message:
+                            parts.append(f"{location_text}: {message}")
+                            continue
+                    if message:
+                        parts.append(message)
+                        continue
+                parts.append(str(item))
+            return "; ".join(part for part in parts if part) or str(detail)
+        return str(detail)
+
+    status = getattr(exc, "code", "HTTP error")
+    body = ""
+    try:
+        body = exc.read().decode("utf-8", errors="replace").strip()
+    except Exception:
+        body = ""
+    detail = body
+    if body:
+        try:
+            payload = json.loads(body)
+            if isinstance(payload, dict):
+                detail = _format_detail(payload.get("detail") or payload)
+        except Exception:
+            detail = body
+    else:
+        detail = str(exc.reason or "request failed")
+    return f"{status} {detail}"
+
+
+def _room_join_role_unsupported(error_text: str) -> bool:
+    lowered = (error_text or "").lower()
+    if "body.role" not in lowered and " role" not in lowered and "role " not in lowered:
+        return False
+    indicators = (
+        "extra inputs are not permitted",
+        "extra_forbidden",
+        "unexpected field",
+        "unexpected keyword",
+        "not permitted",
+    )
+    return any(token in lowered for token in indicators)
+
+
+def _room_join_token_unsupported(error_text: str) -> bool:
+    lowered = (error_text or "").lower()
+    if "room_token" not in lowered:
+        return False
+    indicators = (
+        "extra inputs are not permitted",
+        "extra_forbidden",
+        "unexpected field",
+        "unexpected keyword",
+        "not permitted",
+    )
+    return any(token in lowered for token in indicators)
+
+
+def _room_join_missing_token(error_text: str) -> bool:
+    lowered = (error_text or "").lower()
+    if "room_token" not in lowered:
+        return False
+    indicators = (
+        "field required",
+        "missing",
+        "string should have at least",
+        "string_too_short",
+        "too_short",
+    )
+    return any(token in lowered for token in indicators)
+
+
+def _room_post_json(url: str, payload: dict, timeout: int = 20) -> dict:
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            data = response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Request failed: {_room_http_error(exc)}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Network error: {exc.reason}") from exc
+
+    try:
+        parsed = json.loads(data)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Server returned invalid JSON.") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Server returned unexpected response.")
+    return parsed
+
+
+def _room_get_json(url: str, timeout: int = 20) -> dict:
+    req = urllib.request.Request(
+        url,
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            data = response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Request failed: {_room_http_error(exc)}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Network error: {exc.reason}") from exc
+
+    try:
+        parsed = json.loads(data)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Server returned invalid JSON.") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Server returned unexpected response.")
+    return parsed
+
+
+def _room_info_request(*, server: str, room_ref: str) -> dict:
+    quoted = urllib.parse.quote(room_ref.strip().lower(), safe="")
+    return _room_get_json(f"{_room_http_base(server)}/join/{quoted}")
+
+
+def _room_create_request(
+    *,
+    server: str,
+    mode: str,
+    room_name: str,
+    host_name: str,
+    host_role: str = "",
+    quiz_title: str,
+    questions: list[dict],
+) -> dict:
+    payload = {
+        "mode": mode,
+        "room_name": room_name,
+        "quiz_title": quiz_title,
+        "host_name": host_name,
+        "questions": questions,
+    }
+    if host_role:
+        payload["host_role"] = host_role
+    return _room_post_json(
+        f"{_room_http_base(server)}/rooms",
+        payload,
+    )
+
+
+def _room_join_by_name_request(
+    *,
+    server: str,
+    room_name: str,
+    room_token: str = "",
+    player_name: str,
+    role: str = "",
+) -> dict:
+    quoted = urllib.parse.quote(room_name.strip().lower(), safe="")
+    payload = {"player_name": player_name}
+    if room_token:
+        payload["room_token"] = room_token
+    if role:
+        payload["role"] = role
+    return _room_post_json(
+        f"{_room_http_base(server)}/rooms/by-name/{quoted}/join",
+        payload,
+    )
+
+
+def _room_random_player_name() -> str:
+    adjectives = ("Sneaky", "Curious", "Quick", "Brave", "Calm", "Happy", "Sharp", "Wise")
+    animals = ("Fox", "Panda", "Otter", "Falcon", "Tiger", "Whale", "Koala", "Llama")
+    return f"{random.choice(adjectives)} {random.choice(animals)}"
+
+
+def _room_normalize_name(raw: str) -> str:
+    candidate = raw.lower().strip()
+    candidate = re.sub(r"[^a-z0-9]+", "-", candidate)
+    candidate = re.sub(r"-+", "-", candidate).strip("-")
+    return candidate
+
+
+def _room_validate_name(raw: str, field_name: str = "room name") -> str:
+    normalized = _room_normalize_name(raw)
+    if not normalized:
+        raise RuntimeError(f"Invalid {field_name}. Use letters/numbers/hyphens only.")
+    if len(normalized) < ROOM_NAME_MIN_LEN:
+        raise RuntimeError(f"Invalid {field_name}. Minimum length is {ROOM_NAME_MIN_LEN} characters.")
+    if len(normalized) > ROOM_NAME_MAX_LEN:
+        raise RuntimeError(f"Invalid {field_name}. Maximum length is {ROOM_NAME_MAX_LEN} characters.")
+    return normalized
+
+
+def _room_generate_name() -> str:
+    while True:
+        candidate = f"{random.choice(ROOM_NAME_CITIES)}-{random.choice(ROOM_NAME_ANIMALS)}-{random.randint(1, 9)}"
+        if ROOM_NAME_MIN_LEN <= len(candidate) <= ROOM_NAME_MAX_LEN:
+            return candidate
+
+
+def _room_validate_json_question(question: dict, source: Path, index: int) -> dict:
+    title = str(question.get("title") or f"Question {index}").strip()
+    text = str(question.get("question") or "").strip()
+    options_raw = question.get("options")
+    correct_raw = question.get("correct")
+    qtype = str(question.get("type") or "single").strip().lower()
+    time_raw = question.get("time_limit", 30)
+
+    if not text:
+        raise ValueError(f"{source}: question {index} is missing non-empty 'question' text")
+    if not isinstance(options_raw, list):
+        raise ValueError(f"{source}: question {index} has invalid 'options' (must be a list)")
+    options = [str(item).strip() for item in options_raw]
+    if len(options) < 2:
+        raise ValueError(f"{source}: question {index} must have at least 2 options")
+    if any(not option for option in options):
+        raise ValueError(f"{source}: question {index} contains blank options")
+    if not isinstance(correct_raw, list) or not correct_raw:
+        raise ValueError(f"{source}: question {index} requires non-empty 'correct' indexes")
+    try:
+        correct = [int(value) for value in correct_raw]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{source}: question {index} has non-integer values in 'correct'") from exc
+
+    try:
+        time_limit = int(time_raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{source}: question {index} has invalid 'time_limit' value {time_raw!r}") from exc
+    if time_limit < ROOM_MIN_TIME_LIMIT_SECONDS:
+        raise ValueError(
+            f"{source}: question {index} has invalid 'time_limit' value {time_limit}. "
+            f"Room mode requires Time/time_limit >= {ROOM_MIN_TIME_LIMIT_SECONDS} seconds."
+        )
+
+    normalized = {
+        "title": title or f"Question {index}",
+        "question": text,
+        "options": options,
+        "correct": correct,
+        "type": qtype,
+        "time_limit": time_limit,
+        "explanation": str(question.get("explanation") or "").strip(),
+    }
+    validate_question(normalized, source)
+    return normalized
+
+
+def _room_quiz_payload_from_json(path: str) -> tuple[str, list[dict]]:
+    source = Path(path)
+    content = source.read_text(encoding="utf-8")
+    payload = json.loads(content)
+    if not isinstance(payload, dict):
+        raise ValueError("JSON quiz file must be an object with quiz_title and questions.")
+    title = str(payload.get("quiz_title") or "").strip()
+    questions = payload.get("questions")
+    if not title:
+        raise ValueError("JSON quiz file requires non-empty quiz_title.")
+    if not isinstance(questions, list) or not questions:
+        raise ValueError("JSON quiz file requires non-empty questions list.")
+    normalized = []
+    for idx, q in enumerate(questions, start=1):
+        if not isinstance(q, dict):
+            raise ValueError(f"{source}: question {idx} must be an object")
+        normalized.append(_room_validate_json_question(q, source, idx))
+    return title, normalized
+
+
+def _room_quiz_payload_from_markdown(path: str) -> tuple[str, list[dict]]:
+    title, questions = parse_quiz_markdown(path)
+    normalized = []
+    for idx, q in enumerate(questions, start=1):
+        row = (
+            {
+                "title": str(q.get("title") or "Question").strip(),
+                "question": str(q.get("question") or "").strip(),
+                "options": list(q.get("options") or []),
+                "correct": [int(x) for x in list(q.get("correct") or [])],
+                "type": str(q.get("type") or "single"),
+                "time_limit": int(q.get("time_limit") or 30),
+                "explanation": str(q.get("explanation") or "").strip(),
+            }
+        )
+        if row["time_limit"] < ROOM_MIN_TIME_LIMIT_SECONDS:
+            source = Path(path)
+            raise ValueError(
+                f"{source}: question {idx} has invalid Time value {row['time_limit']}. "
+                f"Room mode requires Time/time_limit >= {ROOM_MIN_TIME_LIMIT_SECONDS} seconds."
+            )
+        normalized.append(row)
+    return title, normalized
+
+
+def _room_load_quiz_payload(path: str | None) -> tuple[str, list[dict]]:
+    if not path:
+        return ROOM_SAMPLE_QUIZ_TITLE, json.loads(json.dumps(ROOM_SAMPLE_QUESTIONS))
+
+    quiz_path = Path(path).expanduser()
+    if not quiz_path.exists():
+        raise RuntimeError(f"Quiz file not found: {quiz_path}")
+
+    if quiz_path.suffix.lower() == ".json":
+        try:
+            return _room_quiz_payload_from_json(str(quiz_path))
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            raise RuntimeError(f"Invalid JSON quiz file: {exc}") from exc
+
+    mode = detect_quiz_mode(str(quiz_path))
+    if mode == "essay":
+        raise RuntimeError("Essay files are not supported for room mode. Use a multiple-choice quiz file.")
+    try:
+        return _room_quiz_payload_from_markdown(str(quiz_path))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"Invalid markdown quiz file: {exc}") from exc
+
+
+def _room_connected_players(payload: dict) -> list[dict[str, str]]:
+    players = payload.get("players", [])
+    if not isinstance(players, list):
+        return []
+    connected: list[dict[str, str]] = []
+    for row in players:
+        if not isinstance(row, dict) or not row.get("connected"):
+            continue
+        name = str(row.get("name") or "Unknown")
+        role = str(row.get("role") or "participant").lower()
+        connected.append({"name": name, "role": role})
+    connected.sort(key=lambda row: row["name"].lower())
+    return connected
+
+
+def _room_player_label(name: str, role: str) -> str:
+    if role in {"teacher", "student"}:
+        return f"{name} ({role})"
+    return name
+
+
+def _save_room_session_transcript(
+    *,
+    room_name: str,
+    mode: str,
+    display_name: str,
+    role: str,
+    transcript: list[dict[str, object]],
+    final_score: int | None,
+    scored_by: str,
+    ended_by: str,
+    ended_by_role: str,
+) -> Path:
+    root = Path("answers") / "room-sessions"
+    root.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    file_base = f"{slugify(room_name)}-{slugify(display_name)}-{ts}"
+    out = root / f"{file_base}.json"
+    counter = 2
+    while out.exists():
+        out = root / f"{file_base}-{counter}.json"
+        counter += 1
+
+    payload = {
+        "room_name": room_name,
+        "mode": mode,
+        "participant": {
+            "name": display_name,
+            "role": role or "participant",
+        },
+        "final_score": final_score,
+        "scored_by": scored_by,
+        "ended_by": ended_by,
+        "ended_by_role": ended_by_role,
+        "events": transcript,
+    }
+    out.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return out
+
+
+def _select_with_space(
+    title: str,
+    options: list[tuple[str, str]],
+    *,
+    theme_name: str,
+    no_color: bool,
+) -> str:
+    if not options:
+        raise RuntimeError("No options available.")
+
+    try:
+        from prompt_toolkit import Application
+        from prompt_toolkit.formatted_text import HTML as PromptHTML
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.layout import HSplit, Layout, Window
+        from prompt_toolkit.layout.controls import FormattedTextControl
+    except ModuleNotFoundError:
+        print(title)
+        for idx, (label, _) in enumerate(options, start=1):
+            print(f"  {idx}. {label}")
+        while True:
+            raw = prompt_input("Select option number: ").strip()
+            if raw.isdigit():
+                pos = int(raw)
+                if 1 <= pos <= len(options):
+                    return options[pos - 1][1]
+
+    theme = select_theme(theme_name)
+    selected = 0
+    chosen = 0
+
+    def render():
+        lines = [
+            f"<style fg='{theme['pt_title']}'><b>{html.escape(title)}</b></style>",
+            f"<style fg='{theme['pt_instruction']}'>Use ↑/↓, Space to select, Enter to confirm.</style>",
+            "",
+        ]
+        for idx, (label, _) in enumerate(options):
+            pointer = "&gt;" if idx == selected else " "
+            marker = "[x]" if idx == chosen else "[ ]"
+            if no_color:
+                lines.append(f"{'>' if idx == selected else ' '} {marker} {label}")
+            else:
+                style = (
+                    f"fg='{theme['pt_selected_fg']}' bg='{theme['pt_selected_bg']}'"
+                    if idx == selected
+                    else f"fg='{theme['pt_primary']}'"
+                )
+                lines.append(f"<style {style}>{pointer} {html.escape(marker)} {html.escape(label)}</style>")
+        markup = "\n".join(lines)
+        return markup if no_color else PromptHTML(markup)
+
+    control = FormattedTextControl(text=render)
+    window = Window(content=control, wrap_lines=True, always_hide_cursor=True)
+    kb = KeyBindings()
+
+    @kb.add("up")
+    def _(_event):
+        nonlocal selected
+        selected = (selected - 1) % len(options)
+        control.text = render()
+
+    @kb.add("down")
+    def _(_event):
+        nonlocal selected
+        selected = (selected + 1) % len(options)
+        control.text = render()
+
+    @kb.add("space")
+    def _(_event):
+        nonlocal chosen
+        chosen = selected
+        control.text = render()
+
+    @kb.add("enter")
+    def _(event):
+        event.app.exit(result=options[chosen][1])
+
+    @kb.add("c-c")
+    def _(event):
+        event.app.exit(exception=KeyboardInterrupt())
+
+    app = Application(layout=Layout(HSplit([window])), key_bindings=kb, full_screen=False)
+    try:
+        return app.run()
+    except Exception:
+        print(title)
+        for idx, (label, _) in enumerate(options, start=1):
+            print(f"  {idx}. {label}")
+        while True:
+            raw = prompt_input("Select option number: ").strip()
+            if raw.isdigit():
+                pos = int(raw)
+                if 1 <= pos <= len(options):
+                    return options[pos - 1][1]
+
+
+def _read_lobby_line_nonblocking(timeout: float = 0.15) -> str | None:
+    if not sys.stdin or not hasattr(sys.stdin, "fileno"):
+        return None
+    if os.name == "nt":
+        return None
+    try:
+        import select
+        ready, _, _ = select.select([sys.stdin], [], [], timeout)
+    except (OSError, ValueError):
+        return None
+    if not ready:
+        return None
+    line = sys.stdin.readline()
+    if line == "":
+        raise RuntimeError("Interactive input is not available in this environment.")
+    return line.rstrip("\r\n")
+
+
+async def _run_room_waiting_loop(
+    *,
+    ws_base: str,
+    room_code: str,
+    player_id: str,
+    token: str,
+    display_name: str,
+    room_name: str,
+    is_host: bool,
+    room_mode: str,
+    player_role: str,
+    theme_name: str,
+    no_color: bool,
+    full_screen: bool,
+) -> int:
+    try:
+        import websockets
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Room mode requires 'websockets'. Reinstall quizmd to get multiplayer dependencies."
+        ) from exc
+
+    ws_url = _room_ws_url_with_auth(ws_base, room_code, player_id, token)
+    theme = select_theme(theme_name)
+    boxing_mode = room_mode == "boxing"
+    connected_players: list[dict[str, str]] = []
+    known_connected: set[tuple[str, str]] = set()
+    resolved_player_role = (player_role or "participant").lower()
+    in_quiz = False
+    session_started = False
+    final_score: int | None = None
+    scored_by = ""
+    ended_by = ""
+    ended_by_role = ""
+    stop = asyncio.Event()
+    current_question_index: int | None = None
+    current_total_questions = 0
+    transcript: list[dict[str, object]] = []
+
+    def _record(event_type: str, payload: dict[str, object]) -> None:
+        transcript.append(
+            {
+                "type": event_type,
+                "ts": time.time(),
+                "payload": payload,
+            }
+        )
+
+    try:
+        ws_context = websockets.connect(ws_url, open_timeout=10, close_timeout=5)
+    except Exception as exc:
+        raise RuntimeError(f"Could not connect to room websocket: {exc}") from exc
+
+    try:
+        ws = await ws_context.__aenter__()
+    except Exception as exc:
+        raise RuntimeError(f"Could not connect to room websocket: {exc}") from exc
+
+    try:
+        print("")
+        print(f"Connected as {display_name}.")
+        print(f'Share "{room_name}" with your friends.')
+        if is_host:
+            print("Type /start when you are ready.")
+        print("Chat enabled. Type message and press Enter.")
+        if boxing_mode:
+            print("Commands: /start (host), /players, /score <0-100> (teacher), /end, /help, /quit")
+        else:
+            print("Commands: /start (host), /players, /help, /quit")
+        await ws.send(json.dumps({"type": "ready_toggle", "payload": {"ready": True}}))
+
+        async def recv_loop():
+            nonlocal connected_players
+            nonlocal known_connected
+            nonlocal resolved_player_role
+            nonlocal in_quiz
+            nonlocal session_started
+            nonlocal current_question_index
+            nonlocal current_total_questions
+            nonlocal final_score
+            nonlocal scored_by
+            nonlocal ended_by
+            nonlocal ended_by_role
+            while not stop.is_set():
+                try:
+                    raw = await ws.recv()
+                except Exception:
+                    if not stop.is_set():
+                        print("Disconnected from room server.")
+                        _record("disconnected", {"reason": "websocket closed"})
+                    stop.set()
+                    return
+                try:
+                    event = json.loads(raw)
+                except Exception:
+                    continue
+                etype = event.get("type")
+                payload = event.get("payload", {})
+
+                if etype == "chat_message":
+                    sender = payload.get("from", "Unknown")
+                    text = payload.get("text", "")
+                    sender_role = str(payload.get("from_role") or "participant")
+                    print(f"[{sender}] {text}")
+                    _record("chat_message", {"from": str(sender), "from_role": sender_role, "text": str(text)})
+                    continue
+
+                if etype in {"connected", "lobby_update"}:
+                    rows = payload.get("players", [])
+                    if isinstance(rows, list):
+                        for row in rows:
+                            if not isinstance(row, dict):
+                                continue
+                            if str(row.get("player_id") or "") == player_id:
+                                resolved_player_role = str(row.get("role") or resolved_player_role).lower()
+                    connected_players = _room_connected_players(payload)
+                    current_set = {(row["name"], row["role"]) for row in connected_players}
+                    for name, role in sorted(current_set - known_connected, key=lambda pair: pair[0].lower()):
+                        print(f"{_room_player_label(name, role)} joined.")
+                        _record("player_joined", {"name": name, "role": role})
+                    for name, role in sorted(known_connected - current_set, key=lambda pair: pair[0].lower()):
+                        print(f"{_room_player_label(name, role)} left.")
+                        _record("player_left", {"name": name, "role": role})
+                    known_connected = current_set
+                    continue
+
+                if etype == "error":
+                    print(f"Server: {payload.get('message', 'Unknown error')}")
+                    _record("error", {"message": str(payload.get("message", "Unknown error"))})
+                    continue
+
+                if etype == "game_started":
+                    if boxing_mode:
+                        session_started = True
+                        print("Ready to start!")
+                        print("Session is live. Teacher can ask the first question.")
+                    else:
+                        in_quiz = True
+                        print("Game is starting now.")
+                    _record("game_started", {"mode": room_mode})
+                    continue
+
+                if etype == "question":
+                    if boxing_mode:
+                        continue
+                    in_quiz = True
+                    q_payload = payload.get("question", {})
+                    current_question_index = int(payload.get("question_index", 0))
+                    current_total_questions = int(payload.get("total_questions", 0))
+                    q = {
+                        "title": f"Question {current_question_index + 1}",
+                        "question": str(q_payload.get("question") or ""),
+                        "options": list(q_payload.get("options") or []),
+                        "correct": [-1],
+                        "type": "multiple" if str(q_payload.get("type") or "single") == "multiple" else "single",
+                        "time_limit": int(q_payload.get("time_limit") or 30),
+                        "explanation": "",
+                        "imposters": [],
+                    }
+                    try:
+                        _perfect, answers, _imposters, _grading = await ask_question(
+                            q,
+                            theme,
+                            question_index=current_question_index + 1,
+                            total_questions=max(1, current_total_questions),
+                            no_color=no_color,
+                            compact=False,
+                            full_screen=full_screen,
+                        )
+                    except KeyboardInterrupt:
+                        await ws.send(json.dumps({"type": "leave_room", "payload": {}}))
+                        stop.set()
+                        return
+
+                    if answers:
+                        await ws.send(
+                            json.dumps(
+                                {
+                                    "type": "submit_answer",
+                                    "payload": {"question_index": current_question_index, "answers": answers},
+                                }
+                            )
+                        )
+                    else:
+                        print("No answer submitted. Waiting for round result...")
+                    _record(
+                        "answer_submitted",
+                        {
+                            "question_index": current_question_index,
+                            "answers": answers,
+                        },
+                    )
+                    continue
+
+                if etype == "round_result":
+                    if boxing_mode:
+                        continue
+                    qidx = int(payload.get("question_index", -1))
+                    print("")
+                    print(f"Round {qidx + 1} result:")
+                    players = payload.get("players", [])
+                    if isinstance(players, list):
+                        for row in players:
+                            name = row.get("name", "Unknown")
+                            mark = "correct" if bool(row.get("is_correct", False)) else "wrong"
+                            delta = row.get("delta")
+                            score = row.get("score")
+                            if delta is not None and score is not None:
+                                print(f"  - {name}: {mark}, delta={delta}, score={score}")
+                            else:
+                                print(f"  - {name}: {mark}")
+                    _record("round_result", {"payload": payload})
+                    continue
+
+                if etype == "consensus_retry":
+                    if boxing_mode:
+                        continue
+                    print("")
+                    print(payload.get("message", "Not consensus, try again"))
+                    wrong = payload.get("wrong_names", [])
+                    missing = payload.get("missing_names", [])
+                    if wrong:
+                        print("Wrong answers from: " + ", ".join(wrong))
+                    if missing:
+                        print("Missing answers from: " + ", ".join(missing))
+                    _record("consensus_retry", {"payload": payload})
+                    continue
+
+                if etype == "scoreboard":
+                    if boxing_mode:
+                        continue
+                    print("")
+                    print("Scoreboard:")
+                    players = payload.get("players", [])
+                    if isinstance(players, list):
+                        for row in players:
+                            print(f"  - {row.get('name', 'Unknown')}: {row.get('score', 0)}")
+                    _record("scoreboard", {"payload": payload})
+                    continue
+
+                if etype == "boxing_score":
+                    score_value = payload.get("score")
+                    score_by = str(payload.get("by") or "Teacher")
+                    if score_value is not None:
+                        print(f"Score updated: {score_value}% (by {score_by}).")
+                    else:
+                        print(f"Score updated by {score_by}.")
+                    _record(
+                        "boxing_score",
+                        {
+                            "score": score_value,
+                            "by": score_by,
+                            "by_role": str(payload.get("by_role") or ""),
+                        },
+                    )
+                    continue
+
+                if etype == "game_finished":
+                    print("")
+                    if boxing_mode:
+                        print("Session ended.")
+                    else:
+                        print("Game finished.")
+                    reason = payload.get("reason")
+                    if reason:
+                        print(f"Reason: {reason}")
+                    score_payload = payload.get("final_score")
+                    if isinstance(score_payload, int):
+                        final_score = score_payload
+                        print(f"Final score: {final_score}%")
+                    scored_by = str(payload.get("scored_by") or "")
+                    ended_by = str(payload.get("ended_by") or "")
+                    ended_by_role = str(payload.get("ended_by_role") or "")
+                    _record("game_finished", {"payload": payload})
+                    stop.set()
+                    return
+
+        recv_task = asyncio.create_task(recv_loop())
+        try:
+            while not stop.is_set():
+                if in_quiz and not boxing_mode:
+                    await asyncio.sleep(0.1)
+                    continue
+                if os.name == "nt":
+                    try:
+                        text = (await asyncio.to_thread(prompt_input, "")).strip()
+                    except RuntimeError:
+                        stop.set()
+                        break
+                else:
+                    try:
+                        line = _read_lobby_line_nonblocking(timeout=0.15)
+                    except RuntimeError:
+                        print("Input stream closed. Leaving room...")
+                        try:
+                            await ws.send(json.dumps({"type": "leave_room", "payload": {}}))
+                        except Exception:
+                            pass
+                        stop.set()
+                        break
+                    if line is None:
+                        await asyncio.sleep(0.05)
+                        continue
+                    text = line.strip()
+
+                if not text:
+                    continue
+                if text == "/quit":
+                    await ws.send(json.dumps({"type": "leave_room", "payload": {}}))
+                    stop.set()
+                    break
+                if text == "/players":
+                    if connected_players:
+                        labels = [_room_player_label(row["name"], row["role"]) for row in connected_players]
+                        print("Connected: " + ", ".join(labels))
+                    else:
+                        print("No connected players shown yet.")
+                    continue
+                if text == "/help":
+                    if boxing_mode:
+                        print("Commands: /start (host), /players, /score <0-100> (teacher), /end, /help, /quit")
+                    else:
+                        print("Commands: /start (host), /players, /help, /quit")
+                    continue
+                if text == "/start":
+                    if not is_host:
+                        print("Only the room host can start.")
+                        continue
+                    await ws.send(json.dumps({"type": "ready_toggle", "payload": {"ready": True}}))
+                    await asyncio.sleep(0.15)
+                    await ws.send(json.dumps({"type": "start_game", "payload": {}}))
+                    print("Start requested...")
+                    continue
+                if boxing_mode and text.startswith("/score"):
+                    if resolved_player_role != "teacher":
+                        print("Only the teacher can use /score.")
+                        continue
+                    match = re.match(r"^/score\s+(-?\d+)\s*$", text)
+                    if not match:
+                        print("Usage: /score <0-100>")
+                        continue
+                    score_value = int(match.group(1))
+                    await ws.send(json.dumps({"type": "set_score", "payload": {"score": score_value}}))
+                    continue
+                if boxing_mode and text == "/end":
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "type": "end_session",
+                                "payload": {"reason": "Session ended by participant."},
+                            }
+                        )
+                    )
+                    continue
+
+                await ws.send(json.dumps({"type": "chat_message", "payload": {"text": text}}))
+        finally:
+            stop.set()
+            recv_task.cancel()
+            try:
+                await recv_task
+            except asyncio.CancelledError:
+                pass
+    finally:
+        try:
+            await ws_context.__aexit__(None, None, None)
+        except Exception:
+            pass
+    if boxing_mode:
+        transcript_path = _save_room_session_transcript(
+            room_name=room_name,
+            mode=room_mode,
+            display_name=display_name,
+            role=resolved_player_role,
+            transcript=transcript,
+            final_score=final_score,
+            scored_by=scored_by,
+            ended_by=ended_by,
+            ended_by_role=ended_by_role,
+        )
+        print(f"Session transcript saved: {transcript_path}")
+    return 0
+
+
+def run_room_command(args: argparse.Namespace) -> int:
+    no_color = is_no_color_requested(args.no_color)
+    theme_name = args.theme
+    requested_role = str(args.role or "").strip().lower()
+    if requested_role and requested_role not in {"teacher", "student"}:
+        raise RuntimeError("Invalid role. Use --role teacher or --role student.")
+
+    server_label, server = _room_resolve_server(
+        explicit_server=str(args.server or ""),
+        theme_name=theme_name,
+        no_color=no_color,
+    )
+    _room_ensure_server_ready(server_label, server)
+    if args.server or len(_room_configured_servers()) > 1:
+        print(f"Using server: {server_label} ({server})", flush=True)
+
+    if args.create is not None:
+        requested_name = "" if args.create == "__AUTO__" else str(args.create)
+        supported_modes = _room_supported_modes(server)
+        mode_choices = [
+            ("Compete", "compete"),
+            ("Collaborate", "collaborate"),
+            ("Boxing (Teacher/Student Chat)", "boxing"),
+        ]
+        if supported_modes:
+            mode_choices = [choice for choice in mode_choices if choice[1] in supported_modes]
+        if not mode_choices:
+            raise RuntimeError(
+                "This cloud server did not report any supported room modes. "
+                "Please try again later or check server deployment."
+            )
+
+        mode = args.mode or _select_with_space(
+            "Mode:",
+            mode_choices,
+            theme_name=theme_name,
+            no_color=no_color,
+        )
+        if supported_modes and mode not in supported_modes:
+            supported_text = ", ".join(sorted(supported_modes))
+            raise RuntimeError(
+                f"Selected mode '{mode}' is not supported by this cloud server yet. "
+                f"Supported modes: {supported_text}. "
+                "Please deploy/update quizmd-server or choose another mode."
+            )
+        host_role = requested_role
+        if mode == "boxing" and not host_role:
+            host_role = _select_with_space(
+                "Your role in this boxing room:",
+                [("Teacher", "teacher"), ("Student", "student")],
+                theme_name=theme_name,
+                no_color=no_color,
+            )
+        if mode != "boxing":
+            host_role = ""
+        host_name = (args.name or "").strip()
+        if not host_name:
+            suggested = _room_random_player_name()
+            host_name = prompt_input(f"Enter name [{suggested}]: ").strip() or suggested
+        auto_room_name = not requested_name.strip()
+        room_name = _room_validate_name(requested_name) if requested_name.strip() else _room_generate_name()
+        quiz_title, questions = _room_load_quiz_payload(args.quiz)
+        created = None
+        for _attempt in range(6):
+            print(f"Room name: {room_name}")
+            try:
+                created = _room_create_request(
+                    server=server,
+                    mode=mode,
+                    room_name=room_name,
+                    host_name=host_name,
+                    host_role=host_role,
+                    quiz_title=quiz_title,
+                    questions=questions,
+                )
+                break
+            except RuntimeError as exc:
+                if auto_room_name and "409" in str(exc):
+                    room_name = _room_generate_name()
+                    continue
+                raise
+        if created is None:
+            raise RuntimeError("Could not create a unique room name. Please retry.")
+        print("")
+        print(f"Room created by: {created.get('host_display_name', host_name)}")
+        print(f"Room name: {created.get('room_name', room_name)}")
+        room_token = str(created.get("room_token") or "").strip()
+        if room_token:
+            print(f"Room token: {room_token}")
+        if mode == "boxing":
+            role_label = str(created.get("host_role") or host_role or "teacher")
+            print(f"Role: {role_label}")
+        print(f"Quiz: {quiz_title} ({len(questions)} questions)")
+        print(f'Share "{created.get("room_name", room_name)}" with your friends.')
+        if room_token:
+            share_command = (
+                f'quizmd room --join "{created.get("room_name", room_name)}" '
+                f'--token "{room_token}" --name "FriendName"'
+            )
+            print(f"Join command: {share_command}")
+        print("Ready and waiting. Share the room name with your friends.")
+        return asyncio.run(
+            _run_room_waiting_loop(
+                ws_base=str(created.get("ws_url") or _room_ws_base(server)),
+                room_code=str(created.get("room_code") or ""),
+                player_id=str(created.get("host_player_id") or ""),
+                token=str(created.get("host_player_token") or ""),
+                display_name=str(created.get("host_display_name") or host_name),
+                room_name=str(created.get("room_name") or room_name),
+                is_host=True,
+                room_mode=str(created.get("mode") or mode),
+                player_role=str(created.get("host_role") or host_role or "participant"),
+                theme_name=theme_name,
+                no_color=no_color,
+                full_screen=args.full_screen,
+            )
+        )
+
+    room_name = _room_validate_name(str(args.join or ""))
+    player_name = (args.name or "").strip()
+    if not player_name:
+        suggested = _room_random_player_name()
+        player_name = prompt_input(f"Enter name [{suggested}]: ").strip() or suggested
+
+    join_role = requested_role
+    room_info = {}
+    try:
+        room_info = _room_info_request(server=server, room_ref=room_name)
+    except RuntimeError:
+        room_info = {}
+    token_required = bool(room_info.get("token_required", False))
+    room_token = str(getattr(args, "token", "") or "").strip()
+    if token_required and not room_token:
+        room_token = prompt_input("Enter room token: ").strip()
+    if token_required and not room_token:
+        raise RuntimeError("Room token is required to join this room.")
+
+    detected_mode = str(room_info.get("mode") or "").lower()
+    if detected_mode == "boxing":
+        if not join_role:
+            join_role = _select_with_space(
+                "Your role in this boxing room:",
+                [("Teacher", "teacher"), ("Student", "student")],
+                theme_name=theme_name,
+                no_color=no_color,
+            )
+    elif detected_mode and join_role:
+        # Keep compatibility with users passing --role on non-boxing rooms.
+        print("Role flag ignored: this room is not in boxing mode.")
+        join_role = ""
+
+    attempt_plan: list[tuple[str, str]] = [(room_token, join_role)]
+    if join_role:
+        attempt_plan.append((room_token, ""))
+    if room_token:
+        attempt_plan.append(("", join_role))
+    if room_token and join_role:
+        attempt_plan.append(("", ""))
+    seen_attempts: set[tuple[str, str]] = set()
+    attempts: list[tuple[str, str]] = []
+    for item in attempt_plan:
+        if item in seen_attempts:
+            continue
+        seen_attempts.add(item)
+        attempts.append(item)
+
+    joined = None
+    last_error: RuntimeError | None = None
+    while attempts:
+        attempt_token, attempt_role = attempts.pop(0)
+        try:
+            joined = _room_join_by_name_request(
+                server=server,
+                room_name=room_name,
+                room_token=attempt_token,
+                player_name=player_name,
+                role=attempt_role,
+            )
+            break
+        except RuntimeError as exc:
+            last_error = exc
+            error_text = str(exc)
+            if not room_token and _room_join_missing_token(error_text):
+                prompted = prompt_input("Enter room token: ").strip()
+                if not prompted:
+                    raise RuntimeError("Room token is required to join this room.") from exc
+                room_token = prompted
+                fresh_plan: list[tuple[str, str]] = [(room_token, join_role)]
+                if join_role:
+                    fresh_plan.append((room_token, ""))
+                fresh_plan.append(("", join_role))
+                if join_role:
+                    fresh_plan.append(("", ""))
+                attempts = []
+                seen_attempts = set()
+                for item in fresh_plan:
+                    if item in seen_attempts:
+                        continue
+                    seen_attempts.add(item)
+                    attempts.append(item)
+                continue
+            if attempt_role and _room_join_role_unsupported(error_text):
+                print("Server compatibility mode: retrying join without role field.")
+                continue
+            if attempt_token and _room_join_token_unsupported(error_text):
+                print("Server compatibility mode: retrying join without room token field.")
+                continue
+            raise
+    if joined is None:
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Could not join room due to an unexpected error.")
+    print(f'Joined room "{joined.get("room_name", room_name)}" as {joined.get("display_name", player_name)}.')
+    if str(joined.get("mode") or room_info.get("mode") or "").lower() == "boxing":
+        joined_role = str(joined.get("player_role") or join_role or "participant")
+        print(f"Role: {joined_role}")
+    return asyncio.run(
+        _run_room_waiting_loop(
+            ws_base=str(joined.get("ws_url") or _room_ws_base(server)),
+            room_code=str(joined.get("room_code") or ""),
+            player_id=str(joined.get("player_id") or ""),
+            token=str(joined.get("player_token") or ""),
+            display_name=str(joined.get("display_name") or player_name),
+            room_name=str(joined.get("room_name") or room_name),
+            is_host=False,
+            room_mode=str(joined.get("mode") or room_info.get("mode") or "compete"),
+            player_role=str(joined.get("player_role") or join_role or "participant"),
+            theme_name=theme_name,
+            no_color=no_color,
+            full_screen=args.full_screen,
+        )
+    )
+
+
 def save_attempt(
     quiz_title: str,
     score: int,
@@ -908,6 +2384,9 @@ def save_attempt(
     for item in answers:
         imposter_selected = item.get("selected_imposter_labels", "")
         imposter_expected = item.get("expected_imposter_labels", "")
+        result_label = item.get("result_label")
+        if not result_label:
+            result_label = "Correct" if item.get("is_correct") else "Wrong"
         lines.extend([
             item["question_title"],
             item["question_text"],
@@ -915,7 +2394,7 @@ def save_attempt(
             f"Correct: {item['correct_labels']}",
             f"Imposters flagged: {imposter_selected or '-'}",
             f"Expected imposters: {imposter_expected or '-'}",
-            f"Result: {'Correct' if item['is_correct'] else 'Wrong'}",
+            f"Result: {result_label}",
             f"Explanation: {item['explanation'] or '-'}",
             "",
         ])
@@ -1647,7 +3126,12 @@ def build_question_markup(
             if ultra_compact
             else ("Space select | Enter" if ascii_compact else "Space select • Enter")
         )
-    mode_badge = "[I]" if (imposter_mode and ultra_compact) else ("[IMPOSTER]" if imposter_mode else "")
+    imposter_count = len(q.get("imposters", [])) if imposter_mode else 0
+    imposter_badge = ""
+    if imposter_count == 1:
+        imposter_badge = "[1 IMPOSTER]"
+    elif imposter_count > 1:
+        imposter_badge = f"[{imposter_count} IMPOSTERS]"
     question_type_badge = (
         "[M]" if (is_multiple and ultra_compact) else
         "[S]" if ((not is_multiple) and ultra_compact) else
@@ -1687,7 +3171,7 @@ def build_question_markup(
         header = (
             f"{'Q' if ultra_compact else 'Question'} {question_index}/{total_questions} {progress_bar}"
             + (f"  {timer_text}" if timer_text else "")
-            + (f"{separator}{mode_badge}" if mode_badge else "")
+            + (f"{separator}{imposter_badge}" if imposter_badge else "")
             + f"{separator}{question_type_badge}{separator}{instruction}"
         )
         lines = [header, ""]
@@ -1709,7 +3193,7 @@ def build_question_markup(
         header = (
             f"<style fg='{theme['pt_instruction']}'><b>{'Q' if ultra_compact else 'Question'} {question_index}/{total_questions}</b> {progress_bar}</style>"
             + timer_part
-            + f" <style fg='{theme['pt_instruction']}'>{html.escape((separator + mode_badge) if mode_badge else '')}{html.escape(separator + question_type_badge + separator + instruction)}</style>"
+            + f" <style fg='{theme['pt_instruction']}'>{html.escape((separator + imposter_badge) if imposter_badge else '')}{html.escape(separator + question_type_badge + separator + instruction)}</style>"
         )
         lines = [header, ""]
 
@@ -1876,11 +3360,9 @@ async def ask_question(
         )
         if full_screen and submitted:
             grading = evaluate_submission(result["answer"], result["imposters"])
-            is_answer_correct = grading["answer_correct"]
-            is_correct = grading["is_perfect"]
+            status = question_status_label(grading)
             explanation = (q.get("explanation") or "").strip()
             if no_color:
-                status = "Correct" if is_correct else "Wrong"
                 markup += "\n" + status + "\n"
                 markup += f"\nQuestion points: {grading['question_points']}/{grading['question_max_points']}\n"
                 if imposter_mode:
@@ -1892,8 +3374,7 @@ async def ask_question(
                 markup += "\nPress Enter for the next question..."
                 return markup
 
-            status_style = theme["success"] if is_correct else theme["danger"]
-            status = "Correct" if is_correct else "Wrong"
+            status_style = question_status_style(theme, status)
             markup += f"\n<style fg='{status_style}'><b>{status}</b></style>\n"
             markup += (
                 f"\n<style fg='{theme['pt_instruction']}'>"
@@ -2104,6 +3585,28 @@ def format_labels(options: list[str], indexes: list[int] | None) -> str:
     return "; ".join(labels)
 
 
+def question_status_label(grading: dict) -> str:
+    """Return user-facing per-question status text.
+
+    For imposter mode we surface partial credit explicitly.
+    """
+    if grading.get("imposter_mode"):
+        if grading.get("is_perfect"):
+            return "Correct"
+        if grading.get("question_points", 0) > 0:
+            return "Partially Correct"
+        return "Wrong"
+    return "Correct" if grading.get("answer_correct") else "Wrong"
+
+
+def question_status_style(theme: dict, status: str) -> str:
+    if status == "Correct":
+        return theme["success"]
+    if status == "Partially Correct":
+        return theme["accent"]
+    return theme["danger"]
+
+
 def run(title, questions, theme_name: str = "auto", no_color: bool = False, full_screen: bool = False):
     try:
         from rich.console import Console
@@ -2119,18 +3622,47 @@ def run(title, questions, theme_name: str = "auto", no_color: bool = False, full
 
     theme = select_theme(theme_name)
     quiz_has_imposters = any(bool(q.get("imposters")) for q in questions)
+    has_multiple = any(str(q.get("type", "single")) == "multiple" for q in questions)
+    has_single = any(str(q.get("type", "single")) != "multiple" for q in questions)
     saved_answers = []
 
     try:
+        rule_lines = ["[bold]Rules:[/bold]"]
+        if quiz_has_imposters:
+            rule_lines.append("- Select correct answer(s) and flag misleading options (those are there to trick you)")
+            rule_lines.append(
+                "- Use [bold]↑/↓[/bold] to move, [bold]Space[/bold] for correct choices, "
+                "[bold]X[/bold] for imposters, [bold]Enter[/bold] to submit"
+            )
+            rule_lines.append("- Imposter scoring: +1 correct flag, -1 false flag (minimum 0 imposter points)")
+        elif has_multiple and not has_single:
+            rule_lines.append("- Select all options you believe are correct")
+            rule_lines.append(
+                "- Use [bold]↑/↓[/bold] to move, [bold]Space[/bold] to toggle choices, "
+                "[bold]Enter[/bold] to submit"
+            )
+            rule_lines.append("- You get points when your final set matches the expected correct set")
+        elif has_single and not has_multiple:
+            rule_lines.append("- Pick the one best answer")
+            rule_lines.append(
+                "- Use [bold]↑/↓[/bold] to move, press [bold]Space[/bold] to select, "
+                "[bold]Enter[/bold] to submit"
+            )
+            rule_lines.append("- Correct answer gives full question points")
+        else:
+            rule_lines.append("- Questions include single-choice and multiple-choice items")
+            rule_lines.append(
+                "- Use [bold]↑/↓[/bold] to move, [bold]Space[/bold] to select/toggle, "
+                "[bold]Enter[/bold] to submit"
+            )
+            rule_lines.append("- Single-choice gives full points; multiple-choice needs the exact correct set")
+
+        rule_lines.append("- Complete all questions before timers")
+        rule_lines.append("- Press [bold]Ctrl+C[/bold] to exit at any time")
         rules_text = (
-            "[bold]Rules:[/bold]\n"
-            "- Use ↑/↓ to move\n"
-            "- Press [bold]Space[/bold] to select an answer\n"
-            + ("- Press [bold]X[/bold] to mark/unmark imposter options\n" if quiz_has_imposters else "")
-            + "- Press [bold]Enter[/bold] to continue\n"
-            "- Press [bold]Ctrl+C[/bold] to exit the quiz at any time\n\n"
-            "Are you ready to start?\n"
-            f"[bold {theme['accent']}]Press Enter... Let's go! 🚀[/bold {theme['accent']}]"
+            "\n".join(rule_lines)
+            + "\n\nAre you ready to start?\n"
+            + f"[bold {theme['accent']}]Press Enter... Let's go! 🚀[/bold {theme['accent']}]"
         )
         console.print(
             Panel(
@@ -2175,12 +3707,11 @@ def run(title, questions, theme_name: str = "auto", no_color: bool = False, full
             imposter_tp_total += grading["imposter_true_positive"]
             imposter_fp_total += grading["imposter_false_positive"]
             imposter_fn_total += grading["imposter_false_negative"]
+            status = question_status_label(grading)
 
             if not full_screen:
-                if grading["answer_correct"]:
-                    console.print(f"[{theme['success']}]Correct[/{theme['success']}]")
-                else:
-                    console.print(f"[{theme['danger']}]Wrong[/{theme['danger']}]")
+                status_style = question_status_style(theme, status)
+                console.print(f"[{status_style}]{status}[/{status_style}]")
                 console.print(
                     f"[{theme['secondary']}]Question points:[/{theme['secondary']}] "
                     f"{grading['question_points']}/{grading['question_max_points']}"
@@ -2216,6 +3747,7 @@ def run(title, questions, theme_name: str = "auto", no_color: bool = False, full
                 "expected_imposters": q.get("imposters", []),
                 "expected_imposter_labels": expected_imposter_labels,
                 "is_correct": perfect,
+                "result_label": status,
                 "answer_correct": grading["answer_correct"],
                 "question_points": grading["question_points"],
                 "question_max_points": grading["question_max_points"],
@@ -2383,20 +3915,6 @@ def run_essay(
         else:
             console.print(f"[bold {theme['success']}]✓ Answer captured.[/bold {theme['success']}]")
 
-        provider_name = _provider_display_name(resolved_provider)
-        provider_chip = f"✓ Connected: {provider_name} ({resolved_model})"
-        if no_color:
-            console.print(provider_chip)
-        else:
-            console.print(
-                Panel(
-                    f"[bold {theme['success']}]✓[/bold {theme['success']}] "
-                    f"[bold {theme['primary']}]{provider_name}[/bold {theme['primary']}] "
-                    f"[{theme['pt_instruction']}]({resolved_model})[/]",
-                    border_style=theme["success"],
-                )
-            )
-
         grade = None
         fallback_message = ""
         fallback_reason = "unknown_error"
@@ -2478,6 +3996,21 @@ def run_essay(
                     student_answer,
                     fallback_message,
                     reason_code=fallback_reason,
+                )
+
+        if not grade["ai_unavailable"]:
+            provider_name = _provider_display_name(resolved_provider)
+            provider_chip = f"✓ Connected: {provider_name} ({resolved_model})"
+            if no_color:
+                console.print(provider_chip)
+            else:
+                console.print(
+                    Panel(
+                        f"[bold {theme['success']}]✓[/bold {theme['success']}] "
+                        f"[bold {theme['primary']}]{provider_name}[/bold {theme['primary']}] "
+                        f"[{theme['pt_instruction']}]({resolved_model})[/]",
+                        border_style=theme["success"],
+                    )
                 )
 
         if grade["score_percent"] is None:
@@ -2595,6 +4128,82 @@ def main():
                 pass
 
     raw_args = sys.argv[1:]
+    if raw_args and raw_args[0] == "room":
+        room_parser = argparse.ArgumentParser(description="Join or create multiplayer rooms.")
+        mode_group = room_parser.add_mutually_exclusive_group(required=True)
+        mode_group.add_argument(
+            "--create",
+            nargs="?",
+            const="__AUTO__",
+            metavar="ROOM_NAME",
+            help="Create a room (optional custom name). If omitted, a room name is generated.",
+        )
+        mode_group.add_argument(
+            "--join",
+            metavar="ROOM_NAME",
+            help="Join an existing room by room name.",
+        )
+        room_parser.add_argument(
+            "--name",
+            default="",
+            help="Display name. If omitted, quizmd suggests a random name.",
+        )
+        room_parser.add_argument(
+            "--token",
+            default="",
+            help="Room token for join commands (required on secure servers).",
+        )
+        room_parser.add_argument(
+            "--server",
+            default="",
+            help="Room server URL override. By default quizmd uses configured cloud server(s).",
+        )
+        room_parser.add_argument(
+            "--mode",
+            choices=["compete", "collaborate", "boxing"],
+            default="",
+            help="Room mode for create. If omitted, choose interactively.",
+        )
+        room_parser.add_argument(
+            "--role",
+            choices=["teacher", "student"],
+            default="",
+            help="Role for boxing mode. If omitted, choose interactively.",
+        )
+        room_parser.add_argument(
+            "--quiz",
+            default="",
+            help="Quiz file to host (markdown or JSON). Defaults to built-in sample quiz.",
+        )
+        room_parser.add_argument(
+            "--theme",
+            choices=["auto", "dark", "light"],
+            default="auto",
+            help="Color theme for interactive room setup and questions.",
+        )
+        room_parser.add_argument(
+            "--no-color",
+            action="store_true",
+            help="Disable colors/styled symbols (also enabled with NO_COLOR).",
+        )
+        room_parser.add_argument(
+            "--full-screen",
+            action="store_true",
+            help="Render room questions in full-screen mode.",
+        )
+        args = room_parser.parse_args(raw_args[1:])
+        try:
+            return run_room_command(args)
+        except ValueError as exc:
+            print(safe_for_stream(f"Validation failed: {exc}", sys.stderr), file=sys.stderr)
+            raise SystemExit(1) from exc
+        except OSError as exc:
+            print(safe_for_stream(f"File error: {exc}", sys.stderr), file=sys.stderr)
+            raise SystemExit(1) from exc
+        except RuntimeError as exc:
+            print(safe_for_stream(f"Runtime error: {exc}", sys.stderr), file=sys.stderr)
+            raise SystemExit(1) from exc
+
     if raw_args and raw_args[0] == "init":
         init_parser = argparse.ArgumentParser(description="Create starter quiz files.")
         init_parser.add_argument(
@@ -2638,6 +4247,14 @@ def main():
         print(_platform_setup_hint_for_any_ai_key())
         if hello_essay:
             print(f"quizmd {hello_essay}")
+        if hello_quiz:
+            print("")
+            print("Room modes (online):")
+            print(f"quizmd room --create --mode compete --quiz {hello_quiz}")
+            print(f"quizmd room --create --mode collaborate --quiz {hello_quiz}")
+            print(f"quizmd room --create --mode boxing --quiz {hello_quiz}")
+            print("quizmd room --join <room-name> --token <room-token>")
+            print("Room quiz requirement: Time/time_limit must be >= 5 seconds for online modes.")
         return
 
     parser = argparse.ArgumentParser(description="Run markdown quizzes in the terminal.")

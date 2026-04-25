@@ -2,6 +2,36 @@
 
 All notable changes to this project are documented in this file.
 
+## v2.4.0rc1 - 2026-04-25
+
+- Release candidate for the next stable line.
+- Includes multiplayer room hardening updates, UX/prompt refinements, and test coverage improvements across quiz, essay, and room flows.
+- Intended for validation testing before promoting to a stable `v2.4.0`.
+
+## v2.3.0 - 2026-04-24
+
+- Added multiplayer `boxing` mode (teacher/student chat session) in `quizmd room`.
+- Added role-aware room flows:
+  - `--mode boxing`
+  - `--role teacher|student` (with interactive role pick when omitted)
+- Added boxing runtime commands:
+  - `/score <0-100>` (teacher only)
+  - `/end` (teacher or student)
+- Added auto transcript save for boxing sessions to `answers/room-sessions/`.
+- Extended multiplayer server models/state/validation for boxing roles and score/end events.
+- Added/updated tests for boxing room constraints, score permissions, end-session behavior, and CLI role plumbing.
+- Improved room server UX:
+  - cloud server preflight status messages (`online` / `getting ready` / `ready`)
+  - friendly unavailable message when server cannot be reached
+  - cloud-only default server flow (no local/cloud picker)
+  - support for multiple configured cloud servers via `QUIZMD_ROOM_SERVERS` (interactive picker only when >1)
+  - server capability detection for room modes (prevents unsupported mode selection when OpenAPI is available)
+  - friendly message when selected mode is unsupported by current cloud server (for example boxing on older revisions)
+  - clearer HTTP validation error text (structured 422 details are now readable)
+  - join compatibility retry for legacy servers that reject join `role` field
+  - explicit role-flag ignore for known non-boxing rooms
+  - cleaner handling of lobby stdin EOF/disconnect events
+
 ## v2.2.1 - 2026-04-23
 
 - Added `hello-imposter.md` starter generation in `quizmd init`.
