@@ -1036,6 +1036,11 @@ def init_starter_files(target_dir: str = ".", force: bool = False) -> list[Path]
     return created
 
 
+def clear_terminal_screen() -> None:
+    if sys.stdout.isatty():
+        print("\033[2J\033[H", end="")
+
+
 def render_init_next_screen(created: list[Path] | None = None, target_dir: str = ".") -> None:
     """Render the experimental vNext init welcome without changing file behavior."""
     try:
@@ -1049,6 +1054,7 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
         print(f"Folder: {Path(target_dir).expanduser().resolve()}")
         return
 
+    clear_terminal_screen()
     console = Console()
     folder = Path(target_dir).expanduser().resolve()
     console.print(
@@ -3246,6 +3252,12 @@ def collect_essay_answer_via_editor(question_title: str, question_text: str = ""
 
 def collect_essay_answer_inline(question_title: str, question_text: str = "") -> str:
     """Collect a short essay directly in the terminal for the vNext prototype."""
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        try:
+            return collect_essay_answer_inline_box(question_title, question_text)
+        except ModuleNotFoundError:
+            pass
+
     print("")
     print("Type your answer below.")
     print("Write 4-8 lines. Type /end on a new line when finished.")
@@ -3258,6 +3270,85 @@ def collect_essay_answer_inline(question_title: str, question_text: str = "") ->
         lines.append(line)
 
     answer = "\n".join(lines).strip()
+    if not answer:
+        raise RuntimeError("No essay answer was provided. Type your answer before /end.")
+    return answer
+
+
+def _clean_inline_essay_answer(raw_answer: str) -> str:
+    lines = []
+    for line in raw_answer.splitlines():
+        if line.strip().lower() == "/end":
+            break
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def collect_essay_answer_inline_box(question_title: str, question_text: str = "") -> str:
+    try:
+        from prompt_toolkit import Application
+        from prompt_toolkit.formatted_text import HTML as PromptHTML
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.layout import HSplit, Layout, Window
+        from prompt_toolkit.layout.controls import FormattedTextControl
+        from prompt_toolkit.layout.dimension import Dimension
+        from prompt_toolkit.styles import Style
+        from prompt_toolkit.widgets import Frame, TextArea
+    except ModuleNotFoundError:
+        raise
+
+    title = html.escape(question_title.strip() or "Essay answer")
+    question = html.escape((question_text or "").strip())
+    heading = (
+        f"<style fg='ansicyan'><b>{title}</b></style>\n"
+        "<style fg='ansigray'>Type your answer. Press Enter for a new line. "
+        "Type /end on its own line to finish.</style>"
+    )
+    if question:
+        heading += f"\n<style fg='ansiwhite'>{question}</style>"
+
+    answer_box = TextArea(
+        multiline=True,
+        prompt="› ",
+        height=4,
+        wrap_lines=True,
+    )
+    kb = KeyBindings()
+
+    @kb.add("enter")
+    def _(event):
+        current_line = answer_box.buffer.document.current_line.strip().lower()
+        if current_line == "/end":
+            event.app.exit(result=answer_box.text)
+            return
+        answer_box.buffer.insert_text("\n")
+
+    @kb.add("c-c")
+    def _(event):
+        event.app.exit(exception=KeyboardInterrupt())
+
+    root = HSplit(
+        [
+            Window(FormattedTextControl(PromptHTML(heading)), height=4, wrap_lines=True),
+            Window(height=Dimension(weight=1)),
+            Frame(answer_box, title="Your answer"),
+            Window(
+                FormattedTextControl(
+                    PromptHTML("<style fg='ansigray'>/end finish • Ctrl+C cancel</style>")
+                ),
+                height=1,
+            ),
+        ]
+    )
+    style = Style.from_dict(
+        {
+            "frame.border": "ansiblue",
+            "frame.label": "ansicyan bold",
+            "textarea": "bg:#202331 #ffffff",
+        }
+    )
+    app = Application(layout=Layout(root, focused_element=answer_box), key_bindings=kb, style=style, full_screen=True)
+    answer = _clean_inline_essay_answer(app.run() or "")
     if not answer:
         raise RuntimeError("No essay answer was provided. Type your answer before /end.")
     return answer

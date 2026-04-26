@@ -31,6 +31,7 @@ from quizmd import (
     _room_supported_modes,
     _default_model_for_provider,
     _available_ai_providers_by_priority,
+    _clean_inline_essay_answer,
     _env_key_for_provider,
     _evaluator_for_provider,
     _provider_display_name,
@@ -39,6 +40,7 @@ from quizmd import (
     _score_encouragement,
     THEMES,
     build_question_markup,
+    clear_terminal_screen,
     collect_essay_answer_inline,
     collect_essay_answer_via_editor,
     detect_quiz_mode,
@@ -60,6 +62,7 @@ from quizmd import (
     run_room_command,
     run_essay,
     run_coroutine_sync,
+    render_init_next_screen,
     safe_for_stream,
     save_attempt,
     save_essay_attempt,
@@ -389,6 +392,17 @@ class QuizMarkdownTests(unittest.TestCase):
             with patch("quizmd.prompt_input", side_effect=["", "   ", "/end"]):
                 with self.assertRaisesRegex(RuntimeError, "No essay answer"):
                     collect_essay_answer_inline("Sample", "Question")
+
+    def test_clean_inline_essay_answer_stops_at_end_command(self):
+        answer = _clean_inline_essay_answer("Line 1\nLine 2\n/end\nignored")
+        self.assertEqual(answer, "Line 1\nLine 2")
+
+    def test_clear_terminal_screen_only_when_stdout_is_tty(self):
+        stream = io.StringIO()
+        stream.isatty = lambda: True
+        with patch("sys.stdout", stream):
+            clear_terminal_screen()
+        self.assertEqual(stream.getvalue(), "\033[2J\033[H")
 
     def test_format_possessive_handles_names_ending_with_s(self):
         self.assertEqual(_format_possessive("Stelios"), "Stelios'")
@@ -2217,6 +2231,14 @@ class QuizMarkdownTests(unittest.TestCase):
                 self.assertNotIn("Room modes (online):", out)
             finally:
                 os.chdir(old_cwd)
+
+    def test_render_init_next_screen_clears_before_rendering(self):
+        with patch("quizmd.clear_terminal_screen") as mocked_clear:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                render_init_next_screen([], target_dir=".")
+        mocked_clear.assert_called_once()
+        self.assertIn("QuizMD", buf.getvalue())
 
     def test_main_init_prints_platform_specific_env_hint(self):
         old_cwd = os.getcwd()
