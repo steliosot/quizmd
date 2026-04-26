@@ -1868,7 +1868,7 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("Space/X/Enter", markup)
         self.assertIn("✖", markup)
 
-    def test_build_question_markup_next_ui_shows_selection_chips(self):
+    def test_build_question_markup_next_ui_uses_compact_markers(self):
         question = {
             "title": "Question 1",
             "question": "Pick one",
@@ -1890,8 +1890,9 @@ class QuizMarkdownTests(unittest.TestCase):
             imposter_mode=True,
             ui="next",
         )
-        self.assertIn("[selected]", markup)
-        self.assertIn("[imposter]", markup)
+        self.assertNotIn("[selected]", markup)
+        self.assertNotIn("[imposter]", markup)
+        self.assertIn("(x)", markup)
         self.assertIn("[x]", markup)
 
     def test_build_question_markup_next_ui_no_color_is_ascii_safe(self):
@@ -1914,7 +1915,7 @@ class QuizMarkdownTests(unittest.TestCase):
             ui="next",
             no_color=True,
         )
-        self.assertIn("[selected]", markup)
+        self.assertNotIn("[selected]", markup)
         self.assertNotIn("◉", markup)
         self.assertNotIn("☑", markup)
 

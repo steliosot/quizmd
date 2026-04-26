@@ -3438,12 +3438,12 @@ def build_question_markup(
                 marker = "◉" if idx in marked else "○"
         if imposter_mode:
             if ui == "next":
-                imposter_marker = "[imposter]" if idx in imposter_marked else ""
+                imposter_marker = "(x)" if idx in imposter_marked else ""
             else:
                 imposter_marker = ("[x]" if idx in imposter_marked else "[ ]") if (no_color or ascii_compact) else ("✖" if idx in imposter_marked else "·")
         else:
             imposter_marker = ""
-        selected_chip = "[selected]" if (ui == "next" and idx in marked) else ""
+        selected_chip = ""
 
         if idx in marked:
             style = f"fg='{theme['pt_marked_fg']}' bg='{theme['pt_marked_bg']}'"
