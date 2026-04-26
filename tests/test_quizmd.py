@@ -869,8 +869,12 @@ class QuizMarkdownTests(unittest.TestCase):
                     with contextlib.redirect_stdout(buf):
                         run_essay(essay, no_color=True, ui="next")
         mocked_clean.assert_called_once_with(True)
-        self.assertIn("▞▀▖", buf.getvalue())
-        self.assertIn("Sample", buf.getvalue())
+        out = buf.getvalue()
+        self.assertIn("▞▀▖", out)
+        self.assertIn("Sample", out)
+        self.assertIn("Question", out)
+        self.assertIn("Instructions", out)
+        self.assertIn("Type your answer in the terminal", out)
 
     def test_run_essay_openai_uses_default_model_and_key(self):
         essay = {
@@ -2153,26 +2157,115 @@ class QuizMarkdownTests(unittest.TestCase):
         finally:
             Path(quiz_path).unlink(missing_ok=True)
 
-    def test_run_next_ui_starts_with_clean_screen_and_logo(self):
-        questions = [
-            {
-                "title": "Question 1",
-                "question": "Pick one",
-                "options": ["A", "B"],
-                "correct": [1],
-                "type": "single",
-                "time_limit": 10,
-                "explanation": "",
-            }
-        ]
+    def assert_next_quiz_start_screen(self, title, questions, expected_lines):
         with patch("quizmd.start_clean_screen") as mocked_clean:
             with patch("quizmd.prompt_input", side_effect=KeyboardInterrupt):
                 buf = io.StringIO()
                 with contextlib.redirect_stdout(buf):
-                    run("Demo", questions, no_color=True, ui="next")
+                    run(title, questions, no_color=True, ui="next")
+        out = buf.getvalue()
         mocked_clean.assert_called_once_with(True)
-        self.assertIn("▞▀▖", buf.getvalue())
-        self.assertIn("Demo", buf.getvalue())
+        self.assertIn("▞▀▖", out)
+        self.assertIn(title, out)
+        self.assertIn("Rules:", out)
+        self.assertIn("Are you ready to start?", out)
+        self.assertIn("Press Enter... Let's go!", out)
+        for line in expected_lines:
+            self.assertIn(line, out)
+
+    def test_run_next_ui_single_choice_starts_complete_screen(self):
+        self.assert_next_quiz_start_screen(
+            "Single Demo",
+            [
+                {
+                    "title": "Question 1",
+                    "question": "Pick one",
+                    "options": ["A", "B"],
+                    "correct": [1],
+                    "type": "single",
+                    "time_limit": 10,
+                    "explanation": "",
+                }
+            ],
+            [
+                "Pick the one best answer",
+                "Correct answer gives full question points",
+                "Press Ctrl+C to exit at any time",
+            ],
+        )
+
+    def test_run_next_ui_multiple_choice_starts_complete_screen(self):
+        self.assert_next_quiz_start_screen(
+            "Multiple Demo",
+            [
+                {
+                    "title": "Question 1",
+                    "question": "Pick many",
+                    "options": ["A", "B", "C"],
+                    "correct": [1, 3],
+                    "type": "multiple",
+                    "time_limit": 10,
+                    "explanation": "",
+                }
+            ],
+            [
+                "Select all options you believe are correct",
+                "final set matches the expected correct set",
+                "Press Ctrl+C to exit at any time",
+            ],
+        )
+
+    def test_run_next_ui_mixed_quiz_starts_complete_screen(self):
+        self.assert_next_quiz_start_screen(
+            "Mixed Demo",
+            [
+                {
+                    "title": "Question 1",
+                    "question": "Pick one",
+                    "options": ["A", "B"],
+                    "correct": [1],
+                    "type": "single",
+                    "time_limit": 10,
+                    "explanation": "",
+                },
+                {
+                    "title": "Question 2",
+                    "question": "Pick many",
+                    "options": ["A", "B", "C"],
+                    "correct": [1, 3],
+                    "type": "multiple",
+                    "time_limit": 10,
+                    "explanation": "",
+                },
+            ],
+            [
+                "Questions include single-choice and multiple-choice items",
+                "Space to select/toggle",
+                "Single-choice gives full points",
+            ],
+        )
+
+    def test_run_next_ui_imposter_starts_complete_screen(self):
+        self.assert_next_quiz_start_screen(
+            "Imposter Demo",
+            [
+                {
+                    "title": "Question 1",
+                    "question": "Pick one and flag the trap",
+                    "options": ["A", "B", "C"],
+                    "correct": [1],
+                    "imposters": [2],
+                    "type": "single",
+                    "time_limit": 10,
+                    "explanation": "",
+                }
+            ],
+            [
+                "Select correct answer(s) and flag misleading options",
+                "X for imposters",
+                "Imposter scoring",
+            ],
+        )
 
     def test_main_next_ui_flag_routes_to_mcq_runner(self):
         quiz_path = self.write_quiz(
@@ -2474,6 +2567,55 @@ class QuizMarkdownTests(unittest.TestCase):
         mocked_clean.assert_called_once_with()
         self.assertEqual(mocked_create.call_args.kwargs["host_role"], "teacher")
         self.assertFalse(mocked_create.call_args.kwargs["token_required"])
+
+    def test_run_room_create_modes_start_with_logo_and_instructions(self):
+        for mode in ("compete", "collaborate", "boxing"):
+            with self.subTest(mode=mode):
+                args = argparse.Namespace(
+                    create="__AUTO__",
+                    join=None,
+                    name="Mary",
+                    server="http://127.0.0.1:8011",
+                    mode=mode,
+                    quiz="",
+                    theme="auto",
+                    no_color=True,
+                    full_screen=False,
+                    role="teacher" if mode == "boxing" else "",
+                    require_token=False,
+                    no_token=True,
+                )
+                created = {
+                    "ws_url": "ws://127.0.0.1:8011/rooms/ABCDEFGH/ws",
+                    "room_code": "ABCDEFGH",
+                    "host_player_id": "p_host",
+                    "host_player_token": "tok",
+                    "host_display_name": "Mary",
+                    "room_name": "berlin-elephant-1",
+                    "mode": mode,
+                    "host_role": "teacher" if mode == "boxing" else "",
+                }
+                with patch("quizmd._room_supported_modes", return_value={"compete", "collaborate", "boxing"}):
+                    with patch("quizmd._room_load_quiz_payload", return_value=("Sample", [{"question": "q"}])):
+                        with patch("quizmd._room_generate_name", return_value="berlin-elephant-1"):
+                            with patch("quizmd._room_create_request", return_value=created):
+                                with patch("quizmd._room_ensure_server_ready", return_value=None):
+                                    with patch("quizmd._run_room_waiting_loop", new=AsyncMock(return_value=0)):
+                                        with patch("quizmd.start_clean_screen") as mocked_clean:
+                                            buf = io.StringIO()
+                                            with contextlib.redirect_stdout(buf):
+                                                result = run_room_command(args)
+
+                out = buf.getvalue()
+                self.assertEqual(result, 0)
+                mocked_clean.assert_called_once_with()
+                self.assertIn("▞▀▖", out)
+                self.assertIn("Room name:", out)
+                self.assertIn("Quiz: Sample", out)
+                self.assertIn("Join command:", out)
+                self.assertIn("Ready and waiting", out)
+                if mode == "boxing":
+                    self.assertIn("Role: teacher", out)
 
     def test_main_room_keyboard_interrupt_shows_friendly_exit(self):
         with patch("sys.argv", ["quizmd.py", "room", "--create", "--no-color"]):
