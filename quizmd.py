@@ -3324,7 +3324,7 @@ def build_question_markup(
         imposter_marked = set()
 
     ultra_compact = bool(terminal_width is not None and terminal_width < 70)
-    ascii_compact = compact and (_is_windows() or ultra_compact)
+    ascii_compact = no_color or (compact and (_is_windows() or ultra_compact))
     separator = " | " if ascii_compact else " • "
     if imposter_mode:
         instruction = (
