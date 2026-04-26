@@ -1052,12 +1052,15 @@ class QuizMarkdownTests(unittest.TestCase):
                         with patch("quizmd.evaluate_essay_with_loading", return_value=fake_grade):
                             with patch("rich.console.Console.print"):
                                 run_essay(essay, no_color=True, ui="next")
-        mocked_inline.assert_called_once_with(
-            "Sample",
-            "Q",
-            instructions="I",
-            hint_text="🤔 Hint: Focus on the key points your instructor expects.",
+        mocked_inline.assert_called_once()
+        args, kwargs = mocked_inline.call_args
+        self.assertEqual(args[:2], ("Sample", "Q"))
+        self.assertEqual(kwargs["instructions"], "I")
+        self.assertEqual(
+            kwargs["hint_text"],
+            "🤔 Hint: Focus on the key points your instructor expects.",
         )
+        self.assertIn("theme", kwargs)
         mocked_editor.assert_not_called()
 
     def test_run_essay_next_ui_starts_with_clean_screen_and_logo(self):
@@ -1284,6 +1287,33 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("Connected: OpenAI", output)
         self.assertNotIn("Connected: Gemini", output)
 
+    def test_run_essay_next_ui_invalid_key_shows_clear_message(self):
+        essay = {
+            "title": "Sample",
+            "question": "Q",
+            "instructions": "I",
+            "criteria": [{"name": "A", "points": 1, "details": []}],
+            "total_points": 1,
+            "reference_answer": "R",
+            "ai_evaluation_rules": "Rules",
+            "output_format": "Format",
+        }
+        out = io.StringIO()
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "bad-key"}, clear=True):
+            with patch("quizmd.collect_essay_answer_inline", return_value="student answer"):
+                with patch("quizmd.ask_yes_no", return_value=False):
+                    with patch(
+                        "quizmd.evaluate_essay_with_loading",
+                        side_effect=RuntimeError("[unauthorized] bad key"),
+                    ):
+                        with contextlib.redirect_stdout(out):
+                            run_essay(essay, no_color=True, ai_provider="gemini", ui="next")
+
+        output = out.getvalue()
+        self.assertIn("Gemini rejected the API key (401 Unauthorized).", output)
+        self.assertIn("Update GEMINI_API_KEY with a valid key, then run again.", output)
+        self.assertIn("heuristic_fallback", output)
+
     def test_save_essay_attempt_outputs_files(self):
         payload = {
             "mode": "essay",
@@ -1399,6 +1429,9 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("auto", result.stdout)
         self.assertIn("'auto' priority: gemini ->", result.stdout)
         self.assertIn("openai -> anthropic", result.stdout)
+        self.assertIn("quizmd alien-attack", result.stdout)
+        self.assertIn("Play the Alien Attack terminal game.", result.stdout)
+        self.assertIn("quizmd init", result.stdout)
 
     def test_invalid_answer_value_raises_clear_error(self):
         quiz_path = self.write_quiz(
@@ -2846,9 +2879,9 @@ class QuizMarkdownTests(unittest.TestCase):
                 self.assertTrue(Path("hello-essay.md").exists())
                 self.assertTrue(Path("QUIZ_GUIDE.md").exists())
                 self.assertIn("Try it out", out)
-                self.assertIn("quizmd --validate hello-debug.md", out)
-                self.assertIn("quizmd hello-debug.md", out)
-                self.assertIn("D edit", out)
+                self.assertIn("Getting started", out)
+                self.assertIn("quizmd hello-quiz.md", out)
+                self.assertNotIn("quizmd --validate hello-debug.md", out)
                 self.assertIn("Documentation:", out)
                 self.assertIn("https://steliosot.github.io/quizmd-docs/", out)
                 self.assertIn("Room modes", out)

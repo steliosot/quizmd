@@ -25,7 +25,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.0rc3"
+__version__ = "2.4.0rc4"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -436,6 +436,49 @@ def select_theme(name: str = "auto") -> dict:
     if env_hint in THEMES:
         return THEMES[env_hint]
     return THEMES["light"] if _is_light_terminal() else THEMES["dark"]
+
+
+def _is_light_theme(theme: dict) -> bool:
+    return theme is THEMES["light"]
+
+
+def _prompt_ui_palette(theme: dict) -> dict[str, str]:
+    """Prompt-toolkit colors tuned for readability on both dark/light terminals."""
+    if _is_light_theme(theme):
+        return {
+            "logo": "ansiblue",
+            "title": "ansiblack",
+            "body": "ansiblack",
+            "muted": "ansiblack",
+            "accent": "ansiblue",
+            "secondary": "ansimagenta",
+            "warning": "ansimagenta",
+            "danger": "ansired",
+            "success": "ansigreen",
+            "border": "ansiblue",
+            "label": "ansiblue bold",
+            "selected_fg": "ansiwhite",
+            "selected_bg": "ansiblue",
+            "changed_fg": "ansiblack",
+            "changed_bg": "#ffdede",
+        }
+    return {
+        "logo": "ansicyan",
+        "title": "ansiwhite",
+        "body": "ansiwhite",
+        "muted": "ansigray",
+        "accent": "ansiyellow",
+        "secondary": "ansimagenta",
+        "warning": "ansiyellow",
+        "danger": "ansired",
+        "success": "ansigreen",
+        "border": "ansiblue",
+        "label": "ansicyan bold",
+        "selected_fg": "ansiblack",
+        "selected_bg": "ansicyan",
+        "changed_fg": "ansiwhite",
+        "changed_bg": "#6b3a3a",
+    }
 
 
 def should_use_compact_layout(min_width: int = 100, columns: int | None = None) -> bool:
@@ -1328,9 +1371,15 @@ def render_exit_message(message: str = "Exited QuizMD. See you next time.", no_c
         print(message)
         return
 
+    theme = select_theme("auto")
     console = Console(no_color=no_color)
     console.print("")
-    console.print(Panel(f"[bold cyan]{message}[/bold cyan]", border_style="cyan"))
+    console.print(
+        Panel(
+            f"[bold {theme['primary']}]{message}[/bold {theme['primary']}]",
+            border_style=theme["panel"],
+        )
+    )
 
 
 def render_init_next_screen(created: list[Path] | None = None, target_dir: str = ".") -> None:
@@ -1348,6 +1397,7 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
         print(f"Documentation: {QUIZMD_DOCS_URL}")
         return
 
+    theme = select_theme("auto")
     probe_console = Console()
     terminal_width = max(probe_console.size.width, 40)
     panel_width = min(terminal_width, 120)
@@ -1356,17 +1406,15 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
     folder = Path(target_dir).expanduser().resolve()
     console.print(
         Panel(
-            f"[bold cyan]QuizMD[/bold cyan] [dim]v{__version__}[/dim]\n"
-            "[green]Write quizzes in Markdown. Run them in the terminal.[/green]\n"
-            f"[dim]Folder:[/dim] {folder}",
-            border_style="bright_blue",
+            f"[bold {theme['primary']}]QuizMD[/bold {theme['primary']}] [dim]v{__version__}[/dim]\n"
+            f"[{theme['success']}]Write quizzes in Markdown. Run them in the terminal.[/{theme['success']}]\n"
+            f"[dim]Folder:[/dim] {folder}\n"
+            f"[bold]Documentation:[/bold] [link={QUIZMD_DOCS_URL}][underline {theme['primary']}]{QUIZMD_DOCS_URL}[/underline {theme['primary']}][/link]",
+            border_style=theme["panel"],
             box=box.ROUNDED,
             expand=True,
             width=panel_width,
         )
-    )
-    console.print(
-        f"[bold]Documentation:[/bold] [link={QUIZMD_DOCS_URL}][underline bright_blue]{QUIZMD_DOCS_URL}[/underline bright_blue][/link]"
     )
 
     mode_cards = (
@@ -1388,7 +1436,7 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
         Panel(
             modes,
             title="[bold]Recommended quiz types[/bold]",
-            border_style="cyan",
+            border_style=theme["panel"],
             expand=True,
             width=panel_width,
         )
@@ -1411,7 +1459,7 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
         Panel(
             rooms,
             title="[bold]Room modes[/bold]",
-            border_style="magenta",
+            border_style=theme["secondary"],
             expand=True,
             width=panel_width,
         )
@@ -1432,22 +1480,19 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
         console.print(
             Panel(
                 created_text,
-                title="[bold green]Created starter files[/bold green]",
-                border_style="green",
+                title=f"[bold {theme['success']}]Created starter files[/bold {theme['success']}]",
+                border_style=theme["success"],
                 expand=True,
                 width=panel_width,
             )
         )
         console.print(
             Panel(
-                "[bold]Debug flow[/bold]\n"
-                "[dim]1) Validate[/dim]\n"
-                "quizmd --validate hello-debug.md\n"
-                "[dim]2) Run[/dim]\n"
-                "quizmd hello-debug.md\n"
-                "[dim]Keys:[/dim] D edit • Esc actions • ↑/↓ select • Enter confirm",
-                title="[bold yellow]Try it out[/bold yellow]",
-                border_style="yellow",
+                "[bold]Getting started[/bold]\n"
+                "[dim]Run your first quiz now:[/dim]\n"
+                "quizmd hello-quiz.md",
+                title=f"[bold {theme['accent']}]Try it out[/bold {theme['accent']}]",
+                border_style=theme["accent"],
                 expand=True,
                 width=panel_width,
             )
@@ -3174,6 +3219,8 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
         raise RuntimeError(
             "Alien Attack requires prompt_toolkit. Install dependencies from requirements.txt."
         ) from exc
+    active_theme = select_theme("auto")
+    palette = _prompt_ui_palette(active_theme)
 
     mode_options: list[tuple[str, str, str]] = [
         ("single", "Single", "Small ship (harder to hit)."),
@@ -3237,59 +3284,59 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
             _shoot_value, shoot_label, shoot_desc, _shoot_limit = shooting_options[setup_state["shoot_idx"]]
 
             lines: list[str] = [
-                _setup_style("ALIEN ATTACK", fg="ansicyan"),
+                _setup_style("ALIEN ATTACK", fg=palette["logo"]),
                 "",
-                _setup_style("Rules", fg="ansiwhite"),
-                _setup_style("- Clear waves of 8-column aliens.", fg="ansigray"),
-                _setup_style("- Move with ←/→, shoot with Space, pause with P, quit with Q.", fg="ansigray"),
-                _setup_style("- One bomb hit ends the run. Faster hits earn more points.", fg="ansigray"),
+                _setup_style("Rules", fg=palette["title"]),
+                _setup_style("- Clear waves of 8-column aliens."),
+                _setup_style("- Move with ←/→, shoot with Space, pause with P, quit with Q."),
+                _setup_style("- One bomb hit ends the run. Faster hits earn more points."),
                 "",
                 _setup_style(
                     f"Mode: {mode_label} ({mode_desc})",
-                    fg="ansiyellow" if stage_mode else "ansiwhite",
+                    fg=palette["warning"] if stage_mode else palette["body"],
                 ),
                 _setup_style(
                     f"Difficulty: {diff_label} ({diff_desc})",
-                    fg="ansiyellow" if stage_difficulty else "ansiwhite",
+                    fg=palette["warning"] if stage_difficulty else palette["body"],
                 ),
                 _setup_style(
                     f"Shooting: {shoot_label} ({shoot_desc})",
-                    fg="ansiyellow" if stage_shooting else "ansiwhite",
+                    fg=palette["warning"] if stage_shooting else palette["body"],
                 ),
                 "",
-                _setup_style("Mode (ship size)", fg="ansicyan"),
+                _setup_style("Mode (ship size)", fg=palette["accent"]),
             ]
             for idx, (_value, label, desc) in enumerate(mode_options):
                 selected = idx == setup_state["mode_idx"]
                 pointer = "*" if selected else " "
-                fg = "ansiblack" if (selected and stage_mode) else ("ansicyan" if selected else "ansigray")
-                bg = "ansiwhite" if (selected and stage_mode) else ""
+                fg = palette["selected_fg"] if (selected and stage_mode) else (palette["accent"] if selected else palette["body"])
+                bg = palette["selected_bg"] if (selected and stage_mode) else ""
                 lines.append(_setup_style(f"{pointer} {label:<8} {desc}", fg=fg, bg=bg))
 
-            lines.extend(["", _setup_style("Difficulty", fg="ansimagenta")])
+            lines.extend(["", _setup_style("Difficulty", fg=palette["secondary"])])
             for idx, (_value, label, desc) in enumerate(difficulty_options):
                 selected = idx == setup_state["diff_idx"]
                 pointer = "*" if selected else " "
-                fg = "ansiblack" if (selected and stage_difficulty) else ("ansimagenta" if selected else "ansigray")
-                bg = "ansiwhite" if (selected and stage_difficulty) else ""
+                fg = palette["selected_fg"] if (selected and stage_difficulty) else ("ansimagenta" if selected else palette["body"])
+                bg = palette["selected_bg"] if (selected and stage_difficulty) else ""
                 lines.append(_setup_style(f"{pointer} {label:<8} {desc}", fg=fg, bg=bg))
 
-            lines.extend(["", _setup_style("Shooting", fg="ansigreen")])
+            lines.extend(["", _setup_style("Shooting", fg=palette["success"])])
             for idx, (_value, label, desc, _cap) in enumerate(shooting_options):
                 selected = idx == setup_state["shoot_idx"]
                 pointer = "*" if selected else " "
-                fg = "ansiblack" if (selected and stage_shooting) else ("ansigreen" if selected else "ansigray")
-                bg = "ansiwhite" if (selected and stage_shooting) else ""
+                fg = palette["selected_fg"] if (selected and stage_shooting) else (palette["success"] if selected else palette["body"])
+                bg = palette["selected_bg"] if (selected and stage_shooting) else ""
                 lines.append(_setup_style(f"{pointer} {label:<10} {desc}", fg=fg, bg=bg))
 
             lines.append("")
             if stage_mode:
-                lines.append(_setup_style("Use ↑/↓ to choose mode. Enter to continue.", fg="ansiyellow"))
+                lines.append(_setup_style("Use ↑/↓ to choose mode. Enter to continue.", fg=palette["warning"]))
             elif stage_difficulty:
-                lines.append(_setup_style("Use ↑/↓ to choose difficulty. Enter to continue.", fg="ansiyellow"))
+                lines.append(_setup_style("Use ↑/↓ to choose difficulty. Enter to continue.", fg=palette["warning"]))
             else:
-                lines.append(_setup_style("Use ↑/↓ to choose shooting cap. Enter to start game.", fg="ansiyellow"))
-            lines.append(_setup_style("Esc/Q to cancel.", fg="ansigray"))
+                lines.append(_setup_style("Use ↑/↓ to choose shooting cap. Enter to start game.", fg=palette["warning"]))
+            lines.append(_setup_style("Esc/Q to cancel."))
 
             markup = "\n".join(lines)
             if no_color:
@@ -3485,7 +3532,12 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
         state["message"] = f"Level {state['level']} — speed up!"
         _alien_spawn_wave(state)
 
-    def draw_overlay(grid: list[list[str]], styles: list[list[str | None]], text: str, fg: str = "ansiyellow") -> None:
+    def draw_overlay(
+        grid: list[list[str]],
+        styles: list[list[str | None]],
+        text: str,
+        fg: str = "",
+    ) -> None:
         if not text:
             return
         y = max(0, state["board_h"] // 2)
@@ -3504,36 +3556,36 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
             active_mode = state["intro_field"] == 0
             active_difficulty = state["intro_field"] == 1
             intro_lines = [
-                _style("ALIEN ATTACK", fg="ansicyan"),
+                _style("ALIEN ATTACK", fg=palette["logo"]),
                 "",
                 _style(
                     f"Mode: {selected_mode}    Difficulty: {selected_difficulty}",
-                    fg="ansiwhite",
+                    fg=palette["body"],
                 ),
                 _style(
                     f"{'▶' if active_mode else ' '} Mode: {selected_mode}",
-                    fg="ansiyellow" if active_mode else "ansigray",
+                    fg=palette["warning"] if active_mode else palette["body"],
                 ),
                 _style(
                     f"{'▶' if active_difficulty else ' '} Difficulty: {selected_difficulty}",
-                    fg="ansiyellow" if active_difficulty else "ansigray",
+                    fg=palette["warning"] if active_difficulty else palette["body"],
                 ),
-                _style("Controls: ←/→ move, Space shoot, P pause, Q quit", fg="ansigray"),
-                _style("Intro: ↑/↓ choose field, ←/→ change value, Enter starts.", fg="ansigray"),
-                _style("8-column alien wave with classic side-to-side movement.", fg="ansigray"),
-                _style("One bomb hit ends the run. Hit aliens quickly for bonus points.", fg="ansigray"),
+                _style("Controls: ←/→ move, Space shoot, P pause, Q quit", fg=palette["body"]),
+                _style("Intro: ↑/↓ choose field, ←/→ change value, Enter starts.", fg=palette["body"]),
+                _style("8-column alien wave with classic side-to-side movement.", fg=palette["body"]),
+                _style("One bomb hit ends the run. Hit aliens quickly for bonus points.", fg=palette["body"]),
                 "",
-                _style("Press Enter to start.", fg="ansiyellow"),
+                _style("Press Enter to start.", fg=palette["warning"]),
             ]
             text_out = "\n".join(intro_lines)
             return PromptHTML(text_out) if not no_color else "\n".join(
-                line.replace("<style fg='ansicyan'>", "").replace("</style>", "")
+                re.sub(r"<[^>]+>", "", line)
                 for line in intro_lines
             )
 
         if state["too_small"]:
             msg = "Resize terminal to at least 54x20. Press Q to quit."
-            out = _style(msg, fg="ansired")
+            out = _style(msg, fg=palette["danger"])
             return PromptHTML(out) if not no_color else msg
 
         board_w = state["board_w"]
@@ -3555,43 +3607,43 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
                     xx = x0 + dx
                     if 0 <= xx < board_w:
                         grid[yy][xx] = ch
-                        styles[yy][xx] = "ansiwhite"
+                        styles[yy][xx] = palette["body"]
 
         # Bullets
         for bullet in state["bullets"]:
             x, y = bullet["x"], bullet["y"]
             if 0 <= x < board_w and 0 <= y < board_h:
                 grid[y][x] = "|"
-                styles[y][x] = "ansiyellow"
+                styles[y][x] = palette["warning"]
 
         # Bombs
         for bomb in state["bombs"]:
             x, y = bomb["x"], bomb["y"]
             if 0 <= x < board_w and 0 <= y < board_h:
                 grid[y][x] = "!"
-                styles[y][x] = "ansired"
+                styles[y][x] = palette["danger"]
 
         # Shields (draw after projectiles so bunkers remain visible while intact)
         for x, y in state["shields"]:
             if 0 <= x < board_w and 0 <= y < board_h:
                 grid[y][x] = "#"
-                styles[y][x] = "ansibrightgreen"
+                styles[y][x] = palette["success"]
 
         # Player ship
         ship_y = board_h - 1
         for (x, y), ch in _alien_ship_cells(state["player_x"], profile["ship_art"], ship_y).items():
             if 0 <= x < board_w and 0 <= y < board_h:
                 grid[y][x] = ch
-                styles[y][x] = "ansigreen"
+                styles[y][x] = palette["success"]
 
         if state["phase"] == "paused":
-            draw_overlay(grid, styles, "[ PAUSED ]", fg="ansiyellow")
+            draw_overlay(grid, styles, "[ PAUSED ]", fg=palette["warning"])
         elif state["phase"] == "game_over":
-            draw_overlay(grid, styles, "[ GAME OVER ] Press R to restart", fg="ansired")
+            draw_overlay(grid, styles, "[ GAME OVER ] Press R to restart", fg=palette["danger"])
         elif state["phase"] == "victory":
-            draw_overlay(grid, styles, "[ YOU WIN ] Press R to restart", fg="ansigreen")
+            draw_overlay(grid, styles, "[ YOU WIN ] Press R to restart", fg=palette["success"])
         elif state["message"]:
-            draw_overlay(grid, styles, state["message"], fg="ansiyellow")
+            draw_overlay(grid, styles, state["message"], fg=palette["warning"])
 
         shots_label = "∞" if int(profile.get("max_bullets", 1)) >= 999 else str(int(profile.get("max_bullets", 1)))
         hud = (
@@ -3602,16 +3654,16 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
         border = "+" + "-" * board_w + "+"
         footer = "Controls: ←/→ move  Space shoot  P pause  Q quit"
 
-        lines = [_style(hud, fg="ansiwhite"), _style(border, fg="ansigray")]
+        lines = [_style(hud, fg=palette["body"]), _style(border, fg=palette["body"])]
         for y in range(board_h):
             rendered_cells = []
             for x in range(board_w):
                 ch = grid[y][x]
                 st = styles[y][x]
-                rendered_cells.append(_style(ch, fg=st or ""))
-            lines.append(_style("|", fg="ansigray") + "".join(rendered_cells) + _style("|", fg="ansigray"))
-        lines.append(_style(border, fg="ansigray"))
-        lines.append(_style(footer, fg="ansigray"))
+                rendered_cells.append(_style(ch, fg=st or palette["body"]))
+            lines.append(_style("|", fg=palette["body"]) + "".join(rendered_cells) + _style("|", fg=palette["body"]))
+        lines.append(_style(border, fg=palette["body"]))
+        lines.append(_style(footer, fg=palette["body"]))
 
         text_out = "\n".join(lines)
         return PromptHTML(text_out) if not no_color else re.sub(r"<[^>]+>", "", text_out)
@@ -4646,6 +4698,7 @@ def collect_essay_answer_inline(
     question_text: str = "",
     instructions: str = "",
     hint_text: str = "",
+    theme: dict | None = None,
 ) -> str:
     """Collect a short essay directly in the terminal for the vNext prototype."""
     if sys.stdin.isatty() and sys.stdout.isatty():
@@ -4655,6 +4708,7 @@ def collect_essay_answer_inline(
                 question_text,
                 instructions=instructions,
                 hint_text=hint_text,
+                theme=theme,
             )
         except ModuleNotFoundError:
             pass
@@ -4707,6 +4761,7 @@ def collect_essay_answer_inline_box(
     question_text: str = "",
     instructions: str = "",
     hint_text: str = "",
+    theme: dict | None = None,
 ) -> str:
     try:
         from prompt_toolkit import Application
@@ -4720,22 +4775,25 @@ def collect_essay_answer_inline_box(
     except ModuleNotFoundError:
         raise
 
+    active_theme = theme or select_theme("auto")
+    palette = _prompt_ui_palette(active_theme)
+
     title = html.escape(question_title.strip() or "Essay answer")
     question = html.escape((question_text or "").strip())
     instruction_text = html.escape((instructions or "").strip())
     hint = html.escape((hint_text or "").strip())
     heading_parts = [
-        f"<style fg='ansicyan'>{html.escape(LOGO.strip())}</style>",
-        f"<style fg='ansicyan'><b>{title}</b></style>",
+        f"<style fg='{palette['logo']}'>{html.escape(LOGO.strip())}</style>",
+        f"<style fg='{palette['accent']}'><b>{title}</b></style>",
     ]
     if question:
-        heading_parts.append(f"<style fg='ansiwhite'>{question}</style>")
+        heading_parts.append(f"<style fg='{palette['body']}'>{question}</style>")
     if instruction_text:
-        heading_parts.append(f"<style fg='ansigray'>{instruction_text}</style>")
+        heading_parts.append(f"<style fg='{palette['body']}'>{instruction_text}</style>")
     if hint:
-        heading_parts.append(f"<style fg='ansiyellow'>{hint}</style>")
+        heading_parts.append(f"<style fg='{palette['warning']}'>{hint}</style>")
     heading_parts.append(
-        "<style fg='ansigray'>Type your answer below. Press Enter for a new line. "
+        f"<style fg='{palette['muted']}'>Type your answer below. Press Enter for a new line. "
         "Type /end on its own line to finish.</style>"
     )
     heading = "\n\n".join(heading_parts)
@@ -4781,7 +4839,9 @@ def collect_essay_answer_inline_box(
             Frame(answer_box, title="Your answer"),
             Window(
                 FormattedTextControl(
-                    PromptHTML("<style fg='ansigray'>/end finish • Ctrl+C cancel</style>")
+                    PromptHTML(
+                        f"<style fg='{palette['muted']}'>/end finish • Ctrl+C cancel</style>"
+                    )
                 ),
                 height=1,
             ),
@@ -4789,9 +4849,11 @@ def collect_essay_answer_inline_box(
     )
     style = Style.from_dict(
         {
-            "frame.border": "ansiblue",
-            "frame.label": "ansicyan bold",
-            "textarea": "bg:#202331 #ffffff",
+            "frame.border": palette["border"],
+            "frame.label": palette["label"],
+            # Keep input readable on both light and dark terminal themes.
+            "textarea": "",
+            "text-area": "",
         }
     )
     app = Application(layout=Layout(root, focused_element=answer_box), key_bindings=kb, style=style, full_screen=True)
@@ -5517,6 +5579,7 @@ def collect_debug_fix_inline_box(
     question: dict,
     question_index: int,
     total_questions: int,
+    theme: dict | None = None,
 ) -> tuple[str, bool]:
     try:
         from prompt_toolkit import Application
@@ -5536,6 +5599,9 @@ def collect_debug_fix_inline_box(
         from pygments.styles import get_style_by_name
     except ModuleNotFoundError:
         raise
+
+    active_theme = theme or select_theme("auto")
+    palette = _prompt_ui_palette(active_theme)
 
     prompt_text = (question.get("prompt") or "").strip()
     title = html.escape(question["title"])
@@ -5596,32 +5662,42 @@ def collect_debug_fix_inline_box(
     def render_header():
         edit_mode = "ON" if state["editing"] else "OFF"
         header = (
-            f"<style fg='ansicyan'>{safe_logo}</style>\n\n"
-            f"<style fg='ansicyan'><b>Debug {question_index}/{total_questions}</b></style> "
-            f"<style fg='ansiwhite'><b>{title}</b></style>\n"
-            f"<style fg='ansiwhite'>{safe_prompt}</style>\n\n"
-            "<style fg='ansigray'>Press </style><style fg='ansiyellow'><b>D</b></style>"
-            "<style fg='ansigray'> to edit • </style>"
-            "<style fg='ansiyellow'><b>Esc</b></style><style fg='ansigray'> to lock editor and open actions • </style>"
-            "<style fg='ansiyellow'><b>←/→</b></style><style fg='ansigray'> or </style>"
-            "<style fg='ansiyellow'><b>↑/↓</b></style><style fg='ansigray'> choose action • </style>"
-            "<style fg='ansiyellow'><b>Enter</b></style><style fg='ansigray'> or </style>"
-            "<style fg='ansiyellow'><b>Space</b></style><style fg='ansigray'> activate\n"
+            f"<style fg='{palette['logo']}'>{safe_logo}</style>\n\n"
+            f"<style fg='{palette['accent']}'><b>Debug {question_index}/{total_questions}</b></style> "
+            f"<style fg='{palette['title']}'><b>{title}</b></style>\n"
+            f"<style fg='{palette['body']}'>{safe_prompt}</style>\n\n"
+            f"<style fg='{palette['muted']}'>Press </style><style fg='{palette['warning']}'><b>D</b></style>"
+            f"<style fg='{palette['muted']}'> to edit • </style>"
+            f"<style fg='{palette['warning']}'><b>Esc</b></style><style fg='{palette['muted']}'> to lock editor and open actions • </style>"
+            f"<style fg='{palette['warning']}'><b>←/→</b></style><style fg='{palette['muted']}'> or </style>"
+            f"<style fg='{palette['warning']}'><b>↑/↓</b></style><style fg='{palette['muted']}'> choose action • </style>"
+            f"<style fg='{palette['warning']}'><b>Enter</b></style><style fg='{palette['muted']}'> or </style>"
+            f"<style fg='{palette['warning']}'><b>Space</b></style><style fg='{palette['muted']}'> activate\n"
             f"Edit mode: {edit_mode}</style>"
         )
         if state["show_hint"]:
-            header += f"\n<style fg='ansiyellow'>Hint: {hint_text}</style>"
+            header += f"\n<style fg='{palette['warning']}'>Hint: {hint_text}</style>"
         return PromptHTML(header)
 
     def render_actions():
         if state["editing"]:
-            return PromptHTML("<style fg='ansigray'>[editing] Press Esc to open actions</style>")
+            return PromptHTML(
+                f"<style fg='{palette['muted']}'>[editing] Press Esc to open actions</style>"
+            )
         if state["actions_focus"]:
-            proceed_style = "fg='ansiblack' bg='ansicyan'" if state["action_index"] == 0 else "fg='ansiwhite'"
-            hint_style = "fg='ansiblack' bg='ansicyan'" if state["action_index"] == 1 else "fg='ansiwhite'"
+            proceed_style = (
+                f"fg='{palette['selected_fg']}' bg='{palette['selected_bg']}'"
+                if state["action_index"] == 0
+                else f"fg='{palette['body']}'"
+            )
+            hint_style = (
+                f"fg='{palette['selected_fg']}' bg='{palette['selected_bg']}'"
+                if state["action_index"] == 1
+                else f"fg='{palette['body']}'"
+            )
         else:
-            proceed_style = "fg='ansigray'"
-            hint_style = "fg='ansigray'"
+            proceed_style = f"fg='{palette['muted']}'"
+            hint_style = f"fg='{palette['muted']}'"
         hint_label = "Hide hint" if state["show_hint"] else "Show hint"
         base = (
             f"<style {proceed_style}><b> Proceed </b></style>    "
@@ -5629,7 +5705,9 @@ def collect_debug_fix_inline_box(
         )
         if state["actions_focus"]:
             return PromptHTML(base)
-        return PromptHTML(base + "    <style fg='ansigray'>(Esc to focus actions)</style>")
+        return PromptHTML(
+            base + f"    <style fg='{palette['muted']}'>(Esc to focus actions)</style>"
+        )
 
     header_control = FormattedTextControl(render_header)
     action_control = FormattedTextControl(render_actions)
@@ -5640,6 +5718,8 @@ def collect_debug_fix_inline_box(
             _numbered_code_block_markup(
                 question["broken_code"],
                 highlight_lines=hint_lines,
+                default_style=f"fg='{palette['body']}'",
+                highlight_style=f"fg='{palette['changed_fg']}' bg='{palette['changed_bg']}'",
             )
         )
 
@@ -5753,15 +5833,18 @@ def collect_debug_fix_inline_box(
     def _(event):
         event.app.exit(exception=KeyboardInterrupt())
 
+    editor_text_style = "bg:#f7f9fc #111111" if _is_light_theme(active_theme) else "bg:#202331 #ffffff"
     style = Style.from_dict(
         {
-            "frame.border": "ansiblue",
-            "frame.label": "ansicyan bold",
-            "textarea": "bg:#202331 #ffffff",
-            "debug-changed-line": "bg:#2f2a1f #ffd787",
+            "frame.border": palette["border"],
+            "frame.label": palette["label"],
+            "textarea": editor_text_style,
+            "text-area": editor_text_style,
+            "debug-changed-line": f"bg:{palette['changed_bg']} {palette['changed_fg']}",
         }
     )
-    syntax_style = style_from_pygments_cls(get_style_by_name("monokai"))
+    syntax_style_name = "xcode" if _is_light_theme(active_theme) else "monokai"
+    syntax_style = style_from_pygments_cls(get_style_by_name(syntax_style_name))
     final_style = merge_styles([syntax_style, style])
     layout = Layout(
         HSplit(
@@ -5779,7 +5862,7 @@ def collect_debug_fix_inline_box(
                 Window(
                     FormattedTextControl(
                         PromptHTML(
-                            "<style fg='ansigray'>D enters edit mode. Esc locks editor and opens actions. "
+                            f"<style fg='{palette['muted']}'>D enters edit mode. Esc locks editor and opens actions. "
                             "Use ←/→ or ↑/↓ to select Proceed/Show hint, then Enter/Space. "
                             "Changed lines are highlighted.</style>"
                         )
@@ -5875,6 +5958,7 @@ def run_debug(
                     question,
                     question_index=i,
                     total_questions=len(questions),
+                    theme=theme,
                 )
             else:
                 student_code, used_hint = collect_debug_fix_fallback(question)
@@ -6312,6 +6396,7 @@ def run_essay(
                 question,
                 instructions=instructions,
                 hint_text=hint_text,
+                theme=theme,
             )
         else:
             student_answer = collect_essay_answer_via_editor(title, question)
@@ -6324,6 +6409,7 @@ def run_essay(
         grade = None
         fallback_message = ""
         fallback_reason = "unknown_error"
+        fallback_provider = resolved_provider
         attempted_providers: list[str] = []
 
         if requested_provider == "auto":
@@ -6354,6 +6440,7 @@ def run_essay(
                     break
                 except RuntimeError as exc:
                     fallback_message = str(exc)
+                    fallback_provider = provider
                     if fallback_message.startswith("[") and "]" in fallback_message:
                         fallback_reason = fallback_message[1 : fallback_message.index("]")]
 
@@ -6395,6 +6482,7 @@ def run_essay(
                 )
             except RuntimeError as exc:
                 fallback_message = str(exc)
+                fallback_provider = resolved_provider
                 if fallback_message.startswith("[") and "]" in fallback_message:
                     fallback_reason = fallback_message[1 : fallback_message.index("]")]
                 grade = evaluate_essay_deterministic_fallback(
@@ -6449,12 +6537,33 @@ def run_essay(
                 "forbidden": "forbidden by provider",
                 "unknown_error": "unknown error",
             }
-            reason_label = reason_labels.get(grade.get("ai_reason", ""), "unknown error")
+            reason_code = str(grade.get("ai_reason", "unknown_error"))
+            reason_label = reason_labels.get(reason_code, "unknown error")
+            advice_lines: list[str] = []
+            provider_for_error = fallback_provider or resolved_provider
+            provider_name = _provider_display_name(provider_for_error)
+            provider_env_key = _env_key_for_provider(provider_for_error)
             feedback_lines.append("")
-            feedback_lines.append(
-                f"- Note: AI unavailable ({reason_label}); deterministic fallback used."
-            )
+            if reason_code == "unauthorized":
+                advice_lines.append(f"{provider_name} rejected the API key (401 Unauthorized).")
+                advice_lines.append(f"Update {provider_env_key} with a valid key, then run again.")
+            elif reason_code == "forbidden":
+                advice_lines.append(f"{provider_name} denied access (403 Forbidden).")
+                advice_lines.append(
+                    f"Check {provider_env_key} permissions, project access, and model availability."
+                )
+            else:
+                advice_lines.append(
+                    f"AI unavailable ({reason_label}); deterministic fallback used."
+                )
+            for line in advice_lines:
+                feedback_lines.append(f"- Note: {line}")
             feedback_lines.append("- Scoring mode: heuristic fallback (approximate).")
+            grade["suggestions"] = list(grade.get("suggestions", []))
+            for line in advice_lines:
+                note = f"AI note: {line}"
+                if note not in grade["suggestions"]:
+                    grade["suggestions"].append(note)
 
         feedback_heading = "Feedback"
         instructor_name = str(essay.get("instructor_name", "")).strip()
@@ -6722,7 +6831,25 @@ def main():
             print("Room quiz requirement: Time/time_limit must be >= 5 seconds for online modes.")
         return
 
-    parser = argparse.ArgumentParser(description="Run markdown quizzes in the terminal.")
+    root_help_epilog = (
+        "Other commands:\n"
+        "  quizmd init [--ui next]\n"
+        "      Create starter files (hello-quiz.md, hello-imposter.md, hello-debug.md, hello-essay.md).\n"
+        "  quizmd room --create [ROOM_NAME] [options]\n"
+        "  quizmd room --join ROOM_NAME [--token ROOM_TOKEN] [options]\n"
+        "      Multiplayer modes: compete, collaborate, boxing.\n"
+        "  quizmd alien-attack [--mode {single,double,triple}] [--difficulty {normal,hard,inferno}]\n"
+        "      Play the Alien Attack terminal game.\n"
+        "\n"
+        "Quick start:\n"
+        "  quizmd init\n"
+        "  quizmd hello-quiz.md"
+    )
+    parser = argparse.ArgumentParser(
+        description="Run markdown quizzes in the terminal.",
+        epilog=root_help_epilog,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("file", help="Path to a quiz markdown file.")
     parser.add_argument(
         "--validate",

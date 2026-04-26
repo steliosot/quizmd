@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+
+# Allow running server tests from the repository root via `pytest`.
+SERVER_ROOT = Path(__file__).resolve().parents[1]
+if str(SERVER_ROOT) not in sys.path:
+    sys.path.insert(0, str(SERVER_ROOT))
 
 from app import room_store as room_store_module
 from app.game_engine import Submission, collaborate_consensus, compete_round_scores
