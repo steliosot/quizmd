@@ -1040,7 +1040,6 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
     """Render the experimental vNext init welcome without changing file behavior."""
     try:
         from rich import box
-        from rich.columns import Columns
         from rich.console import Console
         from rich.panel import Panel
         from rich.table import Table
@@ -1073,15 +1072,28 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
     )
     console.print(Panel(modes, title="[bold]Recommended quiz types[/bold]", border_style="cyan"))
 
-    sample_cards = [
-        Panel("[bold]hello-quiz.md[/bold]\nSingle + multiple choice", border_style="green"),
-        Panel("[bold]hello-imposter.md[/bold]\nCorrect answer + distractor spotting", border_style="magenta"),
-        Panel("[bold]hello-essay.md[/bold]\nShort answer with rubric feedback", border_style="yellow"),
-    ]
-    console.print(Columns(sample_cards, equal=True, expand=True))
+    rooms = Table.grid(expand=True)
+    rooms.add_column(ratio=1)
+    rooms.add_column(ratio=1)
+    rooms.add_column(ratio=1)
+    rooms.add_row(
+        "[bold]Compete[/bold]\n[dim]Fast live quiz race[/dim]",
+        "[bold]Collaborate[/bold]\n[dim]Team consensus quiz[/dim]",
+        "[bold]Boxing[/bold]\n[dim]One-to-one teacher check[/dim]",
+    )
+    console.print(Panel(rooms, title="[bold]Room modes[/bold]", border_style="magenta"))
 
     if created is not None:
-        created_text = "\n".join(f"- {path}" for path in created)
+        labels = {
+            "hello-quiz.md": "Single + multiple choice",
+            "hello-imposter.md": "Imposter distractor spotting",
+            "hello-essay.md": "Short answer with AI feedback",
+            "QUIZ_GUIDE.md": "Starter commands and notes",
+        }
+        created_text = "\n".join(
+            f"- {path} [dim][{labels.get(path.name, 'Created file')}][/dim]"
+            for path in created
+        )
         console.print(
             Panel(
                 created_text,
