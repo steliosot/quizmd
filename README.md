@@ -95,7 +95,8 @@ quizmd room --create --mode compete --quiz hello-quiz.md
 ```
 
 ### 5) Room: Collaborate (Online)
-- What: team must reach full consensus.
+- What: each question has a discussion phase (chat) then a voting phase.
+- Team must still reach full consensus to score.
 - Start room:
 
 ```bash
@@ -113,11 +114,12 @@ quizmd room --create --mode boxing --quiz hello-quiz.md
 Join any room:
 
 ```bash
-quizmd room --join <room-name> --token <room-token>
+quizmd room --join <room-name> [--token <room-token>]
 ```
 
 Room quiz requirement:
 - In online room modes, each question `Time`/`time_limit` must be **5 seconds or higher**.
+- For JSON room quizzes, optional `discussion_time` (seconds) controls collaborate chat phase per question.
 
 ## `quizmd init` Coverage
 

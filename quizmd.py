@@ -25,7 +25,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.0rc1"
+__version__ = "2.4.0rc2"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -262,7 +262,7 @@ quizmd hello-essay.md
 quizmd room --create --mode compete --quiz hello-quiz.md
 quizmd room --create --mode collaborate --quiz hello-quiz.md
 quizmd room --create --mode boxing --quiz hello-quiz.md
-quizmd room --join <room-name> --token <room-token>
+quizmd room --join <room-name> [--token <room-token>]
 ```
 
 Room quiz requirement:
@@ -1302,7 +1302,7 @@ def _room_join_token_unsupported(error_text: str) -> bool:
 
 def _room_join_missing_token(error_text: str) -> bool:
     lowered = (error_text or "").lower()
-    if "room_token" not in lowered:
+    if "room_token" not in lowered and "room token" not in lowered:
         return False
     indicators = (
         "field required",
@@ -1310,6 +1310,7 @@ def _room_join_missing_token(error_text: str) -> bool:
         "string should have at least",
         "string_too_short",
         "too_short",
+        "token is required",
     )
     return any(token in lowered for token in indicators)
 
@@ -1374,6 +1375,7 @@ def _room_create_request(
     room_name: str,
     host_name: str,
     host_role: str = "",
+    token_required: bool = False,
     quiz_title: str,
     questions: list[dict],
 ) -> dict:
@@ -1386,6 +1388,7 @@ def _room_create_request(
     }
     if host_role:
         payload["host_role"] = host_role
+    payload["token_required"] = token_required
     return _room_post_json(
         f"{_room_http_base(server)}/rooms",
         payload,
@@ -1443,6 +1446,20 @@ def _room_generate_name() -> str:
             return candidate
 
 
+def _room_prompt_token_required() -> bool:
+    if not sys.stdin.isatty():
+        return False
+    while True:
+        raw = prompt_input("Require room token for joiners? [y/N]: ").strip().lower()
+        if not raw:
+            return False
+        if raw in {"y", "yes"}:
+            return True
+        if raw in {"n", "no"}:
+            return False
+        print("Please answer y or n.")
+
+
 def _room_validate_json_question(question: dict, source: Path, index: int) -> dict:
     title = str(question.get("title") or f"Question {index}").strip()
     text = str(question.get("question") or "").strip()
@@ -1450,6 +1467,7 @@ def _room_validate_json_question(question: dict, source: Path, index: int) -> di
     correct_raw = question.get("correct")
     qtype = str(question.get("type") or "single").strip().lower()
     time_raw = question.get("time_limit", 30)
+    discussion_raw = question.get("discussion_time", None)
 
     if not text:
         raise ValueError(f"{source}: question {index} is missing non-empty 'question' text")
@@ -1477,6 +1495,20 @@ def _room_validate_json_question(question: dict, source: Path, index: int) -> di
             f"Room mode requires Time/time_limit >= {ROOM_MIN_TIME_LIMIT_SECONDS} seconds."
         )
 
+    discussion_time = None
+    if discussion_raw not in (None, ""):
+        try:
+            discussion_time = int(discussion_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{source}: question {index} has invalid 'discussion_time' value {discussion_raw!r}"
+            ) from exc
+        if discussion_time < 0:
+            raise ValueError(
+                f"{source}: question {index} has invalid 'discussion_time' value {discussion_time}. "
+                "discussion_time must be >= 0 seconds."
+            )
+
     normalized = {
         "title": title or f"Question {index}",
         "question": text,
@@ -1484,6 +1516,7 @@ def _room_validate_json_question(question: dict, source: Path, index: int) -> di
         "correct": correct,
         "type": qtype,
         "time_limit": time_limit,
+        "discussion_time": discussion_time,
         "explanation": str(question.get("explanation") or "").strip(),
     }
     validate_question(normalized, source)
@@ -1770,6 +1803,10 @@ async def _run_room_waiting_loop(
     stop = asyncio.Event()
     current_question_index: int | None = None
     current_total_questions = 0
+    current_mode = room_mode
+    current_phase = ""
+    pending_question_payload: dict[str, object] | None = None
+    prompted_rounds: set[tuple[int, int]] = set()
     transcript: list[dict[str, object]] = []
 
     def _record(event_type: str, payload: dict[str, object]) -> None:
@@ -1779,6 +1816,66 @@ async def _run_room_waiting_loop(
                 "ts": time.time(),
                 "payload": payload,
             }
+        )
+
+    async def _prompt_and_submit_answer(
+        *,
+        q_payload: dict[str, object],
+        question_index: int,
+        total_questions: int,
+        deadline_epoch: float | None,
+    ) -> None:
+        nonlocal in_quiz
+        round_key = (question_index, int(deadline_epoch or 0))
+        if round_key in prompted_rounds:
+            return
+        prompted_rounds.add(round_key)
+
+        q = {
+            "title": f"Question {question_index + 1}",
+            "question": str(q_payload.get("question") or ""),
+            "options": list(q_payload.get("options") or []),
+            "correct": [-1],
+            "type": "multiple" if str(q_payload.get("type") or "single") == "multiple" else "single",
+            "time_limit": int(q_payload.get("time_limit") or 30),
+            "explanation": "",
+            "imposters": [],
+        }
+        in_quiz = True
+        try:
+            _perfect, answers, _imposters, _grading = await ask_question(
+                q,
+                theme,
+                question_index=question_index + 1,
+                total_questions=max(1, total_questions),
+                no_color=no_color,
+                compact=False,
+                full_screen=full_screen,
+            )
+        except KeyboardInterrupt:
+            await ws.send(json.dumps({"type": "leave_room", "payload": {}}))
+            stop.set()
+            return
+        finally:
+            in_quiz = False
+
+        if answers:
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "submit_answer",
+                        "payload": {"question_index": question_index, "answers": answers},
+                    }
+                )
+            )
+        else:
+            print("No answer submitted. Waiting for round result...")
+        _record(
+            "answer_submitted",
+            {
+                "question_index": question_index,
+                "answers": answers,
+            },
         )
 
     try:
@@ -1812,6 +1909,9 @@ async def _run_room_waiting_loop(
             nonlocal session_started
             nonlocal current_question_index
             nonlocal current_total_questions
+            nonlocal current_mode
+            nonlocal current_phase
+            nonlocal pending_question_payload
             nonlocal final_score
             nonlocal scored_by
             nonlocal ended_by
@@ -1870,7 +1970,7 @@ async def _run_room_waiting_loop(
                         print("Ready to start!")
                         print("Session is live. Teacher can ask the first question.")
                     else:
-                        in_quiz = True
+                        in_quiz = False
                         print("Game is starting now.")
                     _record("game_started", {"mode": room_mode})
                     continue
@@ -1878,58 +1978,75 @@ async def _run_room_waiting_loop(
                 if etype == "question":
                     if boxing_mode:
                         continue
-                    in_quiz = True
+                    current_mode = str(payload.get("mode") or current_mode or "compete")
                     q_payload = payload.get("question", {})
                     current_question_index = int(payload.get("question_index", 0))
                     current_total_questions = int(payload.get("total_questions", 0))
-                    q = {
-                        "title": f"Question {current_question_index + 1}",
-                        "question": str(q_payload.get("question") or ""),
-                        "options": list(q_payload.get("options") or []),
-                        "correct": [-1],
-                        "type": "multiple" if str(q_payload.get("type") or "single") == "multiple" else "single",
-                        "time_limit": int(q_payload.get("time_limit") or 30),
-                        "explanation": "",
-                        "imposters": [],
+                    pending_question_payload = {
+                        "question": q_payload if isinstance(q_payload, dict) else {},
+                        "question_index": current_question_index,
+                        "total_questions": current_total_questions,
                     }
-                    try:
-                        _perfect, answers, _imposters, _grading = await ask_question(
-                            q,
-                            theme,
-                            question_index=current_question_index + 1,
-                            total_questions=max(1, current_total_questions),
-                            no_color=no_color,
-                            compact=False,
-                            full_screen=full_screen,
-                        )
-                    except KeyboardInterrupt:
-                        await ws.send(json.dumps({"type": "leave_room", "payload": {}}))
-                        stop.set()
-                        return
-
-                    if answers:
-                        await ws.send(
-                            json.dumps(
-                                {
-                                    "type": "submit_answer",
-                                    "payload": {"question_index": current_question_index, "answers": answers},
-                                }
-                            )
-                        )
-                    else:
-                        print("No answer submitted. Waiting for round result...")
-                    _record(
-                        "answer_submitted",
-                        {
-                            "question_index": current_question_index,
-                            "answers": answers,
-                        },
+                    phase = str(payload.get("phase") or "voting").lower()
+                    deadline_epoch = payload.get("deadline_epoch")
+                    if current_mode == "collaborate" and phase == "discussion":
+                        current_phase = "discussion"
+                        continue
+                    if current_mode == "collaborate":
+                        current_phase = "voting"
+                    await _prompt_and_submit_answer(
+                        q_payload=pending_question_payload["question"],
+                        question_index=current_question_index,
+                        total_questions=max(1, current_total_questions),
+                        deadline_epoch=float(deadline_epoch or 0),
                     )
                     continue
+
+                if etype == "phase_changed":
+                    if boxing_mode:
+                        continue
+                    phase = str(payload.get("phase") or "").lower()
+                    qidx = int(payload.get("question_index", current_question_index or 0))
+                    if current_mode != "collaborate":
+                        continue
+                    if phase and phase == current_phase:
+                        continue
+                    if phase == "discussion":
+                        current_phase = "discussion"
+                        seconds = int(payload.get("discussion_seconds") or 0)
+                        print(f"Discussion phase ({seconds}s). Chat now; voting opens next.")
+                        _record(
+                            "phase_changed",
+                            {
+                                "phase": "discussion",
+                                "question_index": qidx,
+                                "seconds": seconds,
+                            },
+                        )
+                        continue
+                    if phase == "voting":
+                        current_phase = "voting"
+                        print("Voting phase started. Submit your answer now.")
+                        _record(
+                            "phase_changed",
+                            {
+                                "phase": "voting",
+                                "question_index": qidx,
+                            },
+                        )
+                        if pending_question_payload and int(pending_question_payload.get("question_index", -1)) == qidx:
+                            await _prompt_and_submit_answer(
+                                q_payload=pending_question_payload.get("question", {}),
+                                question_index=qidx,
+                                total_questions=max(1, int(pending_question_payload.get("total_questions", 0))),
+                                deadline_epoch=float(payload.get("deadline_epoch") or 0),
+                            )
+                        continue
 
                 if etype == "round_result":
                     if boxing_mode:
                         continue
+                    in_quiz = False
                     qidx = int(payload.get("question_index", -1))
                     print("")
                     print(f"Round {qidx + 1} result:")
@@ -1950,6 +2067,7 @@ async def _run_room_waiting_loop(
                 if etype == "consensus_retry":
                     if boxing_mode:
                         continue
+                    in_quiz = False
                     print("")
                     print(payload.get("message", "Not consensus, try again"))
                     wrong = payload.get("wrong_names", [])
@@ -2172,6 +2290,12 @@ def run_room_command(args: argparse.Namespace) -> int:
             )
         if mode != "boxing":
             host_role = ""
+        if getattr(args, "require_token", False):
+            token_required = True
+        elif getattr(args, "no_token", False):
+            token_required = False
+        else:
+            token_required = _room_prompt_token_required()
         host_name = (args.name or "").strip()
         if not host_name:
             suggested = _room_random_player_name()
@@ -2189,34 +2313,46 @@ def run_room_command(args: argparse.Namespace) -> int:
                     room_name=room_name,
                     host_name=host_name,
                     host_role=host_role,
+                    token_required=token_required,
                     quiz_title=quiz_title,
                     questions=questions,
                 )
                 break
             except RuntimeError as exc:
-                if auto_room_name and "409" in str(exc):
+                error_text = str(exc)
+                if auto_room_name and "409" in error_text:
                     room_name = _room_generate_name()
                     continue
+                if not auto_room_name and "409" in error_text and "already exists" in error_text.lower():
+                    raise RuntimeError(f'Room name "{room_name}" already exists. Try another name.') from exc
                 raise
         if created is None:
             raise RuntimeError("Could not create a unique room name. Please retry.")
         print("")
         print(f"Room created by: {created.get('host_display_name', host_name)}")
         print(f"Room name: {created.get('room_name', room_name)}")
+        token_required = bool(created.get("token_required", token_required))
         room_token = str(created.get("room_token") or "").strip()
-        if room_token:
+        if token_required and room_token:
             print(f"Room token: {room_token}")
         if mode == "boxing":
             role_label = str(created.get("host_role") or host_role or "teacher")
             print(f"Role: {role_label}")
         print(f"Quiz: {quiz_title} ({len(questions)} questions)")
+        if not args.quiz:
+            print("Tip: use --quiz filename to load your quiz.")
         print(f'Share "{created.get("room_name", room_name)}" with your friends.')
-        if room_token:
+        if token_required and room_token:
             share_command = (
                 f'quizmd room --join "{created.get("room_name", room_name)}" '
                 f'--token "{room_token}" --name "FriendName"'
             )
-            print(f"Join command: {share_command}")
+        else:
+            share_command = (
+                f'quizmd room --join "{created.get("room_name", room_name)}" '
+                f'--name "FriendName"'
+            )
+        print(f"Join command: {share_command}")
         print("Ready and waiting. Share the room name with your friends.")
         return asyncio.run(
             _run_room_waiting_loop(
@@ -4153,6 +4289,17 @@ def main():
             default="",
             help="Room token for join commands (required on secure servers).",
         )
+        token_group = room_parser.add_mutually_exclusive_group()
+        token_group.add_argument(
+            "--require-token",
+            action="store_true",
+            help="Require a room token for all joiners when creating a room.",
+        )
+        token_group.add_argument(
+            "--no-token",
+            action="store_true",
+            help="Disable room token requirement when creating a room.",
+        )
         room_parser.add_argument(
             "--server",
             default="",
@@ -4253,7 +4400,7 @@ def main():
             print(f"quizmd room --create --mode compete --quiz {hello_quiz}")
             print(f"quizmd room --create --mode collaborate --quiz {hello_quiz}")
             print(f"quizmd room --create --mode boxing --quiz {hello_quiz}")
-            print("quizmd room --join <room-name> --token <room-token>")
+            print("quizmd room --join <room-name> [--token <room-token>]")
             print("Room quiz requirement: Time/time_limit must be >= 5 seconds for online modes.")
         return
 

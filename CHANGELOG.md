@@ -2,10 +2,30 @@
 
 All notable changes to this project are documented in this file.
 
+## v2.4.0rc2 - 2026-04-26
+
+- Follow-up RC with room UX and reliability refinements:
+  - room create now prints a clear host hint when no custom quiz is supplied:
+    - `Tip: use --quiz filename to load your quiz.`
+  - room token flow re-verified for open vs secure joins in CLI and server tests.
+- Includes additional multiplayer/server hardening and coverage updates from recent review fixes.
+- Intended as the next prerelease test build after `v2.4.0rc1`.
+
 ## v2.4.0rc1 - 2026-04-25
 
 - Release candidate for the next stable line.
 - Includes multiplayer room hardening updates, UX/prompt refinements, and test coverage improvements across quiz, essay, and room flows.
+- Added optional room access token at create time (default open room):
+  - interactive prompt `Require room token for joiners? [y/N]`
+  - explicit flags `--require-token` / `--no-token`
+  - join command/help now shows token as optional.
+- Added friendly custom-room-name conflict error:
+  - `Room name "<name>" already exists. Try another name.`
+- Enhanced collaborate room mode:
+  - per-question discussion phase (chat) before voting phase
+  - submissions blocked during discussion with friendly message
+  - phase events and reconnect payloads now include collaborate phase metadata.
+- Added optional JSON room field `discussion_time` (seconds) for collaborate.
 - Intended for validation testing before promoting to a stable `v2.4.0`.
 
 ## v2.3.0 - 2026-04-24

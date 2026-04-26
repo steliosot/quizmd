@@ -13,10 +13,12 @@ from app.main import app, manager
 from app.room_store import RoomManager
 
 
-def sample_quiz_payload(mode: str = "compete"):
+def sample_quiz_payload(mode: str = "compete", token_required: bool = False):
+    discussion_time = 0 if mode == "collaborate" else None
     return {
         "mode": mode,
         "room_name": "",
+        "token_required": token_required,
         "quiz_title": "Sample Quiz",
         "host_name": "Hosty",
         "questions": [
@@ -27,6 +29,7 @@ def sample_quiz_payload(mode: str = "compete"):
                 "correct": [2],
                 "type": "single",
                 "time_limit": 30,
+                "discussion_time": discussion_time,
                 "explanation": "2+2 is 4",
             }
         ],
@@ -47,6 +50,7 @@ def sample_two_question_collaborate_payload():
                 "correct": [2],
                 "type": "single",
                 "time_limit": 30,
+                "discussion_time": 0,
                 "explanation": "2+2 is 4",
             },
             {
@@ -56,6 +60,7 @@ def sample_two_question_collaborate_payload():
                 "correct": [2],
                 "type": "single",
                 "time_limit": 30,
+                "discussion_time": 0,
                 "explanation": "3+3 is 6",
             },
         ],
@@ -78,6 +83,7 @@ class ServerTests(unittest.TestCase):
         self.assertIn("room_code", data)
         self.assertIn("room_name", data)
         self.assertIn("room_token", data)
+        self.assertFalse(data["token_required"])
         self.assertEqual(data["room_name"], "berlin-elephant")
         self.assertEqual(data["host_role"], "participant")
 
@@ -106,7 +112,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(create_conflict.status_code, 409)
 
     def test_join_by_name_requires_room_token(self):
-        payload = sample_quiz_payload()
+        payload = sample_quiz_payload(token_required=True)
         payload["room_name"] = "berlin-elephant"
         create = self.client.post("/rooms", json=payload)
         self.assertEqual(create.status_code, 200)
@@ -123,6 +129,38 @@ class ServerTests(unittest.TestCase):
             json={"room_token": "wrong-token", "player_name": "Tom"},
         )
         self.assertEqual(wrong_token.status_code, 403)
+
+    def test_join_by_name_without_token_when_room_is_open(self):
+        payload = sample_quiz_payload(token_required=False)
+        payload["room_name"] = "berlin-elephant-open"
+        create = self.client.post("/rooms", json=payload)
+        self.assertEqual(create.status_code, 200)
+        data = create.json()
+        self.assertFalse(data["token_required"])
+        self.assertEqual(data["room_token"], "")
+
+        join_by_name = self.client.post(
+            f"/rooms/by-name/{data['room_name']}/join",
+            json={"player_name": "Tom"},
+        )
+        self.assertEqual(join_by_name.status_code, 200)
+
+    def test_join_link_info_reflects_token_requirement(self):
+        secure_payload = sample_quiz_payload(token_required=True)
+        secure_payload["room_name"] = "secure-room"
+        secure_create = self.client.post("/rooms", json=secure_payload)
+        self.assertEqual(secure_create.status_code, 200)
+        secure_info = self.client.get("/join/secure-room")
+        self.assertEqual(secure_info.status_code, 200)
+        self.assertTrue(secure_info.json()["token_required"])
+
+        open_payload = sample_quiz_payload(token_required=False)
+        open_payload["room_name"] = "open-room"
+        open_create = self.client.post("/rooms", json=open_payload)
+        self.assertEqual(open_create.status_code, 200)
+        open_info = self.client.get("/join/open-room")
+        self.assertEqual(open_info.status_code, 200)
+        self.assertFalse(open_info.json()["token_required"])
 
     def test_compete_round_scoring_function(self):
         question = {"correct": [2]}
@@ -444,7 +482,8 @@ class ServerTests(unittest.TestCase):
                 ws_host.send_json({"type": "start_game", "payload": {}})
 
                 # Attempt 1: wrong consensus -> retry
-                consume_until(ws_host, "question")
+                q1 = consume_until(ws_host, "question")
+                self.assertEqual(q1["payload"]["phase"], "voting")
                 ws_host.send_json({"type": "submit_answer", "payload": {"question_index": 0, "answers": [1]}})
                 ws_tom.send_json({"type": "submit_answer", "payload": {"question_index": 0, "answers": [1]}})
                 retry_1 = consume_until(ws_host, "consensus_retry")
@@ -453,7 +492,8 @@ class ServerTests(unittest.TestCase):
                 self.assertEqual(retry_1["payload"]["max_retries"], 2)
 
                 # Attempt 2: still wrong -> max retries -> advance (single-question quiz => finish)
-                consume_until(ws_host, "question")
+                q_retry = consume_until(ws_host, "question")
+                self.assertEqual(q_retry["payload"]["phase"], "voting")
                 ws_host.send_json({"type": "submit_answer", "payload": {"question_index": 0, "answers": [1]}})
                 ws_tom.send_json({"type": "submit_answer", "payload": {"question_index": 0, "answers": [1]}})
                 retry_2 = consume_until(ws_host, "consensus_retry")
@@ -500,6 +540,7 @@ class ServerTests(unittest.TestCase):
             q1 = consume_until(ws_host, "question")
             self.assertEqual(q1["payload"]["question_index"], 0)
             self.assertEqual(q1["payload"]["retry_count"], 0)
+            self.assertEqual(q1["payload"]["phase"], "voting")
 
             # First attempt wrong -> retry_count should increase to 1.
             ws_host.send_json({"type": "submit_answer", "payload": {"question_index": 0, "answers": [1]}})
@@ -509,7 +550,8 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(retry_evt["payload"]["retry_count"], 1)
 
             # Second attempt correct -> pass and move to Q2.
-            consume_until(ws_host, "question")  # re-opened Q1
+            q1_retry = consume_until(ws_host, "question")  # re-opened Q1
+            self.assertEqual(q1_retry["payload"]["phase"], "voting")
             ws_host.send_json({"type": "submit_answer", "payload": {"question_index": 0, "answers": [2]}})
             ws_tom.send_json({"type": "submit_answer", "payload": {"question_index": 0, "answers": [2]}})
             consume_until(ws_host, "round_result")
@@ -519,6 +561,45 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(q2["payload"]["question_index"], 1)
             # Critical assertion: retry count must reset for the new question.
             self.assertEqual(q2["payload"]["retry_count"], 0)
+            self.assertEqual(q2["payload"]["phase"], "voting")
+
+    def test_collaborate_rejects_submit_during_discussion_phase(self):
+        payload = sample_quiz_payload(mode="collaborate")
+        payload["questions"][0]["discussion_time"] = 1
+        create = self.client.post("/rooms", json=payload)
+        self.assertEqual(create.status_code, 200)
+        c = create.json()
+
+        join = self.client.post(
+            f"/rooms/{c['room_code']}/join",
+            json={"room_token": c["room_token"], "player_name": "Tom"},
+        )
+        self.assertEqual(join.status_code, 200)
+        j = join.json()
+
+        def consume_until(ws, wanted_type: str, max_events: int = 100):
+            for _ in range(max_events):
+                msg = ws.receive_json()
+                if msg.get("type") == wanted_type:
+                    return msg
+            raise AssertionError(f"Did not receive {wanted_type}")
+
+        with self.client.websocket_connect(
+            f"/rooms/{c['room_code']}/ws?player_id={c['host_player_id']}&token={c['host_player_token']}"
+        ) as ws_host, self.client.websocket_connect(
+            f"/rooms/{c['room_code']}/ws?player_id={j['player_id']}&token={j['player_token']}"
+        ) as ws_tom:
+            consume_until(ws_host, "connected")
+            consume_until(ws_tom, "connected")
+            ws_host.send_json({"type": "ready_toggle", "payload": {"ready": True}})
+            ws_tom.send_json({"type": "ready_toggle", "payload": {"ready": True}})
+            ws_host.send_json({"type": "start_game", "payload": {}})
+
+            q = consume_until(ws_host, "question")
+            self.assertEqual(q["payload"]["phase"], "discussion")
+            ws_host.send_json({"type": "submit_answer", "payload": {"question_index": 0, "answers": [1]}})
+            err = consume_until(ws_host, "error")
+            self.assertIn("Voting phase has not started yet", err["payload"]["message"])
 
     def test_cleanup_stale_rooms_keeps_connected_rooms(self):
         room_manager = RoomManager()

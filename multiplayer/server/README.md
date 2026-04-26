@@ -9,7 +9,7 @@ Backend multiplayer server for QuizMD rooms (Cloud Run ready).
 - Host-authoritative state and scoring
 - Modes:
   - `compete`: top 3 fastest correct answers score `3,2,1`; wrong `-3`
-  - `collaborate`: unanimous correct required, otherwise retry same question
+  - `collaborate`: discussion phase (chat) then voting phase; unanimous correct required, otherwise retry same question
   - `boxing`: 1 teacher + 1 student live chat; teacher sets score (`0-100`), either side can end
 - Random funny default names with uniqueness handling
 - Single-instance in-memory state (v1)
@@ -52,6 +52,7 @@ python -m unittest discover -s tests -q
 
 Validation note:
 - `questions[].time_limit` must be `>= 5` seconds (otherwise room creation returns HTTP `422`).
+- Optional `questions[].discussion_time` controls collaborate chat seconds per question (`0` disables discussion phase for that question).
 
 Create room:
 
@@ -60,6 +61,7 @@ curl -X POST http://127.0.0.1:8080/rooms \
   -H 'content-type: application/json' \
   -d '{
     "mode": "compete",
+    "token_required": false,
     "quiz_title": "Demo Quiz",
     "host_name": "Host",
     "questions": [
@@ -81,8 +83,10 @@ Join room:
 ```bash
 curl -X POST http://127.0.0.1:8080/rooms/<ROOM_CODE>/join \
   -H 'content-type: application/json' \
-  -d '{"room_token":"<ROOM_TOKEN>","player_name":"Mary"}'
+  -d '{"player_name":"Mary"}'
 ```
+
+If `token_required=true` at room creation, include `"room_token":"<ROOM_TOKEN>"` in join payloads.
 
 WebSocket endpoint:
 
@@ -127,7 +131,7 @@ gcloud run deploy quizmd-server \
   --min-instances 1 \
   --max-instances 1 \
   --timeout 3600 \
-  --set-env-vars ROOM_MAX_PLAYERS=16,QUESTION_TIMEOUT_SECONDS=30,ROOM_TTL_MINUTES=30,HOST_REJOIN_SECONDS=60,COLLABORATE_MAX_RETRIES=3
+  --set-env-vars ROOM_MAX_PLAYERS=16,QUESTION_TIMEOUT_SECONDS=30,ROOM_TTL_MINUTES=30,HOST_REJOIN_SECONDS=60,COLLABORATE_MAX_RETRIES=3,COLLABORATE_DISCUSSION_SECONDS=40
 ```
 
 Optional public URL override (for join links):
