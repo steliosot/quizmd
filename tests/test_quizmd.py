@@ -68,6 +68,7 @@ from quizmd import (
     save_attempt,
     save_essay_attempt,
     select_theme,
+    start_clean_screen,
     should_use_compact_layout,
     is_no_color_requested,
     slugify,
@@ -404,6 +405,13 @@ class QuizMarkdownTests(unittest.TestCase):
         with patch("sys.stdout", stream):
             clear_terminal_screen()
         self.assertEqual(stream.getvalue(), "\033[2J\033[H")
+
+    def test_start_clean_screen_respects_enabled_flag(self):
+        with patch("quizmd.clear_terminal_screen") as mocked_clear:
+            start_clean_screen(False)
+            mocked_clear.assert_not_called()
+            start_clean_screen(True)
+            mocked_clear.assert_called_once()
 
     def test_render_exit_message_prints_friendly_text(self):
         buf = io.StringIO()
@@ -842,6 +850,27 @@ class QuizMarkdownTests(unittest.TestCase):
                                 run_essay(essay, no_color=True, ui="next")
         mocked_inline.assert_called_once()
         mocked_editor.assert_not_called()
+
+    def test_run_essay_next_ui_starts_with_clean_screen_and_logo(self):
+        essay = {
+            "title": "Sample",
+            "question": "Q",
+            "instructions": "I",
+            "criteria": [{"name": "A", "points": 1, "details": []}],
+            "total_points": 1,
+            "reference_answer": "R",
+            "ai_evaluation_rules": "Rules",
+            "output_format": "Format",
+        }
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "k"}, clear=True):
+            with patch("quizmd.start_clean_screen") as mocked_clean:
+                with patch("quizmd.collect_essay_answer_inline", side_effect=KeyboardInterrupt):
+                    buf = io.StringIO()
+                    with contextlib.redirect_stdout(buf):
+                        run_essay(essay, no_color=True, ui="next")
+        mocked_clean.assert_called_once_with(True)
+        self.assertIn("▞▀▖", buf.getvalue())
+        self.assertIn("Sample", buf.getvalue())
 
     def test_run_essay_openai_uses_default_model_and_key(self):
         essay = {
@@ -2124,6 +2153,27 @@ class QuizMarkdownTests(unittest.TestCase):
         finally:
             Path(quiz_path).unlink(missing_ok=True)
 
+    def test_run_next_ui_starts_with_clean_screen_and_logo(self):
+        questions = [
+            {
+                "title": "Question 1",
+                "question": "Pick one",
+                "options": ["A", "B"],
+                "correct": [1],
+                "type": "single",
+                "time_limit": 10,
+                "explanation": "",
+            }
+        ]
+        with patch("quizmd.start_clean_screen") as mocked_clean:
+            with patch("quizmd.prompt_input", side_effect=KeyboardInterrupt):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    run("Demo", questions, no_color=True, ui="next")
+        mocked_clean.assert_called_once_with(True)
+        self.assertIn("▞▀▖", buf.getvalue())
+        self.assertIn("Demo", buf.getvalue())
+
     def test_main_next_ui_flag_routes_to_mcq_runner(self):
         quiz_path = self.write_quiz(
             "# Test Quiz\n\n"
@@ -2418,8 +2468,10 @@ class QuizMarkdownTests(unittest.TestCase):
                     with patch("quizmd._room_create_request", return_value=created) as mocked_create:
                         with patch("quizmd._room_ensure_server_ready", return_value=None):
                             with patch("quizmd._run_room_waiting_loop", new=AsyncMock(return_value=0)):
-                                result = run_room_command(args)
+                                with patch("quizmd.start_clean_screen") as mocked_clean:
+                                    result = run_room_command(args)
         self.assertEqual(result, 0)
+        mocked_clean.assert_called_once_with()
         self.assertEqual(mocked_create.call_args.kwargs["host_role"], "teacher")
         self.assertFalse(mocked_create.call_args.kwargs["token_required"])
 

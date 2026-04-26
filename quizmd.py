@@ -1041,6 +1041,11 @@ def clear_terminal_screen() -> None:
         print("\033[2J\033[H", end="")
 
 
+def start_clean_screen(enabled: bool = True) -> None:
+    if enabled:
+        clear_terminal_screen()
+
+
 def render_exit_message(message: str = "Exited QuizMD. See you next time.", no_color: bool = False) -> None:
     try:
         from rich.console import Console
@@ -1068,7 +1073,7 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
         print(f"Folder: {Path(target_dir).expanduser().resolve()}")
         return
 
-    clear_terminal_screen()
+    start_clean_screen()
     console = Console()
     folder = Path(target_dir).expanduser().resolve()
     console.print(
@@ -2339,6 +2344,8 @@ def run_room_command(args: argparse.Namespace) -> int:
     requested_role = str(args.role or "").strip().lower()
     if requested_role and requested_role not in {"teacher", "student"}:
         raise RuntimeError("Invalid role. Use --role teacher or --role student.")
+    start_clean_screen()
+    print(LOGO)
 
     server_label, server = _room_resolve_server(
         explicit_server=str(args.server or ""),
@@ -4021,6 +4028,7 @@ def run(
         ) from exc
 
     console = Console(no_color=no_color)
+    start_clean_screen(ui == "next")
     console.print(LOGO)
 
     theme = select_theme(theme_name)
@@ -4285,6 +4293,7 @@ def run_essay(
 
     theme = select_theme(theme_name)
     console = Console(no_color=no_color)
+    start_clean_screen(ui == "next")
     console.print(LOGO)
     title = essay["title"]
     question = essay["question"]
