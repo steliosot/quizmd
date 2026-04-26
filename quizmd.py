@@ -25,11 +25,13 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.0rc2"
+__version__ = "2.4.0rc3"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_ANTHROPIC_MODEL = "claude-3-5-haiku-latest"
+QUIZMD_DOCS_URL = "https://steliosot.github.io/quizmd-docs/"
+UI_CHOICES = ("classic", "next")
 AI_PROVIDER_PRIORITY = ("gemini", "openai", "anthropic")
 GEMINI_REQUESTS_PER_MINUTE = 15
 MAX_AI_REQUEST_BYTES = 48_000
@@ -237,6 +239,72 @@ Feedback:
 - 1-2 suggestions for improvement
 """
 
+HELLO_DEBUG_TEMPLATE = """# Debug Quiz: Python Foundations
+
+## Question 1
+There are two errors. Fix the function so it runs correctly.
+
+Broken:
+```python
+def greet(name)
+    print("Hello, " + name
+```
+
+Fixed:
+```python
+def greet(name):
+    print("Hello, " + name)
+```
+
+Type: debug
+Hint: Start at line 1, then check missing punctuation on line 2.
+Explanation: Function definitions need a trailing colon, and print call needs a closing parenthesis.
+
+## Question 2
+There are two errors. Fix indentation and the variable reference.
+
+Broken:
+```python
+def average(nums):
+total = sum(nums)
+    return total / len(num)
+```
+
+Fixed:
+```python
+def average(nums):
+    total = sum(nums)
+    return total / len(nums)
+```
+
+Type: debug
+Hint: The issue starts on line 2, then look at the last token on line 3.
+Explanation: Python requires indentation inside the function body, and `num` should be `nums`.
+
+## Question 3
+There are three errors. Make this function safely return the last item.
+
+Broken:
+```python
+def pick_last(items)
+    if len(items) == 0:
+        return items[0]
+    return items[len(items)]
+```
+
+Fixed:
+```python
+def pick_last(items):
+    if len(items) == 0:
+        return None
+    return items[len(items) - 1]
+```
+
+Type: debug
+Hint: Check line 1 first, then the return logic on lines 3 and 4.
+Explanation: Add function colon, guard empty list with None, and use last index `len(items) - 1`.
+"""
+
 QUIZ_GUIDE_TEMPLATE = """# QuizMD Quick Start
 
 ## Local modes
@@ -246,6 +314,8 @@ quizmd --validate hello-quiz.md
 quizmd hello-quiz.md
 quizmd --validate hello-imposter.md
 quizmd hello-imposter.md
+quizmd --validate hello-debug.md
+quizmd hello-debug.md
 ```
 
 ## Essay mode
@@ -289,6 +359,8 @@ THEMES = {
         "pt_selected_bg_pulse": "ansiwhite",
         "pt_marked_fg": "ansiwhite",
         "pt_marked_bg": "ansigreen",
+        "pt_imposter_fg": "ansiwhite",
+        "pt_imposter_bg": "ansired",
         "pt_code": "ansiwhite",
         "pt_code_bg": "#1d2630",
     },
@@ -312,6 +384,8 @@ THEMES = {
         "pt_selected_bg_pulse": "ansiwhite",
         "pt_marked_fg": "ansiwhite",
         "pt_marked_bg": "ansigreen",
+        "pt_imposter_fg": "ansiwhite",
+        "pt_imposter_bg": "ansired",
         "pt_code_bg": "#eaf2ff",
     },
 }
@@ -704,15 +778,203 @@ def parse_quiz_markdown(path: str):
     return quiz_title, questions
 
 
+def _normalize_code_lines(text: str) -> list[str]:
+    lines = [line.rstrip() for line in text.splitlines()]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines
+
+
+def _debug_changed_line_numbers(broken_code: str, fixed_code: str) -> list[int]:
+    broken_lines = _normalize_code_lines(broken_code)
+    fixed_lines = _normalize_code_lines(fixed_code)
+    max_len = max(len(broken_lines), len(fixed_lines))
+    changed: list[int] = []
+    for idx in range(max_len):
+        broken_line = broken_lines[idx] if idx < len(broken_lines) else ""
+        fixed_line = fixed_lines[idx] if idx < len(fixed_lines) else ""
+        if broken_line != fixed_line:
+            changed.append(idx + 1)
+    return changed
+
+
+def _score_debug_submission(broken_code: str, fixed_code: str, student_code: str) -> dict:
+    broken_lines = _normalize_code_lines(broken_code)
+    fixed_lines = _normalize_code_lines(fixed_code)
+    student_lines = _normalize_code_lines(student_code)
+    changed_lines = _debug_changed_line_numbers(broken_code, fixed_code)
+
+    fixed_count = 0
+    for line_no in changed_lines:
+        fixed_line = fixed_lines[line_no - 1] if line_no - 1 < len(fixed_lines) else ""
+        student_line = student_lines[line_no - 1] if line_no - 1 < len(student_lines) else ""
+        if student_line == fixed_line:
+            fixed_count += 1
+
+    max_points = len(changed_lines) if changed_lines else 1
+    is_exact = student_lines == fixed_lines
+    return {
+        "fixed_count": fixed_count,
+        "total_errors": max_points,
+        "question_points": fixed_count,
+        "question_max_points": max_points,
+        "is_perfect": is_exact,
+        "changed_lines": changed_lines,
+    }
+
+
+def _extract_labeled_code_block(
+    lines: list[str],
+    label: str,
+    source: Path,
+    question_title: str,
+) -> tuple[list[str], int, int]:
+    label_idx = None
+    target = f"{label}:"
+    for idx, raw_line in enumerate(lines):
+        if raw_line.strip().lower() == target.lower():
+            label_idx = idx
+            break
+    if label_idx is None:
+        raise ValueError(f"{source}: question {question_title!r} is missing '{label}:' section")
+
+    start = label_idx + 1
+    while start < len(lines) and not lines[start].strip():
+        start += 1
+    if start >= len(lines) or not lines[start].strip().startswith("```"):
+        raise ValueError(
+            f"{source}: question {question_title!r} '{label}:' must be followed by a fenced code block"
+        )
+
+    code_lines: list[str] = []
+    end = None
+    for idx in range(start + 1, len(lines)):
+        if lines[idx].strip().startswith("```"):
+            end = idx
+            break
+        code_lines.append(lines[idx])
+    if end is None:
+        raise ValueError(
+            f"{source}: question {question_title!r} '{label}:' code block is missing closing fence"
+        )
+    if not any(line.strip() for line in code_lines):
+        raise ValueError(f"{source}: question {question_title!r} '{label}:' code block cannot be empty")
+
+    return code_lines, label_idx, end
+
+
+def parse_debug_markdown(path: str) -> tuple[str, list[dict]]:
+    source = Path(path)
+    text = source.read_text(encoding="utf-8")
+
+    blocks = re.split(r"(?m)^##\s+", text)
+    preamble_lines = [line.strip() for line in blocks[0].splitlines() if line.strip()]
+
+    quiz_title = "Debug Quiz"
+    if preamble_lines:
+        if preamble_lines[0].startswith("# "):
+            quiz_title = preamble_lines[0][2:].strip() or "Debug Quiz"
+            preamble_lines = preamble_lines[1:]
+        if preamble_lines:
+            raise ValueError(
+                f"{source}: unexpected content outside debug question blocks. Use '##' headers."
+            )
+
+    questions: list[dict] = []
+    field_pattern = re.compile(r"(?i)^(type|hint|explanation)\s*:\s*(.*)$")
+
+    for block in blocks[1:]:
+        block = block.strip("\n")
+        if not block.strip():
+            continue
+
+        lines = block.splitlines()
+        title = lines[0].strip()
+        body = lines[1:]
+        if not body:
+            raise ValueError(f"{source}: malformed debug question block {title!r}")
+
+        broken_lines, broken_label_idx, broken_end_idx = _extract_labeled_code_block(body, "Broken", source, title)
+        fixed_lines, fixed_label_idx, fixed_end_idx = _extract_labeled_code_block(body, "Fixed", source, title)
+        if fixed_label_idx < broken_end_idx:
+            raise ValueError(
+                f"{source}: question {title!r} has malformed section order. Use question text, Broken, then Fixed."
+            )
+
+        prompt_lines = body[:broken_label_idx]
+        prompt = "\n".join(prompt_lines).strip()
+        if not prompt:
+            raise ValueError(f"{source}: question {title!r} is missing the prompt text line")
+
+        metadata_lines = body[fixed_end_idx + 1 :]
+        qtype = ""
+        hint = ""
+        explanation = ""
+        for raw_line in metadata_lines:
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+            match = field_pattern.match(stripped)
+            if not match:
+                raise ValueError(
+                    f"{source}: unrecognized debug metadata line {raw_line!r} in question {title!r}. "
+                    "Expected Type, Hint, Explanation."
+                )
+            key = match.group(1).lower()
+            value = match.group(2).strip()
+            if key == "type":
+                qtype = value.lower()
+            elif key == "hint":
+                hint = value
+            elif key == "explanation":
+                explanation = value
+
+        if qtype and qtype != "debug":
+            raise ValueError(
+                f"{source}: question {title!r} has unsupported Type {qtype!r}; debug mode expects Type: debug"
+            )
+
+        broken_code = "\n".join(broken_lines).rstrip()
+        fixed_code = "\n".join(fixed_lines).rstrip()
+        changed_lines = _debug_changed_line_numbers(broken_code, fixed_code)
+        if not changed_lines:
+            raise ValueError(
+                f"{source}: question {title!r} has no detectable code differences between Broken and Fixed blocks"
+            )
+
+        questions.append(
+            {
+                "title": title,
+                "prompt": prompt,
+                "type": "debug",
+                "broken_code": broken_code,
+                "fixed_code": fixed_code,
+                "hint": hint,
+                "explanation": explanation,
+                "changed_lines": changed_lines,
+            }
+        )
+
+    if not questions:
+        raise ValueError(f"{source}: no valid debug questions found. Add at least one '##' question block.")
+
+    return quiz_title, questions
+
+
 def detect_quiz_mode(path: str) -> str:
     source = Path(path)
-    for raw_line in source.read_text(encoding="utf-8").splitlines():
+    text = source.read_text(encoding="utf-8")
+    for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
             continue
         if line.startswith("# Essay Question:"):
             return "essay"
+        if line.lower().startswith("# debug quiz"):
+            return "debug"
         if line.startswith("# "):
+            if re.search(r"(?im)^type\s*:\s*debug\s*$", text):
+                return "debug"
             return "mcq"
         break
     raise ValueError(
@@ -1003,7 +1265,11 @@ def ask_to_save_answers() -> bool:
 
 def ask_yes_no(prompt: str) -> bool:
     while True:
-        choice = prompt_input(prompt).strip().lower()
+        try:
+            choice = prompt_input(prompt).strip().lower()
+        except RuntimeError:
+            # If stdin is exhausted/non-interactive, fail closed instead of crashing.
+            return False
         if choice in {"y", "yes"}:
             return True
         if choice in {"n", "no"}:
@@ -1016,6 +1282,7 @@ def init_starter_files(target_dir: str = ".", force: bool = False) -> list[Path]
     files_to_create = [
         ("hello-quiz.md", HELLO_QUIZ_TEMPLATE),
         ("hello-imposter.md", HELLO_IMPOSTER_TEMPLATE),
+        ("hello-debug.md", HELLO_DEBUG_TEMPLATE),
         ("hello-essay.md", HELLO_ESSAY_TEMPLATE),
         ("QUIZ_GUIDE.md", QUIZ_GUIDE_TEMPLATE),
     ]
@@ -1033,6 +1300,158 @@ def init_starter_files(target_dir: str = ".", force: bool = False) -> list[Path]
         out.write_text(content, encoding="utf-8")
         created.append(out)
     return created
+
+
+def clear_terminal_screen() -> None:
+    if sys.stdout.isatty():
+        print("\033[2J\033[H", end="")
+
+
+def ensure_terminal_cursor_visible() -> None:
+    if not sys.stdout.isatty():
+        return
+    print("\033[?25h", end="", flush=True)
+
+
+def start_clean_screen(enabled: bool = True) -> None:
+    if enabled:
+        clear_terminal_screen()
+
+
+def render_exit_message(message: str = "Exited QuizMD. See you next time.", no_color: bool = False) -> None:
+    ensure_terminal_cursor_visible()
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+    except ModuleNotFoundError:
+        print("")
+        print(message)
+        return
+
+    console = Console(no_color=no_color)
+    console.print("")
+    console.print(Panel(f"[bold cyan]{message}[/bold cyan]", border_style="cyan"))
+
+
+def render_init_next_screen(created: list[Path] | None = None, target_dir: str = ".") -> None:
+    """Render the experimental vNext init welcome without changing file behavior."""
+    start_clean_screen()
+    try:
+        from rich import box
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.table import Table
+    except ModuleNotFoundError:
+        print(f"QuizMD {__version__}")
+        print("Write quizzes in Markdown. Run them in the terminal.")
+        print(f"Folder: {Path(target_dir).expanduser().resolve()}")
+        print(f"Documentation: {QUIZMD_DOCS_URL}")
+        return
+
+    probe_console = Console()
+    terminal_width = max(probe_console.size.width, 40)
+    panel_width = min(terminal_width, 120)
+    wide_layout = panel_width >= 96
+    console = Console(width=panel_width)
+    folder = Path(target_dir).expanduser().resolve()
+    console.print(
+        Panel(
+            f"[bold cyan]QuizMD[/bold cyan] [dim]v{__version__}[/dim]\n"
+            "[green]Write quizzes in Markdown. Run them in the terminal.[/green]\n"
+            f"[dim]Folder:[/dim] {folder}",
+            border_style="bright_blue",
+            box=box.ROUNDED,
+            expand=True,
+            width=panel_width,
+        )
+    )
+    console.print(
+        f"[bold]Documentation:[/bold] [link={QUIZMD_DOCS_URL}][underline bright_blue]{QUIZMD_DOCS_URL}[/underline bright_blue][/link]"
+    )
+
+    mode_cards = (
+        "[bold]1 Classic[/bold]\n[dim]Fast MCQ practice[/dim]\n[green]No AI key[/green]",
+        "[bold]2 Imposter[/bold]\n[dim]Spot misleading answers[/dim]\n[green]No AI key[/green]",
+        "[bold]3 Debug[/bold]\n[dim]Fix broken code[/dim]\n[green]No AI key[/green]",
+        "[bold]4 Essay[/bold]\n[dim]Rubric + AI feedback[/dim]\n[yellow]Needs AI key[/yellow]",
+    )
+    if wide_layout:
+        modes = Table.grid(expand=True)
+        modes.add_column(ratio=1)
+        modes.add_column(ratio=1)
+        modes.add_column(ratio=1)
+        modes.add_column(ratio=1)
+        modes.add_row(*mode_cards)
+    else:
+        modes = "\n\n".join(mode_cards)
+    console.print(
+        Panel(
+            modes,
+            title="[bold]Recommended quiz types[/bold]",
+            border_style="cyan",
+            expand=True,
+            width=panel_width,
+        )
+    )
+
+    room_cards = (
+        "[bold]Compete[/bold]\n[dim]Fast live quiz race[/dim]",
+        "[bold]Collaborate[/bold]\n[dim]Team consensus quiz[/dim]",
+        "[bold]Boxing[/bold]\n[dim]One-to-one teacher check[/dim]",
+    )
+    if wide_layout:
+        rooms = Table.grid(expand=True)
+        rooms.add_column(ratio=1)
+        rooms.add_column(ratio=1)
+        rooms.add_column(ratio=1)
+        rooms.add_row(*room_cards)
+    else:
+        rooms = "\n\n".join(room_cards)
+    console.print(
+        Panel(
+            rooms,
+            title="[bold]Room modes[/bold]",
+            border_style="magenta",
+            expand=True,
+            width=panel_width,
+        )
+    )
+
+    if created is not None:
+        labels = {
+            "hello-quiz.md": "Single + multiple choice",
+            "hello-imposter.md": "Imposter distractor spotting",
+            "hello-debug.md": "Fix broken code with line hints",
+            "hello-essay.md": "Short answer with AI feedback",
+            "QUIZ_GUIDE.md": "Starter commands and notes",
+        }
+        created_text = "\n".join(
+            f"- {path.name} [dim][{labels.get(path.name, 'Created file')}][/dim]"
+            for path in created
+        )
+        console.print(
+            Panel(
+                created_text,
+                title="[bold green]Created starter files[/bold green]",
+                border_style="green",
+                expand=True,
+                width=panel_width,
+            )
+        )
+        console.print(
+            Panel(
+                "[bold]Debug flow[/bold]\n"
+                "[dim]1) Validate[/dim]\n"
+                "quizmd --validate hello-debug.md\n"
+                "[dim]2) Run[/dim]\n"
+                "quizmd hello-debug.md\n"
+                "[dim]Keys:[/dim] D edit • Esc actions • ↑/↓ select • Enter confirm",
+                title="[bold yellow]Try it out[/bold yellow]",
+                border_style="yellow",
+                expand=True,
+                width=panel_width,
+            )
+        )
 
 
 def prompt_input(prompt: str = "") -> str:
@@ -1585,6 +2004,8 @@ def _room_load_quiz_payload(path: str | None) -> tuple[str, list[dict]]:
     mode = detect_quiz_mode(str(quiz_path))
     if mode == "essay":
         raise RuntimeError("Essay files are not supported for room mode. Use a multiple-choice quiz file.")
+    if mode == "debug":
+        raise RuntimeError("Debug files are not supported for room mode. Use a multiple-choice quiz file.")
     try:
         return _room_quiz_payload_from_markdown(str(quiz_path))
     except (OSError, ValueError) as exc:
@@ -1703,7 +2124,9 @@ def _select_with_space(
         markup = "\n".join(lines)
         return markup if no_color else PromptHTML(markup)
 
-    control = FormattedTextControl(text=render)
+    # Render a concrete first frame immediately so some terminals do not appear blank
+    # before the first key event.
+    control = FormattedTextControl(text=render())
     window = Window(content=control, wrap_lines=True, always_hide_cursor=True)
     kb = KeyBindings()
 
@@ -1736,6 +2159,8 @@ def _select_with_space(
     app = Application(layout=Layout(HSplit([window])), key_bindings=kb, full_screen=False)
     try:
         return app.run()
+    except KeyboardInterrupt:
+        raise
     except Exception:
         print(title)
         for idx, (label, _) in enumerate(options, start=1):
@@ -1746,6 +2171,8 @@ def _select_with_space(
                 pos = int(raw)
                 if 1 <= pos <= len(options):
                     return options[pos - 1][1]
+    finally:
+        ensure_terminal_cursor_visible()
 
 
 def _read_lobby_line_nonblocking(timeout: float = 0.15) -> str | None:
@@ -1764,6 +2191,44 @@ def _read_lobby_line_nonblocking(timeout: float = 0.15) -> str | None:
     if line == "":
         raise RuntimeError("Interactive input is not available in this environment.")
     return line.rstrip("\r\n")
+
+
+def _parse_boxing_score_value(text: str) -> tuple[int | None, str | None]:
+    match = re.match(r"^/score\s+(-?\d+)\s*$", text.strip())
+    if not match:
+        return None, "Usage: /score <0-100>"
+    score_value = int(match.group(1))
+    if score_value < 0 or score_value > 100:
+        return None, "Score must be between 0 and 100."
+    return score_value, None
+
+
+def _room_runtime_question_payload(q_payload: object, question_index: int) -> dict[str, object] | None:
+    if not isinstance(q_payload, dict):
+        return None
+    question_text = str(q_payload.get("question") or "").strip()
+    options_raw = q_payload.get("options")
+    if not question_text or not isinstance(options_raw, list):
+        return None
+    options = [str(option).strip() for option in options_raw if str(option).strip()]
+    if len(options) < 2:
+        return None
+    q_type = "multiple" if str(q_payload.get("type") or "single").strip().lower() == "multiple" else "single"
+    try:
+        time_limit = int(q_payload.get("time_limit") or 30)
+    except (TypeError, ValueError):
+        time_limit = 30
+    time_limit = max(5, min(600, time_limit))
+    return {
+        "title": f"Question {question_index}",
+        "question": question_text,
+        "options": options,
+        "correct": [-1],
+        "type": q_type,
+        "time_limit": time_limit,
+        "explanation": "",
+        "imposters": [],
+    }
 
 
 async def _run_room_waiting_loop(
@@ -1818,6 +2283,16 @@ async def _run_room_waiting_loop(
             }
         )
 
+    async def _send_room_event(event_type: str, payload: dict[str, object], *, silent: bool = False) -> bool:
+        try:
+            await ws.send(json.dumps({"type": event_type, "payload": payload}))
+            return True
+        except Exception:
+            if not silent and not stop.is_set():
+                print("Disconnected from room server.")
+            stop.set()
+            return False
+
     async def _prompt_and_submit_answer(
         *,
         q_payload: dict[str, object],
@@ -1831,16 +2306,14 @@ async def _run_room_waiting_loop(
             return
         prompted_rounds.add(round_key)
 
-        q = {
-            "title": f"Question {question_index + 1}",
-            "question": str(q_payload.get("question") or ""),
-            "options": list(q_payload.get("options") or []),
-            "correct": [-1],
-            "type": "multiple" if str(q_payload.get("type") or "single") == "multiple" else "single",
-            "time_limit": int(q_payload.get("time_limit") or 30),
-            "explanation": "",
-            "imposters": [],
-        }
+        q = _room_runtime_question_payload(q_payload, question_index + 1)
+        if q is None:
+            print("Skipping invalid room question from server (needs text and at least 2 options).")
+            _record(
+                "invalid_question_payload",
+                {"question_index": question_index, "payload": q_payload},
+            )
+            return
         in_quiz = True
         try:
             _perfect, answers, _imposters, _grading = await ask_question(
@@ -1853,21 +2326,27 @@ async def _run_room_waiting_loop(
                 full_screen=full_screen,
             )
         except KeyboardInterrupt:
-            await ws.send(json.dumps({"type": "leave_room", "payload": {}}))
+            await _send_room_event("leave_room", {}, silent=True)
+            render_exit_message("Left room. See you next time.", no_color=no_color)
             stop.set()
+            return
+        except Exception as exc:
+            print(f"Could not open room question: {exc}")
+            _record(
+                "question_render_error",
+                {"question_index": question_index, "error": str(exc)},
+            )
             return
         finally:
             in_quiz = False
 
         if answers:
-            await ws.send(
-                json.dumps(
-                    {
-                        "type": "submit_answer",
-                        "payload": {"question_index": question_index, "answers": answers},
-                    }
-                )
+            sent = await _send_room_event(
+                "submit_answer",
+                {"question_index": question_index, "answers": answers},
             )
+            if not sent:
+                return
         else:
             print("No answer submitted. Waiting for round result...")
         _record(
@@ -1899,7 +2378,8 @@ async def _run_room_waiting_loop(
             print("Commands: /start (host), /players, /score <0-100> (teacher), /end, /help, /quit")
         else:
             print("Commands: /start (host), /players, /help, /quit")
-        await ws.send(json.dumps({"type": "ready_toggle", "payload": {"ready": True}}))
+        if not await _send_room_event("ready_toggle", {"ready": True}):
+            return 1
 
         async def recv_loop():
             nonlocal connected_players
@@ -2159,7 +2639,7 @@ async def _run_room_waiting_loop(
                 if not text:
                     continue
                 if text == "/quit":
-                    await ws.send(json.dumps({"type": "leave_room", "payload": {}}))
+                    await _send_room_event("leave_room", {}, silent=True)
                     stop.set()
                     break
                 if text == "/players":
@@ -2179,34 +2659,38 @@ async def _run_room_waiting_loop(
                     if not is_host:
                         print("Only the room host can start.")
                         continue
-                    await ws.send(json.dumps({"type": "ready_toggle", "payload": {"ready": True}}))
+                    if not await _send_room_event("ready_toggle", {"ready": True}):
+                        break
                     await asyncio.sleep(0.15)
-                    await ws.send(json.dumps({"type": "start_game", "payload": {}}))
+                    if not await _send_room_event("start_game", {}):
+                        break
                     print("Start requested...")
                     continue
                 if boxing_mode and text.startswith("/score"):
                     if resolved_player_role != "teacher":
                         print("Only the teacher can use /score.")
                         continue
-                    match = re.match(r"^/score\s+(-?\d+)\s*$", text)
-                    if not match:
-                        print("Usage: /score <0-100>")
+                    score_value, score_error = _parse_boxing_score_value(text)
+                    if score_error:
+                        print(score_error)
                         continue
-                    score_value = int(match.group(1))
-                    await ws.send(json.dumps({"type": "set_score", "payload": {"score": score_value}}))
+                    if not await _send_room_event("set_score", {"score": score_value}):
+                        break
                     continue
                 if boxing_mode and text == "/end":
-                    await ws.send(
-                        json.dumps(
-                            {
-                                "type": "end_session",
-                                "payload": {"reason": "Session ended by participant."},
-                            }
-                        )
-                    )
+                    if not await _send_room_event(
+                        "end_session",
+                        {"reason": "Session ended by participant."},
+                    ):
+                        break
                     continue
 
-                await ws.send(json.dumps({"type": "chat_message", "payload": {"text": text}}))
+                if not await _send_room_event("chat_message", {"text": text}):
+                    break
+        except KeyboardInterrupt:
+            await _send_room_event("leave_room", {}, silent=True)
+            render_exit_message("Left room. See you next time.", no_color=no_color)
+            stop.set()
         finally:
             stop.set()
             recv_task.cancel()
@@ -2241,6 +2725,8 @@ def run_room_command(args: argparse.Namespace) -> int:
     requested_role = str(args.role or "").strip().lower()
     if requested_role and requested_role not in {"teacher", "student"}:
         raise RuntimeError("Invalid role. Use --role teacher or --role student.")
+    start_clean_screen()
+    print(LOGO)
 
     server_label, server = _room_resolve_server(
         explicit_server=str(args.server or ""),
@@ -2487,6 +2973,939 @@ def run_room_command(args: argparse.Namespace) -> int:
     )
 
 
+def _alien_ship_sprite(mode: str) -> str:
+    return _alien_ship_art(mode)[-1]
+
+
+def _alien_ship_art(mode: str) -> tuple[str, ...]:
+    """Return compact ship art (top-to-bottom)."""
+    return {
+        "single": ("^",),
+        "double": ("^^",),
+        "triple": ("^^^",),
+    }.get(mode, ("^",))
+
+
+def _alien_sprite_lines(row: int, frame: int) -> tuple[str, str, str]:
+    sprites = (
+        (
+            (" /-\\ ", "|o^o|", "\\-v-/"),
+            (" /-\\ ", "|o o|", "\\-^-/"),
+        ),
+        (
+            (" /W\\ ", "|v v|", "\\-/-/"),
+            (" /W\\ ", "|^^^|", "\\-\\-/"),
+        ),
+        (
+            (" .-. ", "(o^o)", " =_= "),
+            (" .-. ", "(o o)", " =_= "),
+        ),
+        (
+            (" /-\\ ", "|O^O|", "\\-v-/"),
+            (" /-\\ ", "|O O|", "\\-^-/"),
+        ),
+    )
+    row_sprites = sprites[row % len(sprites)]
+    return row_sprites[frame % len(row_sprites)]
+
+
+def _alien_sprite_dimensions() -> tuple[int, int]:
+    lines = _alien_sprite_lines(0, 0)
+    return max(len(line) for line in lines), len(lines)
+
+
+def _alien_attack_profile(mode: str, difficulty: str) -> dict:
+    """Return movement/timing profile for Alien Attack mode+difficulty."""
+    mode_name = (mode or "single").strip().lower()
+    difficulty_name = (difficulty or "normal").strip().lower()
+    mode_speed = {
+        "single": 0.38,
+        "double": 0.33,
+        "triple": 0.29,
+    }
+    mode_bombs = {
+        "single": 0.95,
+        "double": 0.82,
+        "triple": 0.72,
+    }
+    if difficulty_name == "inferno":
+        diff_mult = 0.68
+    elif difficulty_name == "hard":
+        diff_mult = 0.78
+    else:
+        diff_mult = 1.0
+    bomb_interval = mode_bombs.get(mode_name, mode_bombs["single"]) * diff_mult
+    if difficulty_name == "inferno":
+        # Inferno intentionally floods the board: each alien drops every second.
+        bomb_interval = 1.0
+    return {
+        "mode": mode_name,
+        "difficulty": difficulty_name,
+        "ship_art": _alien_ship_art(mode_name),
+        "ship_sprite": _alien_ship_sprite(mode_name),
+        "alien_move_interval": mode_speed.get(mode_name, mode_speed["single"]) * diff_mult,
+        "bomb_interval": bomb_interval,
+        "lives": 1,
+        "max_bullets": 2 if difficulty_name == "normal" else 1,
+    }
+
+
+def _alien_score_for_hit(flight_time: float, level: int) -> int:
+    base = 100 + max(0, level - 1) * 20
+    speed_bonus = max(0, int((1.4 - max(0.0, flight_time)) * 70))
+    return base + speed_bonus
+
+
+def _alien_clamp(value: int, minimum: int, maximum: int) -> int:
+    if value < minimum:
+        return minimum
+    if value > maximum:
+        return maximum
+    return value
+
+
+def _alien_make_shields(board_w: int, board_h: int) -> set[tuple[int, int]]:
+    shields: set[tuple[int, int]] = set()
+    pattern = [
+        " ##### ",
+        "#######",
+        "##   ##",
+        "#######",
+    ]
+    if board_w < 36 or board_h < 12:
+        return shields
+    ship_y = board_h - 1
+    # Keep shields close to the ship (lower on screen), while still leaving
+    # enough room so bullets and bombs interact with them clearly.
+    gap_from_ship = 3 if board_h <= 30 else min(6, max(3, board_h // 8))
+    y0 = ship_y - gap_from_ship - (len(pattern) - 1)
+    y0 = max(3, y0)
+    anchors = [board_w // 4, board_w // 2, (board_w * 3) // 4]
+    bunker_half = len(pattern[0]) // 2
+    for anchor in anchors:
+        x0 = anchor - bunker_half
+        for dy, row in enumerate(pattern):
+            for dx, ch in enumerate(row):
+                if ch == "#":
+                    x = x0 + dx
+                    y = y0 + dy
+                    if 0 <= x < board_w and 0 <= y < board_h:
+                        shields.add((x, y))
+    return shields
+
+
+def _alien_spawn_wave(state: dict) -> None:
+    board_w = state["board_w"]
+    board_h = state["board_h"]
+    sprite_w, sprite_h = _alien_sprite_dimensions()
+    cols = 8
+    rows = 4
+    spacing = max(sprite_w + 1, min(9, (board_w - sprite_w) // max(1, cols - 1)))
+    formation_width = max(1, (cols - 1) * spacing + sprite_w)
+    offset_x = max(0, (board_w - formation_width) // 2)
+    state["alien_rows"] = rows
+    state["alien_cols"] = cols
+    state["alien_spacing"] = spacing
+    state["alien_row_spacing"] = sprite_h + 1
+    state["alien_sprite_w"] = sprite_w
+    state["alien_sprite_h"] = sprite_h
+    state["alien_offset_x"] = offset_x
+    state["alien_offset_y"] = 2
+    state["alien_dir"] = 1
+    state["alien_anim_frame"] = 0
+    state["aliens_alive"] = {(r, c) for r in range(rows) for c in range(cols)}
+    state["bullets"] = []
+    state["bombs"] = []
+    state["shields"] = _alien_make_shields(board_w, board_h)
+    profile = state["profile"]
+    state["alien_move_interval"] = max(
+        0.08,
+        profile["alien_move_interval"] * (0.93 ** max(0, state["level"] - 1)),
+    )
+    state["bomb_interval"] = max(
+        0.14,
+        profile["bomb_interval"] * (0.95 ** max(0, state["level"] - 1)),
+    )
+    now = time.monotonic()
+    state["next_alien_move"] = now + state["alien_move_interval"]
+    state["next_bomb_drop"] = now + random.uniform(0.2, state["bomb_interval"])
+
+
+def _alien_ship_range(ship_x: int, ship_sprite: str) -> tuple[int, int]:
+    left = ship_x - (len(ship_sprite) // 2)
+    return left, left + len(ship_sprite) - 1
+
+
+def _alien_ship_cells(ship_x: int, ship_art: tuple[str, ...], ship_base_y: int) -> dict[tuple[int, int], str]:
+    cells: dict[tuple[int, int], str] = {}
+    for offset, line in enumerate(reversed(ship_art)):
+        y = ship_base_y - offset
+        left = ship_x - (len(line) // 2)
+        for idx, ch in enumerate(line):
+            if ch == " ":
+                continue
+            cells[(left + idx, y)] = ch
+    return cells
+
+
+def _alien_positions(state: dict) -> dict[tuple[int, int], tuple[int, int]]:
+    pos: dict[tuple[int, int], tuple[int, int]] = {}
+    row_spacing = int(state.get("alien_row_spacing") or 4)
+    anim_frame = int(state.get("alien_anim_frame") or 0)
+    for row, col in state["aliens_alive"]:
+        x = state["alien_offset_x"] + col * state["alien_spacing"]
+        y = state["alien_offset_y"] + row * row_spacing
+        for dy, line in enumerate(_alien_sprite_lines(row, anim_frame)):
+            for dx, ch in enumerate(line):
+                if ch == " ":
+                    continue
+                pos[(x + dx, y + dy)] = (row, col)
+    return pos
+
+
+async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) -> int:
+    try:
+        from prompt_toolkit import Application
+        from prompt_toolkit.formatted_text import HTML as PromptHTML
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.layout import HSplit, Layout, Window
+        from prompt_toolkit.layout.controls import FormattedTextControl
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Alien Attack requires prompt_toolkit. Install dependencies from requirements.txt."
+        ) from exc
+
+    mode_options: list[tuple[str, str, str]] = [
+        ("single", "Single", "Small ship (harder to hit)."),
+        ("double", "Double", "Medium ship."),
+        ("triple", "Triple", "Wider ship (easier target)."),
+    ]
+    difficulty_options: list[tuple[str, str, str]] = [
+        ("normal", "Normal", "Balanced speed and bomb pressure."),
+        ("hard", "Hard", "Faster waves and denser bombs."),
+        ("inferno", "Inferno", "Every alien drops bombs every second."),
+    ]
+    shooting_options: list[tuple[str, str, str, int]] = [
+        ("unlimited", "Unlimited", "No bullet cap.", 999),
+        ("two", "2 at a time", "Two active bullets max.", 2),
+        ("one", "1 at a time", "Single active bullet max.", 1),
+    ]
+    profile = _alien_attack_profile(mode, difficulty)
+    initial_mode_idx = 0
+    initial_diff_idx = 0
+    for idx, option in enumerate(mode_options):
+        value = option[0]
+        if value == profile["mode"]:
+            initial_mode_idx = idx
+            break
+    for idx, option in enumerate(difficulty_options):
+        value = option[0]
+        if value == profile["difficulty"]:
+            initial_diff_idx = idx
+            break
+
+    # Setup selector stays in the current terminal (no clear/full-screen yet).
+    if sys.stdin and hasattr(sys.stdin, "isatty") and sys.stdin.isatty():
+        setup_state = {
+            "stage": 0,  # 0=mode, 1=difficulty, 2=shooting
+            "mode_idx": initial_mode_idx,
+            "diff_idx": initial_diff_idx,
+            "shoot_idx": 1 if profile.get("max_bullets", 1) == 2 else 2,
+        }
+        if profile.get("max_bullets", 1) >= 999:
+            setup_state["shoot_idx"] = 0
+
+        def _setup_style(text: str, fg: str = "", bg: str = "") -> str:
+            escaped = html.escape(text)
+            if no_color:
+                return escaped
+            style_parts = []
+            if fg:
+                style_parts.append(f"fg='{fg}'")
+            if bg:
+                style_parts.append(f"bg='{bg}'")
+            if not style_parts:
+                return escaped
+            return f"<style {' '.join(style_parts)}>{escaped}</style>"
+
+        def render_setup() -> str | PromptHTML:
+            stage_mode = setup_state["stage"] == 0
+            stage_difficulty = setup_state["stage"] == 1
+            stage_shooting = setup_state["stage"] == 2
+            mode_value, mode_label, mode_desc = mode_options[setup_state["mode_idx"]]
+            diff_value, diff_label, diff_desc = difficulty_options[setup_state["diff_idx"]]
+            _shoot_value, shoot_label, shoot_desc, _shoot_limit = shooting_options[setup_state["shoot_idx"]]
+
+            lines: list[str] = [
+                _setup_style("ALIEN ATTACK", fg="ansicyan"),
+                "",
+                _setup_style("Rules", fg="ansiwhite"),
+                _setup_style("- Clear waves of 8-column aliens.", fg="ansigray"),
+                _setup_style("- Move with ←/→, shoot with Space, pause with P, quit with Q.", fg="ansigray"),
+                _setup_style("- One bomb hit ends the run. Faster hits earn more points.", fg="ansigray"),
+                "",
+                _setup_style(
+                    f"Mode: {mode_label} ({mode_desc})",
+                    fg="ansiyellow" if stage_mode else "ansiwhite",
+                ),
+                _setup_style(
+                    f"Difficulty: {diff_label} ({diff_desc})",
+                    fg="ansiyellow" if stage_difficulty else "ansiwhite",
+                ),
+                _setup_style(
+                    f"Shooting: {shoot_label} ({shoot_desc})",
+                    fg="ansiyellow" if stage_shooting else "ansiwhite",
+                ),
+                "",
+                _setup_style("Mode (ship size)", fg="ansicyan"),
+            ]
+            for idx, (_value, label, desc) in enumerate(mode_options):
+                selected = idx == setup_state["mode_idx"]
+                pointer = "*" if selected else " "
+                fg = "ansiblack" if (selected and stage_mode) else ("ansicyan" if selected else "ansigray")
+                bg = "ansiwhite" if (selected and stage_mode) else ""
+                lines.append(_setup_style(f"{pointer} {label:<8} {desc}", fg=fg, bg=bg))
+
+            lines.extend(["", _setup_style("Difficulty", fg="ansimagenta")])
+            for idx, (_value, label, desc) in enumerate(difficulty_options):
+                selected = idx == setup_state["diff_idx"]
+                pointer = "*" if selected else " "
+                fg = "ansiblack" if (selected and stage_difficulty) else ("ansimagenta" if selected else "ansigray")
+                bg = "ansiwhite" if (selected and stage_difficulty) else ""
+                lines.append(_setup_style(f"{pointer} {label:<8} {desc}", fg=fg, bg=bg))
+
+            lines.extend(["", _setup_style("Shooting", fg="ansigreen")])
+            for idx, (_value, label, desc, _cap) in enumerate(shooting_options):
+                selected = idx == setup_state["shoot_idx"]
+                pointer = "*" if selected else " "
+                fg = "ansiblack" if (selected and stage_shooting) else ("ansigreen" if selected else "ansigray")
+                bg = "ansiwhite" if (selected and stage_shooting) else ""
+                lines.append(_setup_style(f"{pointer} {label:<10} {desc}", fg=fg, bg=bg))
+
+            lines.append("")
+            if stage_mode:
+                lines.append(_setup_style("Use ↑/↓ to choose mode. Enter to continue.", fg="ansiyellow"))
+            elif stage_difficulty:
+                lines.append(_setup_style("Use ↑/↓ to choose difficulty. Enter to continue.", fg="ansiyellow"))
+            else:
+                lines.append(_setup_style("Use ↑/↓ to choose shooting cap. Enter to start game.", fg="ansiyellow"))
+            lines.append(_setup_style("Esc/Q to cancel.", fg="ansigray"))
+
+            markup = "\n".join(lines)
+            if no_color:
+                return re.sub(r"<[^>]+>", "", markup)
+            return PromptHTML(markup)
+
+        setup_control = FormattedTextControl(text=render_setup())
+        setup_window = Window(content=setup_control, wrap_lines=True, always_hide_cursor=True)
+        setup_kb = KeyBindings()
+
+        def refresh_setup() -> None:
+            setup_control.text = render_setup()
+
+        @setup_kb.add("up")
+        def _(_event):
+            if setup_state["stage"] == 0:
+                setup_state["mode_idx"] = (setup_state["mode_idx"] - 1) % len(mode_options)
+            elif setup_state["stage"] == 1:
+                setup_state["diff_idx"] = (setup_state["diff_idx"] - 1) % len(difficulty_options)
+            else:
+                setup_state["shoot_idx"] = (setup_state["shoot_idx"] - 1) % len(shooting_options)
+            refresh_setup()
+
+        @setup_kb.add("down")
+        def _(_event):
+            if setup_state["stage"] == 0:
+                setup_state["mode_idx"] = (setup_state["mode_idx"] + 1) % len(mode_options)
+            elif setup_state["stage"] == 1:
+                setup_state["diff_idx"] = (setup_state["diff_idx"] + 1) % len(difficulty_options)
+            else:
+                setup_state["shoot_idx"] = (setup_state["shoot_idx"] + 1) % len(shooting_options)
+            refresh_setup()
+
+        @setup_kb.add("left")
+        @setup_kb.add("right")
+        @setup_kb.add("tab")
+        def _(_event):
+            setup_state["stage"] = (setup_state["stage"] + 1) % 3
+            refresh_setup()
+
+        @setup_kb.add("enter")
+        def _(event):
+            if setup_state["stage"] < 2:
+                setup_state["stage"] += 1
+                refresh_setup()
+                return
+            event.app.exit(
+                result=(
+                    setup_state["mode_idx"],
+                    setup_state["diff_idx"],
+                    setup_state["shoot_idx"],
+                )
+            )
+
+        @setup_kb.add("q")
+        @setup_kb.add("escape")
+        def _(event):
+            event.app.exit(result=None)
+
+        @setup_kb.add("c-c")
+        def _(event):
+            event.app.exit(exception=KeyboardInterrupt())
+
+        setup_app = Application(
+            layout=Layout(HSplit([setup_window])),
+            key_bindings=setup_kb,
+            full_screen=False,
+        )
+        try:
+            selected = await setup_app.run_async()
+        finally:
+            ensure_terminal_cursor_visible()
+        if selected is None:
+            return 0
+        initial_mode_idx, initial_diff_idx, initial_shoot_idx = selected
+        profile = _alien_attack_profile(
+            mode_options[initial_mode_idx][0],
+            difficulty_options[initial_diff_idx][0],
+        )
+        profile["max_bullets"] = shooting_options[initial_shoot_idx][3]
+    app = None
+    state = {
+        "profile": profile,
+        "phase": "intro",
+        "board_w": 80,
+        "board_h": 24,
+        "score": 0,
+        "lives": profile["lives"],
+        "level": 1,
+        "player_x": 40,
+        "aliens_alive": set(),
+        "alien_rows": 0,
+        "alien_cols": 0,
+        "alien_spacing": 5,
+        "alien_row_spacing": 4,
+        "alien_sprite_w": 5,
+        "alien_sprite_h": 3,
+        "alien_anim_frame": 0,
+        "alien_offset_x": 0,
+        "alien_offset_y": 2,
+        "alien_dir": 1,
+        "alien_move_interval": profile["alien_move_interval"],
+        "bomb_interval": profile["bomb_interval"],
+        "next_alien_move": 0.0,
+        "next_bomb_drop": 0.0,
+        "bullets": [],
+        "bombs": [],
+        "shields": set(),
+        "too_small": False,
+        "message": "",
+        "intro_field": 0,
+        "intro_mode_idx": initial_mode_idx,
+        "intro_diff_idx": initial_diff_idx,
+        "shooting_cap": int(profile.get("max_bullets", 1)),
+    }
+
+    def _escape(text: str) -> str:
+        return html.escape(text)
+
+    def _style(text: str, fg: str = "", bg: str = "") -> str:
+        if no_color or not text:
+            return _escape(text)
+        style_parts = []
+        if fg:
+            style_parts.append(f"fg='{fg}'")
+        if bg:
+            style_parts.append(f"bg='{bg}'")
+        if not style_parts:
+            return _escape(text)
+        return f"<style {' '.join(style_parts)}>{_escape(text)}</style>"
+
+    def sync_board_size() -> None:
+        try:
+            if app is None:
+                raise RuntimeError("app not ready")
+            size = app.output.get_size()
+            columns = int(size.columns)
+            rows = int(size.rows)
+        except Exception:
+            columns = get_terminal_columns(default=100)
+            rows = 36
+        board_w = max(20, columns - 2)
+        board_h = max(8, rows - 6)
+        state["too_small"] = board_w < 54 or board_h < 20
+        if state["too_small"]:
+            state["board_w"] = board_w
+            state["board_h"] = board_h
+            return
+        if board_w == state["board_w"] and board_h == state["board_h"]:
+            return
+        state["board_w"] = board_w
+        state["board_h"] = board_h
+        ship_left, ship_right = _alien_ship_range(state["player_x"], profile["ship_sprite"])
+        shift = 0
+        if ship_left < 0:
+            shift = -ship_left
+        elif ship_right >= board_w:
+            shift = board_w - 1 - ship_right
+        state["player_x"] += shift
+        state["player_x"] = _alien_clamp(
+            state["player_x"],
+            len(profile["ship_sprite"]) // 2,
+            board_w - 1 - (len(profile["ship_sprite"]) // 2),
+        )
+        state["bullets"] = [b for b in state["bullets"] if 0 <= b["x"] < board_w and 0 <= b["y"] < board_h]
+        state["bombs"] = [b for b in state["bombs"] if 0 <= b["x"] < board_w and 0 <= b["y"] < board_h]
+        state["shields"] = {(x, y) for (x, y) in state["shields"] if 0 <= x < board_w and 0 <= y < board_h}
+        if state["phase"] == "running" and not state["aliens_alive"]:
+            _alien_spawn_wave(state)
+
+    def apply_intro_profile() -> None:
+        nonlocal profile
+        mode_value = mode_options[state["intro_mode_idx"]][0]
+        difficulty_value = difficulty_options[state["intro_diff_idx"]][0]
+        profile = _alien_attack_profile(mode_value, difficulty_value)
+        profile["max_bullets"] = int(state.get("shooting_cap", profile.get("max_bullets", 1)))
+        state["profile"] = profile
+        state["lives"] = profile["lives"]
+
+    def reset_game() -> None:
+        apply_intro_profile()
+        state["score"] = 0
+        state["level"] = 1
+        state["lives"] = profile["lives"]
+        state["message"] = ""
+        state["phase"] = "running"
+        sync_board_size()
+        state["player_x"] = state["board_w"] // 2
+        _alien_spawn_wave(state)
+
+    def new_level() -> None:
+        state["level"] += 1
+        state["message"] = f"Level {state['level']} — speed up!"
+        _alien_spawn_wave(state)
+
+    def draw_overlay(grid: list[list[str]], styles: list[list[str | None]], text: str, fg: str = "ansiyellow") -> None:
+        if not text:
+            return
+        y = max(0, state["board_h"] // 2)
+        x = max(0, (state["board_w"] - len(text)) // 2)
+        for idx, ch in enumerate(text):
+            cx = x + idx
+            if 0 <= cx < state["board_w"]:
+                grid[y][cx] = ch
+                styles[y][cx] = fg
+
+    def render() -> str | PromptHTML:
+        sync_board_size()
+        if state["phase"] == "intro":
+            selected_mode = mode_options[state["intro_mode_idx"]][1]
+            selected_difficulty = difficulty_options[state["intro_diff_idx"]][1]
+            active_mode = state["intro_field"] == 0
+            active_difficulty = state["intro_field"] == 1
+            intro_lines = [
+                _style("ALIEN ATTACK", fg="ansicyan"),
+                "",
+                _style(
+                    f"Mode: {selected_mode}    Difficulty: {selected_difficulty}",
+                    fg="ansiwhite",
+                ),
+                _style(
+                    f"{'▶' if active_mode else ' '} Mode: {selected_mode}",
+                    fg="ansiyellow" if active_mode else "ansigray",
+                ),
+                _style(
+                    f"{'▶' if active_difficulty else ' '} Difficulty: {selected_difficulty}",
+                    fg="ansiyellow" if active_difficulty else "ansigray",
+                ),
+                _style("Controls: ←/→ move, Space shoot, P pause, Q quit", fg="ansigray"),
+                _style("Intro: ↑/↓ choose field, ←/→ change value, Enter starts.", fg="ansigray"),
+                _style("8-column alien wave with classic side-to-side movement.", fg="ansigray"),
+                _style("One bomb hit ends the run. Hit aliens quickly for bonus points.", fg="ansigray"),
+                "",
+                _style("Press Enter to start.", fg="ansiyellow"),
+            ]
+            text_out = "\n".join(intro_lines)
+            return PromptHTML(text_out) if not no_color else "\n".join(
+                line.replace("<style fg='ansicyan'>", "").replace("</style>", "")
+                for line in intro_lines
+            )
+
+        if state["too_small"]:
+            msg = "Resize terminal to at least 54x20. Press Q to quit."
+            out = _style(msg, fg="ansired")
+            return PromptHTML(out) if not no_color else msg
+
+        board_w = state["board_w"]
+        board_h = state["board_h"]
+        grid = [[" " for _ in range(board_w)] for _ in range(board_h)]
+        styles: list[list[str | None]] = [[None for _ in range(board_w)] for _ in range(board_h)]
+
+        # Aliens
+        for row, col in state["aliens_alive"]:
+            x0 = state["alien_offset_x"] + col * state["alien_spacing"]
+            y0 = state["alien_offset_y"] + row * state["alien_row_spacing"]
+            for dy, line in enumerate(_alien_sprite_lines(row, state["alien_anim_frame"])):
+                yy = y0 + dy
+                if not (0 <= yy < board_h):
+                    continue
+                for dx, ch in enumerate(line):
+                    if ch == " ":
+                        continue
+                    xx = x0 + dx
+                    if 0 <= xx < board_w:
+                        grid[yy][xx] = ch
+                        styles[yy][xx] = "ansiwhite"
+
+        # Bullets
+        for bullet in state["bullets"]:
+            x, y = bullet["x"], bullet["y"]
+            if 0 <= x < board_w and 0 <= y < board_h:
+                grid[y][x] = "|"
+                styles[y][x] = "ansiyellow"
+
+        # Bombs
+        for bomb in state["bombs"]:
+            x, y = bomb["x"], bomb["y"]
+            if 0 <= x < board_w and 0 <= y < board_h:
+                grid[y][x] = "!"
+                styles[y][x] = "ansired"
+
+        # Shields (draw after projectiles so bunkers remain visible while intact)
+        for x, y in state["shields"]:
+            if 0 <= x < board_w and 0 <= y < board_h:
+                grid[y][x] = "#"
+                styles[y][x] = "ansibrightgreen"
+
+        # Player ship
+        ship_y = board_h - 1
+        for (x, y), ch in _alien_ship_cells(state["player_x"], profile["ship_art"], ship_y).items():
+            if 0 <= x < board_w and 0 <= y < board_h:
+                grid[y][x] = ch
+                styles[y][x] = "ansigreen"
+
+        if state["phase"] == "paused":
+            draw_overlay(grid, styles, "[ PAUSED ]", fg="ansiyellow")
+        elif state["phase"] == "game_over":
+            draw_overlay(grid, styles, "[ GAME OVER ] Press R to restart", fg="ansired")
+        elif state["phase"] == "victory":
+            draw_overlay(grid, styles, "[ YOU WIN ] Press R to restart", fg="ansigreen")
+        elif state["message"]:
+            draw_overlay(grid, styles, state["message"], fg="ansiyellow")
+
+        shots_label = "∞" if int(profile.get("max_bullets", 1)) >= 999 else str(int(profile.get("max_bullets", 1)))
+        hud = (
+            f"Score: {state['score']}  Lives: {state['lives']}  "
+            f"Level: {state['level']}  Mode: {profile['mode'].title()}  "
+            f"Difficulty: {profile['difficulty'].title()}  Shots: {shots_label}"
+        )
+        border = "+" + "-" * board_w + "+"
+        footer = "Controls: ←/→ move  Space shoot  P pause  Q quit"
+
+        lines = [_style(hud, fg="ansiwhite"), _style(border, fg="ansigray")]
+        for y in range(board_h):
+            rendered_cells = []
+            for x in range(board_w):
+                ch = grid[y][x]
+                st = styles[y][x]
+                rendered_cells.append(_style(ch, fg=st or ""))
+            lines.append(_style("|", fg="ansigray") + "".join(rendered_cells) + _style("|", fg="ansigray"))
+        lines.append(_style(border, fg="ansigray"))
+        lines.append(_style(footer, fg="ansigray"))
+
+        text_out = "\n".join(lines)
+        return PromptHTML(text_out) if not no_color else re.sub(r"<[^>]+>", "", text_out)
+
+    def update_running(now: float) -> None:
+        if state["phase"] != "running" or state["too_small"]:
+            return
+
+        board_w = state["board_w"]
+        board_h = state["board_h"]
+
+        # Move bullets up.
+        for bullet in state["bullets"]:
+            bullet["y"] -= 1
+        state["bullets"] = [b for b in state["bullets"] if b["y"] >= 0]
+
+        # Move bombs down.
+        for bomb in state["bombs"]:
+            bomb["y"] += 1
+        state["bombs"] = [b for b in state["bombs"] if b["y"] < board_h]
+
+        # Move alien formation.
+        if now >= state["next_alien_move"] and state["aliens_alive"]:
+            columns_alive = [col for (_row, col) in state["aliens_alive"]]
+            if columns_alive:
+                left_col = min(columns_alive)
+                right_col = max(columns_alive)
+                left_x = state["alien_offset_x"] + left_col * state["alien_spacing"]
+                right_x = (
+                    state["alien_offset_x"]
+                    + right_col * state["alien_spacing"]
+                    + state["alien_sprite_w"]
+                    - 1
+                )
+                next_left = left_x + state["alien_dir"]
+                next_right = right_x + state["alien_dir"]
+                if next_left < 0 or next_right >= board_w:
+                    state["alien_dir"] *= -1
+                    state["alien_offset_y"] += 1
+                    state["alien_move_interval"] = max(0.07, state["alien_move_interval"] * 0.985)
+                else:
+                    state["alien_offset_x"] += state["alien_dir"]
+            state["alien_anim_frame"] = 1 - int(state.get("alien_anim_frame", 0))
+            state["next_alien_move"] = now + state["alien_move_interval"]
+
+        # Bomb spawn.
+        if now >= state["next_bomb_drop"] and state["aliens_alive"]:
+            bottom_by_col: dict[int, int] = {}
+            for row, col in state["aliens_alive"]:
+                if col not in bottom_by_col or row > bottom_by_col[col]:
+                    bottom_by_col[col] = row
+            if state["profile"]["difficulty"] == "inferno":
+                for row, col in sorted(state["aliens_alive"]):
+                    x = state["alien_offset_x"] + col * state["alien_spacing"] + (state["alien_sprite_w"] // 2)
+                    y = state["alien_offset_y"] + row * state["alien_row_spacing"] + state["alien_sprite_h"]
+                    if 0 <= x < board_w and 0 <= y < board_h:
+                        state["bombs"].append({"x": x, "y": y})
+                state["next_bomb_drop"] = now + 1.0
+            else:
+                if bottom_by_col:
+                    col = random.choice(list(bottom_by_col.keys()))
+                    row = bottom_by_col[col]
+                    x = state["alien_offset_x"] + col * state["alien_spacing"] + (state["alien_sprite_w"] // 2)
+                    y = state["alien_offset_y"] + row * state["alien_row_spacing"] + state["alien_sprite_h"]
+                    if 0 <= x < board_w and 0 <= y < board_h:
+                        state["bombs"].append({"x": x, "y": y})
+                state["next_bomb_drop"] = now + random.uniform(0.12, state["bomb_interval"])
+
+        # Bullet collisions with aliens and bombs.
+        alien_pos = _alien_positions(state)
+        bombs_to_remove = set()
+        bullets_remaining = []
+        for bullet in state["bullets"]:
+            bpos = (bullet["x"], bullet["y"])
+            if bpos in alien_pos:
+                row, col = alien_pos[bpos]
+                state["aliens_alive"].discard((row, col))
+                state["score"] += _alien_score_for_hit(now - bullet["born"], state["level"])
+                continue
+            bomb_hit = False
+            for idx, bomb in enumerate(state["bombs"]):
+                if bomb["x"] == bullet["x"] and bomb["y"] == bullet["y"]:
+                    bombs_to_remove.add(idx)
+                    state["score"] += 20
+                    bomb_hit = True
+                    break
+            if bomb_hit:
+                continue
+            bullets_remaining.append(bullet)
+        state["bullets"] = bullets_remaining
+        if bombs_to_remove:
+            state["bombs"] = [b for idx, b in enumerate(state["bombs"]) if idx not in bombs_to_remove]
+
+        # Bombs collide with shields / ship.
+        ship_y = board_h - 1
+        ship_cells = set(_alien_ship_cells(state["player_x"], profile["ship_art"], ship_y).keys())
+        kept_bombs = []
+        for bomb in state["bombs"]:
+            pos = (bomb["x"], bomb["y"])
+            if pos in state["shields"]:
+                state["shields"].discard(pos)
+                continue
+            if pos in ship_cells:
+                state["lives"] = 0
+                state["phase"] = "game_over"
+                state["message"] = "Ship hit!"
+                state["bombs"] = kept_bombs
+                return
+            kept_bombs.append(bomb)
+        state["bombs"] = kept_bombs
+
+        # Aliens touching shields gradually break them.
+        alien_cells = set(_alien_positions(state).keys())
+        shield_hits = [pos for pos in state["shields"] if pos in alien_cells]
+        for pos in shield_hits:
+            state["shields"].discard(pos)
+
+        # Lose when aliens reach ship line.
+        if alien_cells:
+            lowest_alien = max(y for (_x, y) in alien_cells)
+            if lowest_alien >= ship_y - 1:
+                state["phase"] = "game_over"
+                state["message"] = "Aliens reached the base!"
+                return
+
+        if state["lives"] <= 0:
+            state["phase"] = "game_over"
+            state["message"] = "No lives left."
+            return
+
+        if not state["aliens_alive"]:
+            if state["level"] >= 9:
+                state["phase"] = "victory"
+                state["message"] = "All waves cleared!"
+                return
+            new_level()
+
+    # Keep render as a callable and invalidate proactively to avoid blank first-frame
+    # behavior in terminals that defer paint until the first refresh event.
+    control = FormattedTextControl(text=render)
+    window = Window(content=control, wrap_lines=False, always_hide_cursor=True)
+    kb = KeyBindings()
+
+    @kb.add("up")
+    def _(event):
+        if state["phase"] != "intro":
+            return
+        state["intro_field"] = (state["intro_field"] - 1) % 2
+        event.app.invalidate()
+
+    @kb.add("down")
+    def _(event):
+        if state["phase"] != "intro":
+            return
+        state["intro_field"] = (state["intro_field"] + 1) % 2
+        event.app.invalidate()
+
+    @kb.add("left")
+    def _(event):
+        if state["phase"] == "intro":
+            if state["intro_field"] == 0:
+                state["intro_mode_idx"] = (state["intro_mode_idx"] - 1) % len(mode_options)
+            else:
+                state["intro_diff_idx"] = (state["intro_diff_idx"] - 1) % len(difficulty_options)
+            apply_intro_profile()
+            event.app.invalidate()
+            return
+        if state["phase"] != "running" or state["too_small"]:
+            return
+        state["player_x"] -= 1
+        state["player_x"] = _alien_clamp(
+            state["player_x"],
+            len(profile["ship_sprite"]) // 2,
+            state["board_w"] - 1 - (len(profile["ship_sprite"]) // 2),
+        )
+        event.app.invalidate()
+
+    @kb.add("right")
+    def _(event):
+        if state["phase"] == "intro":
+            if state["intro_field"] == 0:
+                state["intro_mode_idx"] = (state["intro_mode_idx"] + 1) % len(mode_options)
+            else:
+                state["intro_diff_idx"] = (state["intro_diff_idx"] + 1) % len(difficulty_options)
+            apply_intro_profile()
+            event.app.invalidate()
+            return
+        if state["phase"] != "running" or state["too_small"]:
+            return
+        state["player_x"] += 1
+        state["player_x"] = _alien_clamp(
+            state["player_x"],
+            len(profile["ship_sprite"]) // 2,
+            state["board_w"] - 1 - (len(profile["ship_sprite"]) // 2),
+        )
+        event.app.invalidate()
+
+    @kb.add("space")
+    def _(event):
+        if state["phase"] != "running" or state["too_small"]:
+            return
+        if len(state["bullets"]) >= profile["max_bullets"]:
+            return
+        ship_y = state["board_h"] - 1
+        shot_y = ship_y - len(profile["ship_art"])
+        state["bullets"].append(
+            {"x": state["player_x"], "y": shot_y, "born": time.monotonic()}
+        )
+        event.app.invalidate()
+
+    @kb.add("p")
+    def _(event):
+        if state["phase"] == "running":
+            state["phase"] = "paused"
+        elif state["phase"] == "paused":
+            state["phase"] = "running"
+            now = time.monotonic()
+            state["next_alien_move"] = now + max(0.05, state["alien_move_interval"] / 2)
+            state["next_bomb_drop"] = now + max(0.08, state["bomb_interval"] / 2)
+        event.app.invalidate()
+
+    @kb.add("enter")
+    def _(event):
+        if state["phase"] == "intro":
+            reset_game()
+        elif state["phase"] in {"game_over", "victory"}:
+            reset_game()
+        event.app.invalidate()
+
+    @kb.add("r")
+    def _(event):
+        if state["phase"] in {"game_over", "victory"}:
+            reset_game()
+            event.app.invalidate()
+
+    @kb.add("q")
+    @kb.add("escape")
+    def _(event):
+        event.app.exit(result=0)
+
+    @kb.add("c-c")
+    def _(event):
+        event.app.exit(exception=KeyboardInterrupt())
+
+    app = Application(
+        layout=Layout(HSplit([window])),
+        key_bindings=kb,
+        full_screen=True,
+        erase_when_done=True,
+        refresh_interval=1 / 30,
+    )
+
+    def ensure_first_frame() -> None:
+        apply_intro_profile()
+        app.invalidate()
+
+    app.pre_run_callables.append(ensure_first_frame)
+
+    async def game_loop() -> None:
+        while True:
+            await asyncio.sleep(1 / 30)
+            now = time.monotonic()
+            update_running(now)
+            app.invalidate()
+
+    loop_task = asyncio.create_task(game_loop())
+    try:
+        reset_game()
+        start_clean_screen()
+        sync_board_size()
+        state["player_x"] = state["board_w"] // 2
+        ensure_first_frame()
+        await app.run_async()
+    finally:
+        ensure_terminal_cursor_visible()
+        loop_task.cancel()
+        try:
+            await loop_task
+        except asyncio.CancelledError:
+            pass
+    return 0
+
+
+def run_alien_attack_command(args: argparse.Namespace) -> int:
+    no_color = is_no_color_requested(args.no_color)
+    return run_coroutine_sync(
+        _run_alien_attack(
+            mode=str(args.mode or "single"),
+            difficulty=str(args.difficulty or "normal"),
+            no_color=no_color,
+        )
+    )
+
+
 def save_attempt(
     quiz_title: str,
     score: int,
@@ -2575,6 +3994,52 @@ def save_essay_attempt(quiz_title: str, payload: dict) -> Path:
         lines.append(f"- Missing: {item}")
     for item in payload.get("suggestions", []):
         lines.append(f"- Suggestion: {item}")
+
+    (attempt_dir / "answers.txt").write_text("\n".join(lines), encoding="utf-8")
+    return attempt_dir
+
+
+def save_debug_attempt(
+    quiz_title: str,
+    score: int,
+    total_score_possible: int,
+    answers: list[dict],
+) -> Path:
+    attempt_dir = next_attempt_dir(quiz_title)
+    payload = {
+        "mode": "debug",
+        "quiz_title": quiz_title,
+        "score": score,
+        "score_total": total_score_possible,
+        "total_questions": len(answers),
+        "answers": answers,
+    }
+
+    (attempt_dir / "answers.json").write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    lines = [
+        f"Quiz: {quiz_title}",
+        f"Score: {score}/{total_score_possible}",
+        "",
+    ]
+
+    for item in answers:
+        lines.extend(
+            [
+                item["question_title"],
+                item["question_text"],
+                f"Result: {'Perfect' if item['is_perfect'] else 'Partial/Wrong'}",
+                f"Points: {item['question_points']}/{item['question_max_points']}",
+                f"Hint used: {'yes' if item['used_hint'] else 'no'}",
+                f"Changed lines expected: {', '.join(str(n) for n in item['changed_lines']) or '-'}",
+                "Submitted fix:",
+                item["student_code"] or "-",
+                "",
+            ]
+        )
 
     (attempt_dir / "answers.txt").write_text("\n".join(lines), encoding="utf-8")
     return attempt_dir
@@ -3176,6 +4641,169 @@ def collect_essay_answer_via_editor(question_title: str, question_text: str = ""
         temp_path.unlink(missing_ok=True)
 
 
+def collect_essay_answer_inline(
+    question_title: str,
+    question_text: str = "",
+    instructions: str = "",
+    hint_text: str = "",
+) -> str:
+    """Collect a short essay directly in the terminal for the vNext prototype."""
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        try:
+            return collect_essay_answer_inline_box(
+                question_title,
+                question_text,
+                instructions=instructions,
+                hint_text=hint_text,
+            )
+        except ModuleNotFoundError:
+            pass
+
+    print("")
+    print(LOGO)
+    print(question_title)
+    if question_text:
+        print(question_text)
+    if instructions:
+        print("")
+        print(instructions)
+    if hint_text:
+        print("")
+        print(hint_text)
+    print("")
+    print("Type your answer below.")
+    print("Write 4-8 lines. Type /end on a new line when finished.")
+    print("")
+    lines: list[str] = []
+    while True:
+        line = prompt_input("> ")
+        if line.strip().lower() == "/end":
+            break
+        lines.append(line)
+
+    answer = "\n".join(lines).strip()
+    if not answer:
+        raise RuntimeError("No essay answer was provided. Type your answer before /end.")
+    return answer
+
+
+def _clean_inline_essay_answer(raw_answer: str) -> str:
+    lines = []
+    for line in raw_answer.splitlines():
+        if line.strip().lower() == "/end":
+            break
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def _inline_essay_answer_height(answer_text: str, min_lines: int = 4, max_lines: int = 6) -> int:
+    """Return the visible answer-box height for the inline essay prototype."""
+    line_count = (answer_text or "").count("\n") + 1
+    return min(max_lines, max(min_lines, line_count))
+
+
+def collect_essay_answer_inline_box(
+    question_title: str,
+    question_text: str = "",
+    instructions: str = "",
+    hint_text: str = "",
+) -> str:
+    try:
+        from prompt_toolkit import Application
+        from prompt_toolkit.formatted_text import HTML as PromptHTML
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.layout import HSplit, Layout, Window
+        from prompt_toolkit.layout.controls import FormattedTextControl
+        from prompt_toolkit.layout.dimension import Dimension
+        from prompt_toolkit.styles import Style
+        from prompt_toolkit.widgets import Frame, TextArea
+    except ModuleNotFoundError:
+        raise
+
+    title = html.escape(question_title.strip() or "Essay answer")
+    question = html.escape((question_text or "").strip())
+    instruction_text = html.escape((instructions or "").strip())
+    hint = html.escape((hint_text or "").strip())
+    heading_parts = [
+        f"<style fg='ansicyan'>{html.escape(LOGO.strip())}</style>",
+        f"<style fg='ansicyan'><b>{title}</b></style>",
+    ]
+    if question:
+        heading_parts.append(f"<style fg='ansiwhite'>{question}</style>")
+    if instruction_text:
+        heading_parts.append(f"<style fg='ansigray'>{instruction_text}</style>")
+    if hint:
+        heading_parts.append(f"<style fg='ansiyellow'>{hint}</style>")
+    heading_parts.append(
+        "<style fg='ansigray'>Type your answer below. Press Enter for a new line. "
+        "Type /end on its own line to finish.</style>"
+    )
+    heading = "\n\n".join(heading_parts)
+    heading_height = min(18, max(9, heading.count("\n") + 2))
+
+    answer_box = TextArea(
+        multiline=True,
+        prompt="› ",
+        height=_inline_essay_answer_height(""),
+        wrap_lines=True,
+    )
+    app = None
+
+    def resize_answer_box(_buffer=None):
+        answer_box.window.height = _inline_essay_answer_height(answer_box.text)
+        if app is not None:
+            app.invalidate()
+
+    answer_box.buffer.on_text_changed += resize_answer_box
+    kb = KeyBindings()
+
+    @kb.add("enter")
+    def _(event):
+        current_line = answer_box.buffer.document.current_line.strip().lower()
+        if current_line == "/end":
+            event.app.exit(result=answer_box.text)
+            return
+        answer_box.buffer.insert_text("\n")
+        resize_answer_box()
+
+    @kb.add("c-c")
+    def _(event):
+        event.app.exit(exception=KeyboardInterrupt())
+
+    root = HSplit(
+        [
+            Window(
+                FormattedTextControl(PromptHTML(heading)),
+                height=heading_height,
+                wrap_lines=True,
+            ),
+            Window(height=Dimension(weight=1)),
+            Frame(answer_box, title="Your answer"),
+            Window(
+                FormattedTextControl(
+                    PromptHTML("<style fg='ansigray'>/end finish • Ctrl+C cancel</style>")
+                ),
+                height=1,
+            ),
+        ]
+    )
+    style = Style.from_dict(
+        {
+            "frame.border": "ansiblue",
+            "frame.label": "ansicyan bold",
+            "textarea": "bg:#202331 #ffffff",
+        }
+    )
+    app = Application(layout=Layout(root, focused_element=answer_box), key_bindings=kb, style=style, full_screen=True)
+    try:
+        answer = _clean_inline_essay_answer(app.run() or "")
+    finally:
+        ensure_terminal_cursor_visible()
+    if not answer:
+        raise RuntimeError("No essay answer was provided. Type your answer before /end.")
+    return answer
+
+
 def evaluate_essay_with_loading(console, theme: dict, evaluator, *args, **kwargs):
     try:
         from rich.progress import BarColumn
@@ -3243,12 +4871,13 @@ def build_question_markup(
     no_color: bool = False,
     compact: bool = False,
     terminal_width: int | None = None,
+    ui: str = "classic",
 ) -> str:
     if imposter_marked is None:
         imposter_marked = set()
 
     ultra_compact = bool(terminal_width is not None and terminal_width < 70)
-    ascii_compact = compact and (_is_windows() or ultra_compact)
+    ascii_compact = no_color or (compact and (_is_windows() or ultra_compact))
     separator = " | " if ascii_compact else " • "
     if imposter_mode:
         instruction = (
@@ -3345,7 +4974,12 @@ def build_question_markup(
     for i, opt in enumerate(q["options"]):
         idx = i + 1
         pointer = "&gt;" if i == selected else " "
-        if is_multiple:
+        if ui == "next":
+            if is_multiple:
+                marker = "[x]" if idx in marked else "[ ]"
+            else:
+                marker = "(*)" if idx in marked else "( )"
+        elif is_multiple:
             if no_color or ascii_compact:
                 marker = "[x]" if idx in marked else "[ ]"
             else:
@@ -3356,11 +4990,22 @@ def build_question_markup(
             else:
                 marker = "◉" if idx in marked else "○"
         if imposter_mode:
-            imposter_marker = ("[x]" if idx in imposter_marked else "[ ]") if (no_color or ascii_compact) else ("✖" if idx in imposter_marked else "·")
+            if ui == "next":
+                if idx in imposter_marked:
+                    marker = "(x)"
+                imposter_marker = ""
+            else:
+                imposter_marker = ("[x]" if idx in imposter_marked else "[ ]") if (no_color or ascii_compact) else ("✖" if idx in imposter_marked else "·")
         else:
             imposter_marker = ""
+        selected_chip = ""
 
-        if idx in marked:
+        if ui == "next" and imposter_mode and idx in imposter_marked and idx not in marked:
+            style = (
+                f"fg='{theme.get('pt_imposter_fg', theme['pt_marked_fg'])}' "
+                f"bg='{theme.get('pt_imposter_bg', theme['pt_timer_danger'])}'"
+            )
+        elif idx in marked:
             style = f"fg='{theme['pt_marked_fg']}' bg='{theme['pt_marked_bg']}'"
         elif i == selected:
             if pulse:
@@ -3375,7 +5020,8 @@ def build_question_markup(
 
         if ultra_compact:
             option_plain = strip_prompt_toolkit_tags(render_inline_markdown_for_prompt_toolkit(opt))
-            prefix_plain = f"{'>' if i == selected else ' '} {idx}. {marker}{(' ' + imposter_marker) if imposter_mode else ''} "
+            chips_plain = " ".join(chip for chip in (selected_chip, imposter_marker) if chip)
+            prefix_plain = f"{'>' if i == selected else ' '} {idx}. {marker}{(' ' + chips_plain) if chips_plain else ''} "
             continuation_prefix_plain = " " * len(prefix_plain)
             max_option_width = max(18, (terminal_width or 70) - len(prefix_plain) - 1)
             wrapped_lines = wrap_and_truncate_text(option_plain, max_option_width, max_lines=2)
@@ -3391,14 +5037,18 @@ def build_question_markup(
                     lines.append(f"<style {style}>{html.escape(continuation_prefix_plain + extra)}</style>")
             continue
 
-        lines.append(
-            (
-                f"{'>' if i == selected else ' '} {idx}. {marker}{(' ' + imposter_marker) if imposter_mode else ''} "
+        chips = " ".join(chip for chip in (selected_chip, imposter_marker) if chip)
+        if no_color:
+            lines.append(
+                f"{'>' if i == selected else ' '} {idx}. {marker}{(' ' + chips) if chips else ''} "
                 f"{strip_prompt_toolkit_tags(render_inline_markdown_for_prompt_toolkit(opt))}"
             )
-            if no_color
-            else f"<style {style}>{pointer} {idx}. {html.escape(marker)}{(' ' + html.escape(imposter_marker)) if imposter_mode else ''} {render_inline_markdown_for_prompt_toolkit(opt)}</style>"
-        )
+        else:
+            chip_text = f" {html.escape(chips)}" if chips else ""
+            lines.append(
+                f"<style {style}>{pointer} {idx}. {html.escape(marker)}{chip_text} "
+                f"{render_inline_markdown_for_prompt_toolkit(opt)}</style>"
+            )
 
     lines.append("")
     lines.append("")
@@ -3414,6 +5064,8 @@ async def ask_question(
     no_color: bool = False,
     compact: bool = False,
     full_screen: bool = False,
+    ui: str = "classic",
+    show_feedback: bool = True,
 ):
     try:
         from prompt_toolkit import Application
@@ -3493,20 +5145,27 @@ async def ask_question(
             no_color=no_color,
             compact=current_compact,
             terminal_width=current_columns,
+            ui=ui,
         )
         if full_screen and submitted:
             grading = evaluate_submission(result["answer"], result["imposters"])
             status = question_status_label(grading)
             explanation = (q.get("explanation") or "").strip()
+            answer_labels = format_labels(q["options"], q["correct"]) or "None"
             if no_color:
                 markup += "\n" + status + "\n"
                 markup += f"\nQuestion points: {grading['question_points']}/{grading['question_max_points']}\n"
-                if imposter_mode:
-                    flagged_labels = format_labels(q["options"], result["imposters"]) or "None"
-                    expected_labels = format_labels(q["options"], expected_imposters) or "None"
-                    markup += f"\nImposters flagged: {flagged_labels}\nExpected imposters: {expected_labels}\n"
-                if explanation:
-                    markup += f"\nExplanation\n{explanation}\n"
+                if show_feedback:
+                    markup += f"\nAnswer: {answer_labels}\n"
+                    if imposter_mode:
+                        _, imposter_labels = format_imposter_feedback(
+                            q["options"],
+                            q["correct"],
+                            expected_imposters,
+                        )
+                        markup += f"Imposter: {imposter_labels}\n"
+                    if explanation:
+                        markup += f"\nExplanation\n{explanation}\n"
                 markup += "\nPress Enter for the next question..."
                 return markup
 
@@ -3517,19 +5176,27 @@ async def ask_question(
                 f"Question points: {grading['question_points']}/{grading['question_max_points']}"
                 f"</style>\n"
             )
-            if imposter_mode:
-                flagged_labels = format_labels(q["options"], result["imposters"]) or "None"
-                expected_labels = format_labels(q["options"], expected_imposters) or "None"
+            if show_feedback:
                 markup += (
                     f"\n<style fg='{theme['pt_title']}'>"
-                    f"Imposters flagged: {html.escape(flagged_labels)}\n"
-                    f"Expected imposters: {html.escape(expected_labels)}"
+                    f"Answer: {html.escape(answer_labels)}"
                     f"</style>\n"
                 )
-            if explanation:
-                explanation_lines = [render_inline_markdown_for_prompt_toolkit(line) for line in explanation.splitlines()]
-                markup += "\n<style fg='{0}'><b>Explanation</b></style>\n".format(theme["pt_title"])
-                markup += "\n".join(explanation_lines) + "\n"
+                if imposter_mode:
+                    _, imposter_labels = format_imposter_feedback(
+                        q["options"],
+                        q["correct"],
+                        expected_imposters,
+                    )
+                    markup += (
+                        f"<style fg='{theme['pt_title']}'>"
+                        f"Imposter: {html.escape(imposter_labels)}"
+                        f"</style>\n"
+                    )
+                if explanation:
+                    explanation_lines = [render_inline_markdown_for_prompt_toolkit(line) for line in explanation.splitlines()]
+                    markup += "\n<style fg='{0}'><b>Explanation</b></style>\n".format(theme["pt_title"])
+                    markup += "\n".join(explanation_lines) + "\n"
             markup += f"\n<style fg='{theme['pt_instruction']}'>Press Enter for the next question...</style>"
         if no_color:
             return markup
@@ -3562,6 +5229,7 @@ async def ask_question(
             if not is_multiple:
                 marked.clear()
             marked.add(idx)
+            imposter_marked.discard(idx)
         control.text = render()
 
     @kb.add("x")
@@ -3573,6 +5241,7 @@ async def ask_question(
             imposter_marked.remove(idx)
         else:
             imposter_marked.add(idx)
+            marked.discard(idx)
         control.text = render()
 
     @kb.add("X")
@@ -3584,6 +5253,7 @@ async def ask_question(
             imposter_marked.remove(idx)
         else:
             imposter_marked.add(idx)
+            marked.discard(idx)
         control.text = render()
 
     @kb.add("enter")
@@ -3661,6 +5331,7 @@ async def ask_question(
     try:
         await app.run_async()
     finally:
+        ensure_terminal_cursor_visible()
         task.cancel()
         resize_task.cancel()
         try:
@@ -3721,6 +5392,13 @@ def format_labels(options: list[str], indexes: list[int] | None) -> str:
     return "; ".join(labels)
 
 
+def format_imposter_feedback(options: list[str], correct_indexes: list[int], imposter_indexes: list[int]) -> tuple[str, str]:
+    """Return concise expected answer/imposter labels for feedback screens."""
+    answer_labels = format_labels(options, correct_indexes) or "None"
+    imposter_labels = format_labels(options, imposter_indexes) or "None"
+    return answer_labels, imposter_labels
+
+
 def question_status_label(grading: dict) -> str:
     """Return user-facing per-question status text.
 
@@ -3743,7 +5421,582 @@ def question_status_style(theme: dict, status: str) -> str:
     return theme["danger"]
 
 
-def run(title, questions, theme_name: str = "auto", no_color: bool = False, full_screen: bool = False):
+def render_essay_feedback_next(console, theme: dict, grade: dict, feedback_heading: str) -> None:
+    try:
+        from rich.markdown import Markdown
+        from rich.panel import Panel
+        from rich.table import Table
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Running the quiz requires rich. Install dependencies from requirements.txt."
+        ) from exc
+
+    score = grade.get("score_percent")
+    score_text = "N/A" if score is None else f"{score:.2f}%"
+    score_table = Table.grid(expand=True)
+    score_table.add_column(ratio=1)
+    score_table.add_column(ratio=1)
+    score_table.add_column(ratio=1)
+    score_table.add_row(
+        f"[bold {theme['primary']}]Score[/bold {theme['primary']}]\n{score_text}",
+        f"[bold {theme['primary']}]Points[/bold {theme['primary']}]\n"
+        f"{grade.get('points_awarded', 0)}/{grade.get('total_points', 0)}",
+        f"[bold {theme['primary']}]Mode[/bold {theme['primary']}]\n"
+        f"{grade.get('scoring_mode', 'unknown')}",
+    )
+    console.print(Panel(score_table, border_style=theme["panel"]))
+
+    def bullets(items: list[str], fallback: str) -> str:
+        values = items or [fallback]
+        return "\n".join(f"- {item}" for item in values)
+
+    feedback_markdown = (
+        f"## {feedback_heading}\n\n"
+        "### Did well\n"
+        f"{bullets(grade.get('did_well', []), 'No strengths were reported.')}\n\n"
+        "### Missing\n"
+        f"{bullets(grade.get('missing', []), 'Nothing major is missing.')}\n\n"
+        "### Suggestions\n"
+        f"{bullets(grade.get('suggestions', []), 'No extra suggestions.')}"
+    )
+    console.print(Panel(Markdown(feedback_markdown, code_theme="monokai"), border_style=theme["panel"]))
+
+
+def _numbered_code_block(code: str) -> str:
+    lines = _normalize_code_lines(code)
+    if not lines:
+        return "1 |"
+    width = len(str(len(lines)))
+    return "\n".join(f"{idx:>{width}} | {line}" for idx, line in enumerate(lines, start=1))
+
+
+def _numbered_code_block_markup(
+    code: str,
+    highlight_lines: set[int] | None = None,
+    default_style: str = "fg='ansigray'",
+    highlight_style: str = "fg='ansiwhite' bg='#6b3a3a'",
+) -> str:
+    lines = _normalize_code_lines(code)
+    if not lines:
+        lines = [""]
+    highlights = highlight_lines or set()
+    width = len(str(len(lines)))
+    rows: list[str] = []
+    for idx, line in enumerate(lines, start=1):
+        raw = f"{idx:>{width}} | {line}"
+        style = highlight_style if idx in highlights else default_style
+        rows.append(f"<style {style}>{html.escape(raw)}</style>")
+    return "\n".join(rows)
+
+
+def _default_debug_hint(question: dict) -> str:
+    hint = (question.get("hint") or "").strip()
+    if hint:
+        return hint
+    changed = question.get("changed_lines") or []
+    if not changed:
+        return "Check punctuation, indentation, and variable names."
+    if len(changed) == 1:
+        return f"The error is on line {changed[0]}."
+    preview = ", ".join(str(line) for line in changed[:3])
+    if len(changed) > 3:
+        preview += ", ..."
+    return f"Focus on lines {preview}."
+
+
+def _render_debug_expected_lines(fixed_code: str, changed_lines: list[int]) -> str:
+    fixed_lines = _normalize_code_lines(fixed_code)
+    rows = []
+    for line_no in changed_lines:
+        value = fixed_lines[line_no - 1] if line_no - 1 < len(fixed_lines) else ""
+        rows.append(f"- Line {line_no}: {value}")
+    return "\n".join(rows) if rows else "- None"
+
+
+def collect_debug_fix_inline_box(
+    question: dict,
+    question_index: int,
+    total_questions: int,
+) -> tuple[str, bool]:
+    try:
+        from prompt_toolkit import Application
+        from prompt_toolkit.filters import Condition
+        from prompt_toolkit.formatted_text import HTML as PromptHTML
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.layout import HSplit, Layout, Window
+        from prompt_toolkit.layout.controls import FormattedTextControl
+        from prompt_toolkit.layout.processors import Processor
+        from prompt_toolkit.layout.processors import Transformation
+        from prompt_toolkit.lexers import PygmentsLexer
+        from prompt_toolkit.styles import Style
+        from prompt_toolkit.styles import merge_styles
+        from prompt_toolkit.styles.pygments import style_from_pygments_cls
+        from prompt_toolkit.widgets import Frame, TextArea
+        from pygments.lexers.python import PythonLexer
+        from pygments.styles import get_style_by_name
+    except ModuleNotFoundError:
+        raise
+
+    prompt_text = (question.get("prompt") or "").strip()
+    title = html.escape(question["title"])
+    safe_prompt = html.escape(prompt_text)
+    safe_logo = html.escape(LOGO.strip())
+    hint_text = html.escape(_default_debug_hint(question))
+
+    state = {
+        "editing": False,
+        "show_hint": False,
+        "hint_requested": False,
+        "action_index": 0,  # 0=proceed, 1=hint
+        "changed_lines_live": set(),
+        "actions_focus": True,
+    }
+
+    class ChangedLineHighlighter(Processor):
+        def apply_transformation(self, transformation_input):
+            line_no = transformation_input.lineno + 1
+            if line_no not in state["changed_lines_live"]:
+                return Transformation(transformation_input.fragments)
+
+            highlighted = []
+            for fragment in transformation_input.fragments:
+                if len(fragment) == 3:
+                    style_name, text, handler = fragment
+                    highlighted.append((f"{style_name} class:debug-changed-line".strip(), text, handler))
+                else:
+                    style_name, text = fragment
+                    highlighted.append((f"{style_name} class:debug-changed-line".strip(), text))
+            return Transformation(highlighted)
+
+    editor = TextArea(
+        text=question["broken_code"],
+        multiline=True,
+        line_numbers=True,
+        wrap_lines=False,
+        scrollbar=True,
+        read_only=Condition(lambda: not state["editing"]),
+        lexer=PygmentsLexer(PythonLexer),
+        input_processors=[ChangedLineHighlighter()],
+    )
+    app = None
+
+    def refresh():
+        if app is not None:
+            app.invalidate()
+
+    def refresh_changed_lines(_buffer=None):
+        state["changed_lines_live"] = set(
+            _debug_changed_line_numbers(question["broken_code"], editor.text)
+        )
+        refresh()
+
+    editor.buffer.on_text_changed += refresh_changed_lines
+    refresh_changed_lines()
+
+    def render_header():
+        edit_mode = "ON" if state["editing"] else "OFF"
+        header = (
+            f"<style fg='ansicyan'>{safe_logo}</style>\n\n"
+            f"<style fg='ansicyan'><b>Debug {question_index}/{total_questions}</b></style> "
+            f"<style fg='ansiwhite'><b>{title}</b></style>\n"
+            f"<style fg='ansiwhite'>{safe_prompt}</style>\n\n"
+            "<style fg='ansigray'>Press </style><style fg='ansiyellow'><b>D</b></style>"
+            "<style fg='ansigray'> to edit • </style>"
+            "<style fg='ansiyellow'><b>Esc</b></style><style fg='ansigray'> to lock editor and open actions • </style>"
+            "<style fg='ansiyellow'><b>←/→</b></style><style fg='ansigray'> or </style>"
+            "<style fg='ansiyellow'><b>↑/↓</b></style><style fg='ansigray'> choose action • </style>"
+            "<style fg='ansiyellow'><b>Enter</b></style><style fg='ansigray'> or </style>"
+            "<style fg='ansiyellow'><b>Space</b></style><style fg='ansigray'> activate\n"
+            f"Edit mode: {edit_mode}</style>"
+        )
+        if state["show_hint"]:
+            header += f"\n<style fg='ansiyellow'>Hint: {hint_text}</style>"
+        return PromptHTML(header)
+
+    def render_actions():
+        if state["editing"]:
+            return PromptHTML("<style fg='ansigray'>[editing] Press Esc to open actions</style>")
+        if state["actions_focus"]:
+            proceed_style = "fg='ansiblack' bg='ansicyan'" if state["action_index"] == 0 else "fg='ansiwhite'"
+            hint_style = "fg='ansiblack' bg='ansicyan'" if state["action_index"] == 1 else "fg='ansiwhite'"
+        else:
+            proceed_style = "fg='ansigray'"
+            hint_style = "fg='ansigray'"
+        hint_label = "Hide hint" if state["show_hint"] else "Show hint"
+        base = (
+            f"<style {proceed_style}><b> Proceed </b></style>    "
+            f"<style {hint_style}><b> {hint_label} </b></style>"
+        )
+        if state["actions_focus"]:
+            return PromptHTML(base)
+        return PromptHTML(base + "    <style fg='ansigray'>(Esc to focus actions)</style>")
+
+    header_control = FormattedTextControl(render_header)
+    action_control = FormattedTextControl(render_actions)
+
+    def render_broken_reference():
+        hint_lines = set(question.get("changed_lines", [])) if state["show_hint"] else set()
+        return PromptHTML(
+            _numbered_code_block_markup(
+                question["broken_code"],
+                highlight_lines=hint_lines,
+            )
+        )
+
+    broken_control = FormattedTextControl(render_broken_reference)
+
+    kb = KeyBindings()
+    not_editing = Condition(lambda: not state["editing"])
+    is_editing = Condition(lambda: state["editing"])
+    actions_focused = Condition(lambda: (not state["editing"]) and state["actions_focus"])
+
+    @kb.add("d", filter=not_editing)
+    def _(event):
+        state["editing"] = True
+        state["actions_focus"] = False
+        event.app.layout.focus(editor)
+        refresh()
+
+    @kb.add("escape", filter=is_editing)
+    def _(event):
+        state["editing"] = False
+        state["actions_focus"] = True
+        event.app.layout.focus(editor)
+        refresh()
+
+    @kb.add("escape", filter=not_editing)
+    def _(event):
+        state["actions_focus"] = True
+        event.app.layout.focus(editor)
+        refresh()
+
+    @kb.add("left", filter=is_editing)
+    def _(event):
+        document = editor.buffer.document
+        row = document.cursor_position_row
+        col = document.cursor_position_col
+        if col > 0:
+            editor.buffer.cursor_left(count=1)
+            refresh()
+            return
+        if row <= 0:
+            return
+        previous_line_len = len(document.lines[row - 1])
+        editor.buffer.cursor_position = document.translate_row_col_to_index(
+            row - 1,
+            previous_line_len,
+        )
+        refresh()
+
+    @kb.add("right", filter=is_editing)
+    def _(event):
+        document = editor.buffer.document
+        row = document.cursor_position_row
+        col = document.cursor_position_col
+        lines = document.lines
+        current_line_len = len(lines[row])
+        if col < current_line_len:
+            editor.buffer.cursor_right(count=1)
+            refresh()
+            return
+        if row >= len(lines) - 1:
+            return
+        editor.buffer.cursor_position = document.translate_row_col_to_index(
+            row + 1,
+            0,
+        )
+        refresh()
+
+    @kb.add("up", filter=actions_focused)
+    def _(event):
+        state["action_index"] = (state["action_index"] - 1) % 2
+        refresh()
+
+    @kb.add("down", filter=actions_focused)
+    def _(event):
+        state["action_index"] = (state["action_index"] + 1) % 2
+        refresh()
+
+    @kb.add("left", filter=actions_focused)
+    def _(event):
+        state["action_index"] = (state["action_index"] - 1) % 2
+        refresh()
+
+    @kb.add("right", filter=actions_focused)
+    def _(event):
+        state["action_index"] = (state["action_index"] + 1) % 2
+        refresh()
+
+    @kb.add("h", filter=not_editing)
+    def _(event):
+        state["show_hint"] = not state["show_hint"]
+        state["hint_requested"] = True
+        refresh()
+
+    def activate_selected_action(event):
+        if state["action_index"] == 0:
+            event.app.exit(result=editor.text)
+            return
+        state["show_hint"] = not state["show_hint"]
+        state["hint_requested"] = True
+        refresh()
+
+    @kb.add("space", filter=actions_focused)
+    def _(event):
+        activate_selected_action(event)
+
+    @kb.add("enter", filter=actions_focused)
+    def _(event):
+        activate_selected_action(event)
+
+    @kb.add("c-c")
+    def _(event):
+        event.app.exit(exception=KeyboardInterrupt())
+
+    style = Style.from_dict(
+        {
+            "frame.border": "ansiblue",
+            "frame.label": "ansicyan bold",
+            "textarea": "bg:#202331 #ffffff",
+            "debug-changed-line": "bg:#2f2a1f #ffd787",
+        }
+    )
+    syntax_style = style_from_pygments_cls(get_style_by_name("monokai"))
+    final_style = merge_styles([syntax_style, style])
+    layout = Layout(
+        HSplit(
+            [
+                Window(content=header_control, height=10, wrap_lines=True),
+                Frame(
+                    Window(
+                        content=broken_control,
+                        wrap_lines=False,
+                    ),
+                    title="Broken code (reference)",
+                ),
+                Frame(editor, title="Your fix (line numbers on)"),
+                Frame(Window(content=action_control, height=1), title="Actions"),
+                Window(
+                    FormattedTextControl(
+                        PromptHTML(
+                            "<style fg='ansigray'>D enters edit mode. Esc locks editor and opens actions. "
+                            "Use ←/→ or ↑/↓ to select Proceed/Show hint, then Enter/Space. "
+                            "Changed lines are highlighted.</style>"
+                        )
+                    ),
+                    height=1,
+                ),
+            ]
+        ),
+        focused_element=editor,
+    )
+    app = Application(layout=layout, key_bindings=kb, style=final_style, full_screen=True)
+    try:
+        answer = app.run()
+    finally:
+        ensure_terminal_cursor_visible()
+    return (answer or ""), bool(state["hint_requested"])
+
+
+def collect_debug_fix_fallback(question: dict) -> tuple[str, bool]:
+    print("")
+    print(LOGO)
+    print(question["title"])
+    print(question["prompt"])
+    print("")
+    print("Broken code:")
+    print(_numbered_code_block(question["broken_code"]))
+    print("")
+    hint_used = False
+    should_prompt_hint = sys.stdin.isatty()
+    if should_prompt_hint and ask_yes_no("Need a hint? [y/n]: "):
+        print(f"Hint: {_default_debug_hint(question)}")
+        hint_used = True
+    print("Type the fixed code below. Enter '/end' on a new line when finished.")
+    lines: list[str] = []
+    while True:
+        line = prompt_input("> ")
+        if line.strip().lower() == "/end":
+            break
+        lines.append(line)
+    if not lines:
+        raise RuntimeError("No debug answer was provided.")
+    return ("\n".join(lines), hint_used)
+
+
+def run_debug(
+    title: str,
+    questions: list[dict],
+    theme_name: str = "auto",
+    no_color: bool = False,
+    show_feedback: bool = True,
+    ui: str = "classic",
+):
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Running the quiz requires rich. Install dependencies from requirements.txt."
+        ) from exc
+
+    console = Console(no_color=no_color)
+    start_clean_screen(ui == "next")
+    console.print(LOGO)
+    theme = select_theme(theme_name)
+
+    intro = (
+        "[bold]Rules:[/bold]\n"
+        "- Press [bold]D[/bold] to unlock the editor and fix the code\n"
+        "- Line numbers are shown by default\n"
+        "- Press [bold]Esc[/bold] to open actions\n"
+        "- In actions, choose [bold]Proceed[/bold] or [bold]Show hint[/bold] with [bold]↑/↓[/bold] then [bold]Enter[/bold]\n"
+        "- Scoring: 1 point per fixed error line\n"
+        "- Press [bold]Ctrl+C[/bold] to exit at any time\n\n"
+        f"[bold {theme['accent']}]Press Enter to start debugging.[/bold {theme['accent']}]"
+    )
+    console.print(
+        Panel(
+            f"[bold {theme['primary']}]{title}[/bold {theme['primary']}]\n\n{intro}",
+            border_style=theme["panel"],
+        )
+    )
+    prompt_input()
+
+    total_points = 0
+    total_possible = 0
+    solved_count = 0
+    debug_answers: list[dict] = []
+
+    for i, question in enumerate(questions, start=1):
+        try:
+            if sys.stdin.isatty() and sys.stdout.isatty():
+                student_code, used_hint = collect_debug_fix_inline_box(
+                    question,
+                    question_index=i,
+                    total_questions=len(questions),
+                )
+            else:
+                student_code, used_hint = collect_debug_fix_fallback(question)
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "Interactive debug mode requires prompt_toolkit. Install dependencies from requirements.txt."
+            ) from exc
+
+        grading = _score_debug_submission(
+            question["broken_code"],
+            question["fixed_code"],
+            student_code,
+        )
+        total_points += grading["question_points"]
+        total_possible += grading["question_max_points"]
+        if grading["is_perfect"]:
+            solved_count += 1
+        question_text = (question.get("question_text") or question.get("prompt") or "").strip()
+        debug_answers.append(
+            {
+                "question_title": question["title"],
+                "question_text": question_text,
+                "broken_code": question["broken_code"],
+                "fixed_code": question["fixed_code"],
+                "student_code": student_code,
+                "changed_lines": grading["changed_lines"],
+                "question_points": grading["question_points"],
+                "question_max_points": grading["question_max_points"],
+                "is_perfect": grading["is_perfect"],
+                "used_hint": used_hint,
+            }
+        )
+
+        if grading["is_perfect"]:
+            status = "Correct"
+            status_style = theme["success"]
+        elif grading["question_points"] > 0:
+            status = "Partially Correct"
+            status_style = theme["accent"]
+        else:
+            status = "Wrong"
+            status_style = theme["danger"]
+
+        summary_lines = [
+            f"[{status_style}]{status}[/{status_style}]",
+            f"Question points: [bold]{grading['question_points']}/{grading['question_max_points']}[/bold]",
+        ]
+        if used_hint:
+            summary_lines.append(f"[{theme['secondary']}]Hint used[/]")
+        console.print(Panel("\n".join(summary_lines), border_style=theme["panel"]))
+
+        if show_feedback:
+            expected_lines = _render_debug_expected_lines(
+                question["fixed_code"],
+                grading["changed_lines"],
+            )
+            feedback_lines = [
+                f"[bold {theme['secondary']}]Correct lines[/bold {theme['secondary']}]:",
+                expected_lines,
+            ]
+            explanation = (question.get("explanation") or "").strip()
+            if explanation:
+                feedback_lines.append("")
+                feedback_lines.append(f"[bold {theme['secondary']}]Explanation[/bold {theme['secondary']}]:")
+                feedback_lines.append(explanation)
+            console.print(Panel("\n".join(feedback_lines), border_style=theme["panel"]))
+
+            if not grading["is_perfect"]:
+                console.print(
+                    Panel(
+                        _numbered_code_block(question["fixed_code"]),
+                        title="[bold]Correct answer[/bold]",
+                        border_style=theme["accent"],
+                    )
+                )
+
+        if i < len(questions):
+            prompt_input("Press Enter for the next debug question...")
+
+    percentage = (total_points / total_possible) * 100 if total_possible else 0.0
+    console.print(
+        Panel(
+            f"[bold {theme['primary']}]Debug Summary[/bold {theme['primary']}]\n\n"
+            f"Score: [bold]{total_points}/{total_possible}[/bold]\n"
+            f"Percentage: [bold]{percentage:.1f}%[/bold]\n"
+            f"Perfect fixes: [bold]{solved_count}/{len(questions)}[/bold]",
+            border_style=theme["panel"],
+        )
+    )
+
+    if ask_to_save_answers():
+        try:
+            attempt_dir = save_debug_attempt(
+                title,
+                total_points,
+                total_possible,
+                debug_answers,
+            )
+            console.print(
+                Panel(
+                    f"[bold {theme['success']}]Answers saved successfully.[/bold {theme['success']}]\n{attempt_dir}",
+                    border_style=theme["success"],
+                )
+            )
+        except OSError as exc:
+            console.print(
+                Panel(
+                    f"[bold {theme['danger']}]Could not save answers:[/bold {theme['danger']}]\n{exc}",
+                    border_style=theme["danger"],
+                )
+            )
+
+
+def run(
+    title,
+    questions,
+    theme_name: str = "auto",
+    no_color: bool = False,
+    full_screen: bool = False,
+    ui: str = "classic",
+    show_feedback: bool = True,
+):
     try:
         from rich.console import Console
         from rich.markdown import Markdown
@@ -3754,6 +6007,7 @@ def run(title, questions, theme_name: str = "auto", no_color: bool = False, full
         ) from exc
 
     console = Console(no_color=no_color)
+    start_clean_screen(ui == "next")
     console.print(LOGO)
 
     theme = select_theme(theme_name)
@@ -3829,6 +6083,8 @@ def run(title, questions, theme_name: str = "auto", no_color: bool = False, full
                     no_color=no_color,
                     compact=False,
                     full_screen=full_screen,
+                    ui=ui,
+                    show_feedback=show_feedback,
                 )
             )
 
@@ -3836,6 +6092,11 @@ def run(title, questions, theme_name: str = "auto", no_color: bool = False, full
             correct_labels = format_labels(q["options"], q["correct"])
             selected_imposter_labels = format_labels(q["options"], imposter_ans)
             expected_imposter_labels = format_labels(q["options"], q.get("imposters", []))
+            expected_answer_labels, expected_imposter_feedback_labels = format_imposter_feedback(
+                q["options"],
+                q["correct"],
+                q.get("imposters", []),
+            )
             points_earned += grading["question_points"]
             total_points_possible += grading["question_max_points"]
             if grading["answer_correct"]:
@@ -3853,17 +6114,18 @@ def run(title, questions, theme_name: str = "auto", no_color: bool = False, full
                     f"{grading['question_points']}/{grading['question_max_points']}"
                 )
 
-            if q.get("imposters") and not full_screen:
+            if show_feedback and not full_screen:
                 console.print(
-                    f"[{theme['secondary']}]Imposters flagged:[/{theme['secondary']}] "
-                    f"{selected_imposter_labels or 'None'}"
+                    f"[{theme['secondary']}]Answer:[/{theme['secondary']}] "
+                    f"{expected_answer_labels}"
                 )
-                console.print(
-                    f"[{theme['secondary']}]Expected imposters:[/{theme['secondary']}] "
-                    f"{expected_imposter_labels or 'None'}"
-                )
+                if q.get("imposters"):
+                    console.print(
+                        f"[{theme['secondary']}]Imposter:[/{theme['secondary']}] "
+                        f"{expected_imposter_feedback_labels}"
+                    )
 
-            if not full_screen and q.get("explanation"):
+            if show_feedback and not full_screen and q.get("explanation"):
                 console.print(
                     Panel(
                         Markdown(f"**Explanation**\n\n{q['explanation']}"),
@@ -3967,14 +6229,7 @@ def run(title, questions, theme_name: str = "auto", no_color: bool = False, full
                 )
 
     except KeyboardInterrupt:
-        console.print("\n\n")  # ← spacing BEFORE
-
-        console.print(
-            Panel(
-                f"[bold {theme['accent']}]Thank you for trying! 👋[/bold {theme['accent']}]",
-                border_style=theme["accent"],
-            )
-        )
+        render_exit_message("Quiz closed. Thanks for trying QuizMD.", no_color=no_color)
 
 
 def run_essay(
@@ -3984,6 +6239,7 @@ def run_essay(
     ai_provider: str = DEFAULT_AI_PROVIDER,
     ai_model: str = "",
     ai_timeout: int = 30,
+    ui: str = "classic",
 ):
     try:
         from rich.console import Console
@@ -4023,6 +6279,7 @@ def run_essay(
 
     theme = select_theme(theme_name)
     console = Console(no_color=no_color)
+    start_clean_screen(ui == "next")
     console.print(LOGO)
     title = essay["title"]
     question = essay["question"]
@@ -4032,7 +6289,11 @@ def run_essay(
         f"## Question\n\n{question}\n\n"
         f"## Instructions\n\n{instructions}\n\n"
         f"## Hint\n\n{hint_text}\n\n"
-        f"**⏎ Press Enter to open your editor and write your answer.**"
+        + (
+            "**Type your answer in the terminal. Write 4-8 lines, then type `/end`.**"
+            if ui == "next"
+            else "**⏎ Press Enter to open your editor and write your answer.**"
+        )
     )
 
     try:
@@ -4043,8 +6304,17 @@ def run_essay(
                 border_style=theme["panel"],
             )
         )
-        prompt_input()
-        student_answer = collect_essay_answer_via_editor(title, question)
+        if ui != "next":
+            prompt_input()
+        if ui == "next":
+            student_answer = collect_essay_answer_inline(
+                title,
+                question,
+                instructions=instructions,
+                hint_text=hint_text,
+            )
+        else:
+            student_answer = collect_essay_answer_via_editor(title, question)
 
         if no_color:
             console.print("✓ Answer captured.")
@@ -4191,18 +6461,23 @@ def run_essay(
         if instructor_name:
             feedback_heading = f"Feedback from {_format_possessive(instructor_name)} notes"
 
-        feedback_body = (
-            f"[bold {theme['primary']}]Score: {score_text}[/bold {theme['primary']}]\n\n"
-            + (f"[bold]{encouragement}[/bold]\n\n" if encouragement else "")
-            + f"[bold]{feedback_heading}[/bold]\n"
-            + "\n".join(feedback_lines)
-        )
-        console.print(
-            Panel(
-                feedback_body,
-                border_style=theme["panel"],
+        if ui == "next":
+            if encouragement:
+                console.print(f"[bold {theme['accent']}]{encouragement}[/bold {theme['accent']}]")
+            render_essay_feedback_next(console, theme, grade, feedback_heading)
+        else:
+            feedback_body = (
+                f"[bold {theme['primary']}]Score: {score_text}[/bold {theme['primary']}]\n\n"
+                + (f"[bold]{encouragement}[/bold]\n\n" if encouragement else "")
+                + f"[bold]{feedback_heading}[/bold]\n"
+                + "\n".join(feedback_lines)
             )
-        )
+            console.print(
+                Panel(
+                    feedback_body,
+                    border_style=theme["panel"],
+                )
+            )
 
         if ask_yes_no("Do you want to see the rubric? [y/n]: "):
             rubric_markdown = _rubric_markdown(essay["criteria"])
@@ -4244,13 +6519,7 @@ def run_essay(
                 )
             )
     except KeyboardInterrupt:
-        console.print("\n\n")
-        console.print(
-            Panel(
-                f"[bold {theme['accent']}]Thank you for trying! 👋[/bold {theme['accent']}]",
-                border_style=theme["accent"],
-            )
-        )
+        render_exit_message("Essay closed. Your answer was not submitted.", no_color=no_color)
 
 
 def main():
@@ -4264,6 +6533,35 @@ def main():
                 pass
 
     raw_args = sys.argv[1:]
+    if raw_args and raw_args[0] == "alien-attack":
+        alien_parser = argparse.ArgumentParser(description="Play Alien Attack in the terminal.")
+        alien_parser.add_argument(
+            "--mode",
+            choices=["single", "double", "triple"],
+            default="single",
+            help="Ship profile: single, double, or triple.",
+        )
+        alien_parser.add_argument(
+            "--difficulty",
+            choices=["normal", "hard", "inferno"],
+            default="normal",
+            help="Game difficulty: normal, hard, or inferno.",
+        )
+        alien_parser.add_argument(
+            "--no-color",
+            action="store_true",
+            help="Disable colors/styled symbols (also enabled with NO_COLOR).",
+        )
+        args = alien_parser.parse_args(raw_args[1:])
+        try:
+            return run_alien_attack_command(args)
+        except KeyboardInterrupt:
+            render_exit_message("Alien Attack closed. See you next time.", no_color=is_no_color_requested(args.no_color))
+            return
+        except RuntimeError as exc:
+            print(safe_for_stream(f"Runtime error: {exc}", sys.stderr), file=sys.stderr)
+            raise SystemExit(1) from exc
+
     if raw_args and raw_args[0] == "room":
         room_parser = argparse.ArgumentParser(description="Join or create multiplayer rooms.")
         mode_group = room_parser.add_mutually_exclusive_group(required=True)
@@ -4341,6 +6639,9 @@ def main():
         args = room_parser.parse_args(raw_args[1:])
         try:
             return run_room_command(args)
+        except KeyboardInterrupt:
+            render_exit_message("Left room. See you next time.", no_color=is_no_color_requested(args.no_color))
+            return
         except ValueError as exc:
             print(safe_for_stream(f"Validation failed: {exc}", sys.stderr), file=sys.stderr)
             raise SystemExit(1) from exc
@@ -4363,15 +6664,28 @@ def main():
             action="store_true",
             help="Overwrite existing starter files if they already exist.",
         )
+        init_parser.add_argument(
+            "--ui",
+            choices=UI_CHOICES,
+            default="next",
+            help="Use an experimental UI surface for init output.",
+        )
         args = init_parser.parse_args(raw_args[1:])
         try:
             created = init_starter_files(args.dir, force=args.force)
+        except KeyboardInterrupt:
+            render_exit_message("Init cancelled. No worries.", no_color=False)
+            return
         except OSError as exc:
             print(safe_for_stream(f"File error: {exc}", sys.stderr), file=sys.stderr)
             raise SystemExit(1) from exc
         except RuntimeError as exc:
             print(safe_for_stream(f"Runtime error: {exc}", sys.stderr), file=sys.stderr)
             raise SystemExit(1) from exc
+
+        if args.ui == "next":
+            render_init_next_screen(created, target_dir=args.dir)
+            return
 
         print("Created starter files:")
         for path in created:
@@ -4381,6 +6695,7 @@ def main():
         created_by_name = {path.name: path for path in created}
         hello_quiz = created_by_name.get("hello-quiz.md")
         hello_imposter = created_by_name.get("hello-imposter.md")
+        hello_debug = created_by_name.get("hello-debug.md")
         hello_essay = created_by_name.get("hello-essay.md")
         if hello_quiz:
             print(f"quizmd --validate {hello_quiz}")
@@ -4388,6 +6703,9 @@ def main():
         if hello_imposter:
             print(f"quizmd --validate {hello_imposter}")
             print(f"quizmd {hello_imposter}")
+        if hello_debug:
+            print(f"quizmd --validate {hello_debug}")
+            print(f"quizmd {hello_debug}")
         if hello_essay:
             print(f"quizmd --validate {hello_essay}")
         print("Set one AI key for essay mode (MCQ quizzes do not need keys):")
@@ -4433,6 +6751,18 @@ def main():
         help="Render each question in full-screen mode (one question view at a time).",
     )
     parser.add_argument(
+        "--hide-feedback",
+        "--hide",
+        action="store_true",
+        help="Hide expected answer/imposter and explanation after each question.",
+    )
+    parser.add_argument(
+        "--ui",
+        choices=UI_CHOICES,
+        default="next",
+        help="Use an experimental UI surface for quiz and essay interactions.",
+    )
+    parser.add_argument(
         "--ai-provider",
         default=DEFAULT_AI_PROVIDER,
         choices=["auto", "gemini", "openai", "anthropic"],
@@ -4458,8 +6788,13 @@ def main():
         mode = detect_quiz_mode(args.file)
         if mode == "essay":
             title, essay = parse_essay_markdown(args.file)
+        elif mode == "debug":
+            title, debug_questions = parse_debug_markdown(args.file)
         else:
             title, questions = parse_quiz_markdown(args.file)
+    except KeyboardInterrupt:
+        render_exit_message(no_color=no_color)
+        return
     except ValueError as exc:
         print(safe_for_stream(f"Validation failed: {exc}", sys.stderr), file=sys.stderr)
         raise SystemExit(1) from exc
@@ -4473,6 +6808,8 @@ def main():
                 f"Validation passed: Essay Question: {title} ({essay['total_points']} points)",
                 sys.stdout,
             ))
+        elif mode == "debug":
+            print(safe_for_stream(f"Validation passed: {title} ({len(debug_questions)} debug questions)", sys.stdout))
         else:
             print(safe_for_stream(f"Validation passed: {title} ({len(questions)} questions)", sys.stdout))
         return
@@ -4486,13 +6823,37 @@ def main():
                 ai_provider=args.ai_provider,
                 ai_model=args.ai_model,
                 ai_timeout=args.ai_timeout,
+                ui=args.ui,
+            )
+        elif mode == "debug":
+            run_debug(
+                title,
+                debug_questions,
+                theme_name=args.theme,
+                no_color=no_color,
+                show_feedback=not args.hide_feedback,
+                ui=args.ui,
             )
         else:
-            run(title, questions, theme_name=args.theme, no_color=no_color, full_screen=args.full_screen)
+            run(
+                title,
+                questions,
+                theme_name=args.theme,
+                no_color=no_color,
+                full_screen=args.full_screen,
+                ui=args.ui,
+                show_feedback=not args.hide_feedback,
+            )
+    except KeyboardInterrupt:
+        render_exit_message(no_color=no_color)
+        return
     except RuntimeError as exc:
         print(safe_for_stream(f"Runtime error: {exc}", sys.stderr), file=sys.stderr)
         raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        render_exit_message()
