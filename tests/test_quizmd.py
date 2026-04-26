@@ -62,6 +62,7 @@ from quizmd import (
     run_room_command,
     run_essay,
     run_coroutine_sync,
+    render_exit_message,
     render_init_next_screen,
     safe_for_stream,
     save_attempt,
@@ -403,6 +404,12 @@ class QuizMarkdownTests(unittest.TestCase):
         with patch("sys.stdout", stream):
             clear_terminal_screen()
         self.assertEqual(stream.getvalue(), "\033[2J\033[H")
+
+    def test_render_exit_message_prints_friendly_text(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            render_exit_message("Left cleanly.", no_color=True)
+        self.assertIn("Left cleanly.", buf.getvalue())
 
     def test_format_possessive_handles_names_ending_with_s(self):
         self.assertEqual(_format_possessive("Stelios"), "Stelios'")
@@ -2255,6 +2262,14 @@ class QuizMarkdownTests(unittest.TestCase):
             finally:
                 os.chdir(old_cwd)
 
+    def test_main_init_keyboard_interrupt_shows_friendly_exit(self):
+        with patch("sys.argv", ["quizmd.py", "init"]):
+            with patch("quizmd.init_starter_files", side_effect=KeyboardInterrupt):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    main()
+        self.assertIn("Init cancelled", buf.getvalue())
+
     def test_room_validate_name_rejects_empty_after_normalization(self):
         with self.assertRaisesRegex(RuntimeError, "Invalid room name"):
             _room_validate_name("!!!")
@@ -2407,6 +2422,14 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(mocked_create.call_args.kwargs["host_role"], "teacher")
         self.assertFalse(mocked_create.call_args.kwargs["token_required"])
+
+    def test_main_room_keyboard_interrupt_shows_friendly_exit(self):
+        with patch("sys.argv", ["quizmd.py", "room", "--create", "--no-color"]):
+            with patch("quizmd.run_room_command", side_effect=KeyboardInterrupt):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    main()
+        self.assertIn("Left room", buf.getvalue())
 
     def test_run_room_command_create_require_token_flag(self):
         args = argparse.Namespace(

@@ -1041,6 +1041,20 @@ def clear_terminal_screen() -> None:
         print("\033[2J\033[H", end="")
 
 
+def render_exit_message(message: str = "Exited QuizMD. See you next time.", no_color: bool = False) -> None:
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+    except ModuleNotFoundError:
+        print("")
+        print(message)
+        return
+
+    console = Console(no_color=no_color)
+    console.print("")
+    console.print(Panel(f"[bold cyan]{message}[/bold cyan]", border_style="cyan"))
+
+
 def render_init_next_screen(created: list[Path] | None = None, target_dir: str = ".") -> None:
     """Render the experimental vNext init welcome without changing file behavior."""
     try:
@@ -1810,6 +1824,8 @@ def _select_with_space(
     app = Application(layout=Layout(HSplit([window])), key_bindings=kb, full_screen=False)
     try:
         return app.run()
+    except KeyboardInterrupt:
+        raise
     except Exception:
         print(title)
         for idx, (label, _) in enumerate(options, start=1):
@@ -1928,6 +1944,7 @@ async def _run_room_waiting_loop(
             )
         except KeyboardInterrupt:
             await ws.send(json.dumps({"type": "leave_room", "payload": {}}))
+            render_exit_message("Left room. See you next time.", no_color=no_color)
             stop.set()
             return
         finally:
@@ -2281,6 +2298,13 @@ async def _run_room_waiting_loop(
                     continue
 
                 await ws.send(json.dumps({"type": "chat_message", "payload": {"text": text}}))
+        except KeyboardInterrupt:
+            try:
+                await ws.send(json.dumps({"type": "leave_room", "payload": {}}))
+            except Exception:
+                pass
+            render_exit_message("Left room. See you next time.", no_color=no_color)
+            stop.set()
         finally:
             stop.set()
             recv_task.cancel()
@@ -4211,14 +4235,7 @@ def run(
                 )
 
     except KeyboardInterrupt:
-        console.print("\n\n")  # ← spacing BEFORE
-
-        console.print(
-            Panel(
-                f"[bold {theme['accent']}]Thank you for trying! 👋[/bold {theme['accent']}]",
-                border_style=theme["accent"],
-            )
-        )
+        render_exit_message("Quiz closed. Thanks for trying QuizMD.", no_color=no_color)
 
 
 def run_essay(
@@ -4502,13 +4519,7 @@ def run_essay(
                 )
             )
     except KeyboardInterrupt:
-        console.print("\n\n")
-        console.print(
-            Panel(
-                f"[bold {theme['accent']}]Thank you for trying! 👋[/bold {theme['accent']}]",
-                border_style=theme["accent"],
-            )
-        )
+        render_exit_message("Essay closed. Your answer was not submitted.", no_color=no_color)
 
 
 def main():
@@ -4599,6 +4610,9 @@ def main():
         args = room_parser.parse_args(raw_args[1:])
         try:
             return run_room_command(args)
+        except KeyboardInterrupt:
+            render_exit_message("Left room. See you next time.", no_color=is_no_color_requested(args.no_color))
+            return
         except ValueError as exc:
             print(safe_for_stream(f"Validation failed: {exc}", sys.stderr), file=sys.stderr)
             raise SystemExit(1) from exc
@@ -4630,6 +4644,9 @@ def main():
         args = init_parser.parse_args(raw_args[1:])
         try:
             created = init_starter_files(args.dir, force=args.force)
+        except KeyboardInterrupt:
+            render_exit_message("Init cancelled. No worries.", no_color=False)
+            return
         except OSError as exc:
             print(safe_for_stream(f"File error: {exc}", sys.stderr), file=sys.stderr)
             raise SystemExit(1) from exc
@@ -4737,6 +4754,9 @@ def main():
             title, essay = parse_essay_markdown(args.file)
         else:
             title, questions = parse_quiz_markdown(args.file)
+    except KeyboardInterrupt:
+        render_exit_message(no_color=no_color)
+        return
     except ValueError as exc:
         print(safe_for_stream(f"Validation failed: {exc}", sys.stderr), file=sys.stderr)
         raise SystemExit(1) from exc
@@ -4774,10 +4794,16 @@ def main():
                 full_screen=args.full_screen,
                 ui=args.ui,
             )
+    except KeyboardInterrupt:
+        render_exit_message(no_color=no_color)
+        return
     except RuntimeError as exc:
         print(safe_for_stream(f"Runtime error: {exc}", sys.stderr), file=sys.stderr)
         raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        render_exit_message()
