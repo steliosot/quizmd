@@ -30,6 +30,7 @@ DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_ANTHROPIC_MODEL = "claude-3-5-haiku-latest"
+UI_CHOICES = ("classic", "next")
 AI_PROVIDER_PRIORITY = ("gemini", "openai", "anthropic")
 GEMINI_REQUESTS_PER_MINUTE = 15
 MAX_AI_REQUEST_BYTES = 48_000
@@ -1033,6 +1034,61 @@ def init_starter_files(target_dir: str = ".", force: bool = False) -> list[Path]
         out.write_text(content, encoding="utf-8")
         created.append(out)
     return created
+
+
+def render_init_next_screen(created: list[Path] | None = None, target_dir: str = ".") -> None:
+    """Render the experimental vNext init welcome without changing file behavior."""
+    try:
+        from rich import box
+        from rich.columns import Columns
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.table import Table
+    except ModuleNotFoundError:
+        print(f"QuizMD {__version__}")
+        print("Write quizzes in Markdown. Run them in the terminal.")
+        print(f"Folder: {Path(target_dir).expanduser().resolve()}")
+        return
+
+    console = Console()
+    folder = Path(target_dir).expanduser().resolve()
+    console.print(
+        Panel(
+            f"[bold cyan]QuizMD[/bold cyan] [dim]v{__version__}[/dim]\n"
+            "[green]Write quizzes in Markdown. Run them in the terminal.[/green]\n"
+            f"[dim]Folder:[/dim] {folder}",
+            border_style="bright_blue",
+            box=box.ROUNDED,
+        )
+    )
+
+    modes = Table.grid(expand=True)
+    modes.add_column(ratio=1)
+    modes.add_column(ratio=1)
+    modes.add_column(ratio=1)
+    modes.add_row(
+        "[bold]1 Classic[/bold]\n[dim]Fast MCQ practice[/dim]\n[green]No AI key[/green]",
+        "[bold]2 Imposter[/bold]\n[dim]Spot misleading answers[/dim]\n[green]No AI key[/green]",
+        "[bold]3 Essay[/bold]\n[dim]Rubric + AI feedback[/dim]\n[yellow]Needs AI key[/yellow]",
+    )
+    console.print(Panel(modes, title="[bold]Recommended quiz types[/bold]", border_style="cyan"))
+
+    sample_cards = [
+        Panel("[bold]hello-quiz.md[/bold]\nSingle + multiple choice", border_style="green"),
+        Panel("[bold]hello-imposter.md[/bold]\nCorrect answer + distractor spotting", border_style="magenta"),
+        Panel("[bold]hello-essay.md[/bold]\nShort answer with rubric feedback", border_style="yellow"),
+    ]
+    console.print(Columns(sample_cards, equal=True, expand=True))
+
+    if created is not None:
+        created_text = "\n".join(f"- {path}" for path in created)
+        console.print(
+            Panel(
+                created_text,
+                title="[bold green]Created starter files[/bold green]",
+                border_style="green",
+            )
+        )
 
 
 def prompt_input(prompt: str = "") -> str:
@@ -3176,6 +3232,25 @@ def collect_essay_answer_via_editor(question_title: str, question_text: str = ""
         temp_path.unlink(missing_ok=True)
 
 
+def collect_essay_answer_inline(question_title: str, question_text: str = "") -> str:
+    """Collect a short essay directly in the terminal for the vNext prototype."""
+    print("")
+    print("Type your answer below.")
+    print("Write 4-8 lines. Type /end on a new line when finished.")
+    print("")
+    lines: list[str] = []
+    while True:
+        line = prompt_input("> ")
+        if line.strip().lower() == "/end":
+            break
+        lines.append(line)
+
+    answer = "\n".join(lines).strip()
+    if not answer:
+        raise RuntimeError("No essay answer was provided. Type your answer before /end.")
+    return answer
+
+
 def evaluate_essay_with_loading(console, theme: dict, evaluator, *args, **kwargs):
     try:
         from rich.progress import BarColumn
@@ -3243,6 +3318,7 @@ def build_question_markup(
     no_color: bool = False,
     compact: bool = False,
     terminal_width: int | None = None,
+    ui: str = "classic",
 ) -> str:
     if imposter_marked is None:
         imposter_marked = set()
@@ -3345,7 +3421,12 @@ def build_question_markup(
     for i, opt in enumerate(q["options"]):
         idx = i + 1
         pointer = "&gt;" if i == selected else " "
-        if is_multiple:
+        if ui == "next":
+            if is_multiple:
+                marker = "[x]" if idx in marked else "[ ]"
+            else:
+                marker = "(*)" if idx in marked else "( )"
+        elif is_multiple:
             if no_color or ascii_compact:
                 marker = "[x]" if idx in marked else "[ ]"
             else:
@@ -3356,9 +3437,13 @@ def build_question_markup(
             else:
                 marker = "◉" if idx in marked else "○"
         if imposter_mode:
-            imposter_marker = ("[x]" if idx in imposter_marked else "[ ]") if (no_color or ascii_compact) else ("✖" if idx in imposter_marked else "·")
+            if ui == "next":
+                imposter_marker = "[imposter]" if idx in imposter_marked else ""
+            else:
+                imposter_marker = ("[x]" if idx in imposter_marked else "[ ]") if (no_color or ascii_compact) else ("✖" if idx in imposter_marked else "·")
         else:
             imposter_marker = ""
+        selected_chip = "[selected]" if (ui == "next" and idx in marked) else ""
 
         if idx in marked:
             style = f"fg='{theme['pt_marked_fg']}' bg='{theme['pt_marked_bg']}'"
@@ -3375,7 +3460,8 @@ def build_question_markup(
 
         if ultra_compact:
             option_plain = strip_prompt_toolkit_tags(render_inline_markdown_for_prompt_toolkit(opt))
-            prefix_plain = f"{'>' if i == selected else ' '} {idx}. {marker}{(' ' + imposter_marker) if imposter_mode else ''} "
+            chips_plain = " ".join(chip for chip in (selected_chip, imposter_marker) if chip)
+            prefix_plain = f"{'>' if i == selected else ' '} {idx}. {marker}{(' ' + chips_plain) if chips_plain else ''} "
             continuation_prefix_plain = " " * len(prefix_plain)
             max_option_width = max(18, (terminal_width or 70) - len(prefix_plain) - 1)
             wrapped_lines = wrap_and_truncate_text(option_plain, max_option_width, max_lines=2)
@@ -3391,14 +3477,18 @@ def build_question_markup(
                     lines.append(f"<style {style}>{html.escape(continuation_prefix_plain + extra)}</style>")
             continue
 
-        lines.append(
-            (
-                f"{'>' if i == selected else ' '} {idx}. {marker}{(' ' + imposter_marker) if imposter_mode else ''} "
+        chips = " ".join(chip for chip in (selected_chip, imposter_marker) if chip)
+        if no_color:
+            lines.append(
+                f"{'>' if i == selected else ' '} {idx}. {marker}{(' ' + chips) if chips else ''} "
                 f"{strip_prompt_toolkit_tags(render_inline_markdown_for_prompt_toolkit(opt))}"
             )
-            if no_color
-            else f"<style {style}>{pointer} {idx}. {html.escape(marker)}{(' ' + html.escape(imposter_marker)) if imposter_mode else ''} {render_inline_markdown_for_prompt_toolkit(opt)}</style>"
-        )
+        else:
+            chip_text = f" {html.escape(chips)}" if chips else ""
+            lines.append(
+                f"<style {style}>{pointer} {idx}. {html.escape(marker)}{chip_text} "
+                f"{render_inline_markdown_for_prompt_toolkit(opt)}</style>"
+            )
 
     lines.append("")
     lines.append("")
@@ -3414,6 +3504,7 @@ async def ask_question(
     no_color: bool = False,
     compact: bool = False,
     full_screen: bool = False,
+    ui: str = "classic",
 ):
     try:
         from prompt_toolkit import Application
@@ -3493,6 +3584,7 @@ async def ask_question(
             no_color=no_color,
             compact=current_compact,
             terminal_width=current_columns,
+            ui=ui,
         )
         if full_screen and submitted:
             grading = evaluate_submission(result["answer"], result["imposters"])
@@ -3743,7 +3835,55 @@ def question_status_style(theme: dict, status: str) -> str:
     return theme["danger"]
 
 
-def run(title, questions, theme_name: str = "auto", no_color: bool = False, full_screen: bool = False):
+def render_essay_feedback_next(console, theme: dict, grade: dict, feedback_heading: str) -> None:
+    try:
+        from rich.markdown import Markdown
+        from rich.panel import Panel
+        from rich.table import Table
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Running the quiz requires rich. Install dependencies from requirements.txt."
+        ) from exc
+
+    score = grade.get("score_percent")
+    score_text = "N/A" if score is None else f"{score:.2f}%"
+    score_table = Table.grid(expand=True)
+    score_table.add_column(ratio=1)
+    score_table.add_column(ratio=1)
+    score_table.add_column(ratio=1)
+    score_table.add_row(
+        f"[bold {theme['primary']}]Score[/bold {theme['primary']}]\n{score_text}",
+        f"[bold {theme['primary']}]Points[/bold {theme['primary']}]\n"
+        f"{grade.get('points_awarded', 0)}/{grade.get('total_points', 0)}",
+        f"[bold {theme['primary']}]Mode[/bold {theme['primary']}]\n"
+        f"{grade.get('scoring_mode', 'unknown')}",
+    )
+    console.print(Panel(score_table, border_style=theme["panel"]))
+
+    def bullets(items: list[str], fallback: str) -> str:
+        values = items or [fallback]
+        return "\n".join(f"- {item}" for item in values)
+
+    feedback_markdown = (
+        f"## {feedback_heading}\n\n"
+        "### Did well\n"
+        f"{bullets(grade.get('did_well', []), 'No strengths were reported.')}\n\n"
+        "### Missing\n"
+        f"{bullets(grade.get('missing', []), 'Nothing major is missing.')}\n\n"
+        "### Suggestions\n"
+        f"{bullets(grade.get('suggestions', []), 'No extra suggestions.')}"
+    )
+    console.print(Panel(Markdown(feedback_markdown, code_theme="monokai"), border_style=theme["panel"]))
+
+
+def run(
+    title,
+    questions,
+    theme_name: str = "auto",
+    no_color: bool = False,
+    full_screen: bool = False,
+    ui: str = "classic",
+):
     try:
         from rich.console import Console
         from rich.markdown import Markdown
@@ -3829,6 +3969,7 @@ def run(title, questions, theme_name: str = "auto", no_color: bool = False, full
                     no_color=no_color,
                     compact=False,
                     full_screen=full_screen,
+                    ui=ui,
                 )
             )
 
@@ -3984,6 +4125,7 @@ def run_essay(
     ai_provider: str = DEFAULT_AI_PROVIDER,
     ai_model: str = "",
     ai_timeout: int = 30,
+    ui: str = "classic",
 ):
     try:
         from rich.console import Console
@@ -4032,7 +4174,11 @@ def run_essay(
         f"## Question\n\n{question}\n\n"
         f"## Instructions\n\n{instructions}\n\n"
         f"## Hint\n\n{hint_text}\n\n"
-        f"**⏎ Press Enter to open your editor and write your answer.**"
+        + (
+            "**Type your answer in the terminal. Write 4-8 lines, then type `/end`.**"
+            if ui == "next"
+            else "**⏎ Press Enter to open your editor and write your answer.**"
+        )
     )
 
     try:
@@ -4043,8 +4189,12 @@ def run_essay(
                 border_style=theme["panel"],
             )
         )
-        prompt_input()
-        student_answer = collect_essay_answer_via_editor(title, question)
+        if ui != "next":
+            prompt_input()
+        if ui == "next":
+            student_answer = collect_essay_answer_inline(title, question)
+        else:
+            student_answer = collect_essay_answer_via_editor(title, question)
 
         if no_color:
             console.print("✓ Answer captured.")
@@ -4191,18 +4341,23 @@ def run_essay(
         if instructor_name:
             feedback_heading = f"Feedback from {_format_possessive(instructor_name)} notes"
 
-        feedback_body = (
-            f"[bold {theme['primary']}]Score: {score_text}[/bold {theme['primary']}]\n\n"
-            + (f"[bold]{encouragement}[/bold]\n\n" if encouragement else "")
-            + f"[bold]{feedback_heading}[/bold]\n"
-            + "\n".join(feedback_lines)
-        )
-        console.print(
-            Panel(
-                feedback_body,
-                border_style=theme["panel"],
+        if ui == "next":
+            if encouragement:
+                console.print(f"[bold {theme['accent']}]{encouragement}[/bold {theme['accent']}]")
+            render_essay_feedback_next(console, theme, grade, feedback_heading)
+        else:
+            feedback_body = (
+                f"[bold {theme['primary']}]Score: {score_text}[/bold {theme['primary']}]\n\n"
+                + (f"[bold]{encouragement}[/bold]\n\n" if encouragement else "")
+                + f"[bold]{feedback_heading}[/bold]\n"
+                + "\n".join(feedback_lines)
             )
-        )
+            console.print(
+                Panel(
+                    feedback_body,
+                    border_style=theme["panel"],
+                )
+            )
 
         if ask_yes_no("Do you want to see the rubric? [y/n]: "):
             rubric_markdown = _rubric_markdown(essay["criteria"])
@@ -4363,6 +4518,12 @@ def main():
             action="store_true",
             help="Overwrite existing starter files if they already exist.",
         )
+        init_parser.add_argument(
+            "--ui",
+            choices=UI_CHOICES,
+            default="classic",
+            help="Use an experimental UI surface for init output.",
+        )
         args = init_parser.parse_args(raw_args[1:])
         try:
             created = init_starter_files(args.dir, force=args.force)
@@ -4372,6 +4533,9 @@ def main():
         except RuntimeError as exc:
             print(safe_for_stream(f"Runtime error: {exc}", sys.stderr), file=sys.stderr)
             raise SystemExit(1) from exc
+
+        if args.ui == "next":
+            render_init_next_screen(created, target_dir=args.dir)
 
         print("Created starter files:")
         for path in created:
@@ -4433,6 +4597,12 @@ def main():
         help="Render each question in full-screen mode (one question view at a time).",
     )
     parser.add_argument(
+        "--ui",
+        choices=UI_CHOICES,
+        default="classic",
+        help="Use an experimental UI surface for quiz and essay interactions.",
+    )
+    parser.add_argument(
         "--ai-provider",
         default=DEFAULT_AI_PROVIDER,
         choices=["auto", "gemini", "openai", "anthropic"],
@@ -4486,9 +4656,17 @@ def main():
                 ai_provider=args.ai_provider,
                 ai_model=args.ai_model,
                 ai_timeout=args.ai_timeout,
+                ui=args.ui,
             )
         else:
-            run(title, questions, theme_name=args.theme, no_color=no_color, full_screen=args.full_screen)
+            run(
+                title,
+                questions,
+                theme_name=args.theme,
+                no_color=no_color,
+                full_screen=args.full_screen,
+                ui=args.ui,
+            )
     except RuntimeError as exc:
         print(safe_for_stream(f"Runtime error: {exc}", sys.stderr), file=sys.stderr)
         raise SystemExit(1) from exc

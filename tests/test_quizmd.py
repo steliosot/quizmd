@@ -39,6 +39,7 @@ from quizmd import (
     _score_encouragement,
     THEMES,
     build_question_markup,
+    collect_essay_answer_inline,
     collect_essay_answer_via_editor,
     detect_quiz_mode,
     evaluate_essay_deterministic_fallback,
@@ -376,6 +377,18 @@ class QuizMarkdownTests(unittest.TestCase):
                 answer = collect_essay_answer_via_editor("Title", "Why do we use .venv?")
         self.assertEqual(answer, "Line 1")
         self.assertIn("# Why do we use .venv?", seen_template["value"])
+
+    def test_collect_essay_answer_inline_stops_on_end(self):
+        with patch("builtins.print"):
+            with patch("quizmd.prompt_input", side_effect=["Line 1", "Line 2", "/end"]):
+                answer = collect_essay_answer_inline("Sample", "Question")
+        self.assertEqual(answer, "Line 1\nLine 2")
+
+    def test_collect_essay_answer_inline_rejects_empty_answer(self):
+        with patch("builtins.print"):
+            with patch("quizmd.prompt_input", side_effect=["", "   ", "/end"]):
+                with self.assertRaisesRegex(RuntimeError, "No essay answer"):
+                    collect_essay_answer_inline("Sample", "Question")
 
     def test_format_possessive_handles_names_ending_with_s(self):
         self.assertEqual(_format_possessive("Stelios"), "Stelios'")
@@ -774,6 +787,40 @@ class QuizMarkdownTests(unittest.TestCase):
                             with patch("quizmd.evaluate_essay_with_loading", return_value=fake_grade):
                                 with patch("rich.console.Console.print"):
                                     run_essay(essay, no_color=True)
+
+    def test_run_essay_next_ui_uses_inline_answer_collection(self):
+        essay = {
+            "title": "Sample",
+            "question": "Q",
+            "instructions": "I",
+            "criteria": [{"name": "A", "points": 1, "details": []}],
+            "total_points": 1,
+            "reference_answer": "R",
+            "ai_evaluation_rules": "Rules",
+            "output_format": "Format",
+        }
+        fake_grade = {
+            "points_awarded": 1,
+            "total_points": 1,
+            "score_percent": 100.0,
+            "did_well": ["A"],
+            "missing": [],
+            "suggestions": ["Great"],
+            "ai_unavailable": False,
+            "ai_error": "",
+            "ai_reason": "none",
+            "scoring_mode": "llm_rubric",
+            "scoring_confidence": "high",
+        }
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "k"}, clear=True):
+            with patch("quizmd.collect_essay_answer_inline", return_value="student answer") as mocked_inline:
+                with patch("quizmd.collect_essay_answer_via_editor") as mocked_editor:
+                    with patch("quizmd.ask_yes_no", return_value=False):
+                        with patch("quizmd.evaluate_essay_with_loading", return_value=fake_grade):
+                            with patch("rich.console.Console.print"):
+                                run_essay(essay, no_color=True, ui="next")
+        mocked_inline.assert_called_once()
+        mocked_editor.assert_not_called()
 
     def test_run_essay_openai_uses_default_model_and_key(self):
         essay = {
@@ -1821,6 +1868,56 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("Space/X/Enter", markup)
         self.assertIn("✖", markup)
 
+    def test_build_question_markup_next_ui_shows_selection_chips(self):
+        question = {
+            "title": "Question 1",
+            "question": "Pick one",
+            "options": ["A", "B", "C"],
+            "correct": [1],
+            "imposters": [2],
+            "type": "multiple",
+            "time_limit": 10,
+            "explanation": "",
+        }
+        markup = build_question_markup(
+            question,
+            THEMES["dark"],
+            selected=1,
+            marked={1, 3},
+            remaining=9,
+            imposter_marked={2},
+            is_multiple=True,
+            imposter_mode=True,
+            ui="next",
+        )
+        self.assertIn("[selected]", markup)
+        self.assertIn("[imposter]", markup)
+        self.assertIn("[x]", markup)
+
+    def test_build_question_markup_next_ui_no_color_is_ascii_safe(self):
+        question = {
+            "title": "Question 1",
+            "question": "Pick one",
+            "options": ["A", "B"],
+            "correct": [1],
+            "type": "single",
+            "time_limit": 10,
+            "explanation": "",
+        }
+        markup = build_question_markup(
+            question,
+            THEMES["dark"],
+            selected=0,
+            marked={1},
+            remaining=9,
+            is_multiple=False,
+            ui="next",
+            no_color=True,
+        )
+        self.assertIn("[selected]", markup)
+        self.assertNotIn("◉", markup)
+        self.assertNotIn("☑", markup)
+
     def test_build_question_markup_single_imposter_badge(self):
         question = {
             "title": "Question 1",
@@ -2005,6 +2102,25 @@ class QuizMarkdownTests(unittest.TestCase):
         finally:
             Path(quiz_path).unlink(missing_ok=True)
 
+    def test_main_next_ui_flag_routes_to_mcq_runner(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Question 1\n"
+            "Pick one\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1\n"
+            "Type: single\n"
+        )
+        try:
+            with patch("sys.argv", ["quizmd.py", "--ui", "next", quiz_path]):
+                with patch("quizmd.run") as mocked_run:
+                    main()
+            _, kwargs = mocked_run.call_args
+            self.assertEqual(kwargs.get("ui"), "next")
+        finally:
+            Path(quiz_path).unlink(missing_ok=True)
+
     def test_main_smoke_routes_to_essay_runner(self):
         essay_path = self.write_valid_essay()
         try:
@@ -2012,6 +2128,17 @@ class QuizMarkdownTests(unittest.TestCase):
                 with patch("quizmd.run_essay") as mocked_run_essay:
                     main()
             mocked_run_essay.assert_called_once()
+        finally:
+            Path(essay_path).unlink(missing_ok=True)
+
+    def test_main_next_ui_flag_routes_to_essay_runner(self):
+        essay_path = self.write_valid_essay()
+        try:
+            with patch("sys.argv", ["quizmd.py", "--ui", "next", essay_path]):
+                with patch("quizmd.run_essay") as mocked_run_essay:
+                    main()
+            _, kwargs = mocked_run_essay.call_args
+            self.assertEqual(kwargs.get("ui"), "next")
         finally:
             Path(essay_path).unlink(missing_ok=True)
 
@@ -2058,6 +2185,20 @@ class QuizMarkdownTests(unittest.TestCase):
                 self.assertTrue(Path("hello-quiz.md").exists())
                 self.assertTrue(Path("hello-imposter.md").exists())
                 self.assertTrue(Path("hello-essay.md").exists())
+            finally:
+                os.chdir(old_cwd)
+
+    def test_main_init_next_ui_creates_same_starter_files(self):
+        old_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                with patch("sys.argv", ["quizmd.py", "init", "--ui", "next"]):
+                    main()
+                self.assertTrue(Path("hello-quiz.md").exists())
+                self.assertTrue(Path("hello-imposter.md").exists())
+                self.assertTrue(Path("hello-essay.md").exists())
+                self.assertTrue(Path("QUIZ_GUIDE.md").exists())
             finally:
                 os.chdir(old_cwd)
 
