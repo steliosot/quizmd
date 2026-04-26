@@ -4536,6 +4536,10 @@ def main():
 
         if args.ui == "next":
             render_init_next_screen(created, target_dir=args.dir)
+            print("")
+            print("Try it out:")
+            print("quizmd hello-quiz.md")
+            return
 
         print("Created starter files:")
         for path in created:

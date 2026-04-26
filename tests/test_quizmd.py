@@ -2194,11 +2194,18 @@ class QuizMarkdownTests(unittest.TestCase):
             os.chdir(temp_dir)
             try:
                 with patch("sys.argv", ["quizmd.py", "init", "--ui", "next"]):
-                    main()
+                    buf = io.StringIO()
+                    with contextlib.redirect_stdout(buf):
+                        main()
+                out = buf.getvalue()
                 self.assertTrue(Path("hello-quiz.md").exists())
                 self.assertTrue(Path("hello-imposter.md").exists())
                 self.assertTrue(Path("hello-essay.md").exists())
                 self.assertTrue(Path("QUIZ_GUIDE.md").exists())
+                self.assertIn("Try it out:", out)
+                self.assertIn("quizmd hello-quiz.md", out)
+                self.assertNotIn("Next steps:", out)
+                self.assertNotIn("Room modes (online):", out)
             finally:
                 os.chdir(old_cwd)
 
