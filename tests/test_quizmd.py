@@ -24,6 +24,7 @@ from quizmd import (
     _alien_spawn_wave,
     _alien_sprite_dimensions,
     _alien_sprite_lines,
+    _alien_wave_shape,
     _format_possessive,
     format_imposter_feedback,
     _room_connected_players,
@@ -45,7 +46,10 @@ from quizmd import (
     _available_ai_providers_by_priority,
     _clean_inline_essay_answer,
     _debug_changed_line_numbers,
+    _debug_missing_key_hint,
+    _debug_model_for_provider,
     _apply_debug_ai_override,
+    _debug_evaluator_for_provider,
     _score_debug_submission,
     _env_key_for_provider,
     _evaluator_for_provider,
@@ -53,6 +57,7 @@ from quizmd import (
     _prompt_ui_palette,
     _inline_essay_answer_height,
     _numbered_code_block_markup,
+    _markdown_preserve_linebreaks,
     _redacted_ai_error,
     _reason_code_from_provider_exception,
     _select_debug_ai_candidates,
@@ -69,6 +74,9 @@ from quizmd import (
     evaluate_essay_with_anthropic,
     evaluate_essay_with_gemini,
     evaluate_essay_with_openai,
+    evaluate_debug_with_anthropic,
+    evaluate_debug_with_gemini,
+    evaluate_debug_with_openai,
     format_labels,
     question_status_label,
     init_starter_files,
@@ -494,6 +502,38 @@ class QuizMarkdownTests(unittest.TestCase):
                             with contextlib.redirect_stdout(buf):
                                 run_debug("Debug Quiz", questions, no_color=True)
         mocked_save_debug_attempt.assert_called_once()
+
+    def test_debug_model_for_provider_auto_only_uses_custom_model_first(self):
+        self.assertEqual(
+            _debug_model_for_provider("auto", "custom-model", "gemini", 0),
+            "custom-model",
+        )
+        self.assertEqual(
+            _debug_model_for_provider("auto", "custom-model", "openai", 1),
+            DEFAULT_OPENAI_MODEL,
+        )
+        self.assertEqual(
+            _debug_model_for_provider("openai", "custom-model", "openai", 0),
+            "custom-model",
+        )
+        self.assertEqual(
+            _debug_model_for_provider("openai", "", "openai", 0),
+            DEFAULT_OPENAI_MODEL,
+        )
+
+    def test_debug_missing_key_hint_helper(self):
+        self.assertEqual(
+            _debug_missing_key_hint("openai", ["openai"], []),
+            ("openai", "OPENAI_API_KEY"),
+        )
+        self.assertEqual(
+            _debug_missing_key_hint("auto", ["openai"], []),
+            ("", ""),
+        )
+        self.assertEqual(
+            _debug_missing_key_hint("openai", ["openai"], ["openai (OPENAI_API_KEY)"]),
+            ("", ""),
+        )
 
     def test_parse_essay_keeps_inline_code_and_code_fences(self):
         essay_path = self.write_quiz(
@@ -998,6 +1038,9 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(_default_model_for_provider("anthropic"), DEFAULT_ANTHROPIC_MODEL)
         self.assertIs(_evaluator_for_provider("openai"), evaluate_essay_with_openai)
         self.assertIs(_evaluator_for_provider("anthropic"), evaluate_essay_with_anthropic)
+        self.assertIs(_debug_evaluator_for_provider("gemini"), evaluate_debug_with_gemini)
+        self.assertIs(_debug_evaluator_for_provider("openai"), evaluate_debug_with_openai)
+        self.assertIs(_debug_evaluator_for_provider("anthropic"), evaluate_debug_with_anthropic)
         with patch.dict("os.environ", {"GEMINI_API_KEY": "g", "OPENAI_API_KEY": "o", "ANTHROPIC_API_KEY": "a"}, clear=True):
             self.assertEqual(_resolve_ai_provider("auto"), "gemini")
         with patch.dict("os.environ", {"OPENAI_API_KEY": "o", "ANTHROPIC_API_KEY": "a"}, clear=True):
@@ -1006,11 +1049,11 @@ class QuizMarkdownTests(unittest.TestCase):
             self.assertEqual(_resolve_ai_provider("auto"), "anthropic")
         with patch.dict("os.environ", {"GEMINI_API_KEY": "g", "OPENAI_API_KEY": "o"}, clear=True):
             self.assertEqual(_available_ai_providers_by_priority(), ["gemini", "openai"])
-            self.assertEqual(_select_debug_ai_candidates("auto"), (["gemini"], False))
+            self.assertEqual(_select_debug_ai_candidates("auto"), (["gemini", "openai"], False))
         with patch.dict("os.environ", {"OPENAI_API_KEY": "o", "ANTHROPIC_API_KEY": "a"}, clear=True):
-            self.assertEqual(_select_debug_ai_candidates("auto"), ([], False))
-        self.assertEqual(_select_debug_ai_candidates("openai"), ([], True))
-        self.assertEqual(_select_debug_ai_candidates("anthropic"), ([], True))
+            self.assertEqual(_select_debug_ai_candidates("auto"), (["openai", "anthropic"], False))
+        self.assertEqual(_select_debug_ai_candidates("openai"), (["openai"], False))
+        self.assertEqual(_select_debug_ai_candidates("anthropic"), (["anthropic"], False))
         self.assertEqual(_select_debug_ai_candidates("gemini"), (["gemini"], False))
         self.assertEqual(_provider_display_name("openai"), "OpenAI")
         self.assertEqual(_provider_display_name("anthropic"), "Claude")
@@ -1041,6 +1084,13 @@ class QuizMarkdownTests(unittest.TestCase):
             "AI unavailable (network_error). Detailed provider error omitted for privacy.",
         )
         self.assertEqual(_redacted_ai_error("none", False), "")
+
+    def test_markdown_preserve_linebreaks(self):
+        text = "A line\nB line\nC line"
+        self.assertEqual(
+            _markdown_preserve_linebreaks(text),
+            "A line  \nB line  \nC line",
+        )
 
     def test_reason_code_from_provider_exception_runtime_wrapped(self):
         self.assertEqual(
@@ -1967,9 +2017,9 @@ class QuizMarkdownTests(unittest.TestCase):
         single_normal = _alien_attack_profile("single", "normal")
         triple_hard = _alien_attack_profile("triple", "hard")
         double_inferno = _alien_attack_profile("double", "inferno")
-        self.assertEqual(single_normal["ship_sprite"], "^")
-        self.assertEqual(triple_hard["ship_sprite"], "^^^")
-        self.assertEqual(single_normal["ship_art"], ("^",))
+        self.assertEqual(single_normal["ship_sprite"], "|-o-|")
+        self.assertEqual(triple_hard["ship_sprite"], "|---o---|")
+        self.assertEqual(single_normal["ship_art"], ("|-o-|",))
         self.assertLess(triple_hard["alien_move_interval"], single_normal["alien_move_interval"])
         self.assertLess(triple_hard["bomb_interval"], single_normal["bomb_interval"])
         self.assertLess(double_inferno["alien_move_interval"], triple_hard["alien_move_interval"])
@@ -2002,6 +2052,24 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(state["alien_row_spacing"], sprite_h + 1)
         self.assertGreaterEqual(state["alien_spacing"], sprite_w + 1)
         self.assertEqual(len(state["aliens_alive"]), 32)
+
+    def test_alien_wave_shape_scales_with_level(self):
+        cols_1, rows_1 = _alien_wave_shape(level=1, board_w=120)
+        cols_3, rows_3 = _alien_wave_shape(level=3, board_w=120)
+        cols_4, rows_4 = _alien_wave_shape(level=4, board_w=120)
+        cols_10, rows_10 = _alien_wave_shape(level=10, board_w=120)
+        self.assertEqual((cols_1, rows_1), (8, 4))
+        self.assertEqual(cols_3, 10)
+        self.assertEqual(rows_3, 4)
+        self.assertEqual(rows_4, 5)
+        self.assertGreaterEqual(cols_10, cols_4)
+        self.assertGreaterEqual(rows_10, rows_4)
+
+    def test_alien_sprite_dimensions_shrink_at_higher_levels(self):
+        w1, h1 = _alien_sprite_dimensions(level=1)
+        w7, h7 = _alien_sprite_dimensions(level=7)
+        self.assertLessEqual(w7, w1)
+        self.assertEqual(h7, h1)
 
     def test_alien_apply_player_motion_moves_and_clamps_with_intent(self):
         state = {

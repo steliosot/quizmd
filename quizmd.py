@@ -26,7 +26,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.2rc1"
+__version__ = "2.4.2"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -1019,6 +1019,132 @@ def evaluate_debug_with_gemini(
             break
         time.sleep((2 ** attempt) + random.uniform(0.1, 0.35))
     raise RuntimeError(f"[{reason_code}] Gemini debug review failed after retries: {last_error}")
+
+
+def evaluate_debug_with_openai(
+    question: dict,
+    student_code: str,
+    deterministic: dict,
+    api_key: str,
+    model: str,
+    timeout: int,
+    max_retries: int = 2,
+) -> dict:
+    prompt = _build_debug_ai_eval_prompt(question, student_code, deterministic)
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "Return valid JSON only."},
+            {"role": "user", "content": prompt},
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0,
+    }
+    body = json.dumps(payload).encode("utf-8")
+    if len(body) > MAX_AI_REQUEST_BYTES:
+        raise RuntimeError("[payload_too_large] Debug payload too large for AI review.")
+
+    endpoint = "https://api.openai.com/v1/chat/completions"
+    last_error = None
+    reason_code = "unknown_error"
+    for attempt in range(max_retries + 1):
+        request = urllib.request.Request(
+            endpoint,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+                choices = response_payload.get("choices", [])
+                if not choices:
+                    raise ValueError("OpenAI response missing choices")
+                message = choices[0].get("message", {})
+                text = message.get("content", "")
+                if isinstance(text, list):
+                    text = "".join(item.get("text", "") for item in text if isinstance(item, dict))
+                if not isinstance(text, str) or not text.strip():
+                    raise ValueError("OpenAI response did not contain text output")
+                review = _extract_json_object(text)
+                return _normalize_debug_ai_review(review, provider_name="OpenAI")
+        except Exception as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            last_error = exc
+            retryable, reason_code = _classify_provider_error(exc)
+
+        if attempt >= max_retries or not retryable:
+            break
+        time.sleep((2 ** attempt) + random.uniform(0.1, 0.35))
+
+    raise RuntimeError(f"[{reason_code}] OpenAI debug review failed after retries: {last_error}")
+
+
+def evaluate_debug_with_anthropic(
+    question: dict,
+    student_code: str,
+    deterministic: dict,
+    api_key: str,
+    model: str,
+    timeout: int,
+    max_retries: int = 2,
+) -> dict:
+    prompt = _build_debug_ai_eval_prompt(question, student_code, deterministic)
+    payload = {
+        "model": model,
+        "max_tokens": 800,
+        "temperature": 0,
+        "system": "Return valid JSON only.",
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    body = json.dumps(payload).encode("utf-8")
+    if len(body) > MAX_AI_REQUEST_BYTES:
+        raise RuntimeError("[payload_too_large] Debug payload too large for AI review.")
+
+    endpoint = "https://api.anthropic.com/v1/messages"
+    last_error = None
+    reason_code = "unknown_error"
+    for attempt in range(max_retries + 1):
+        request = urllib.request.Request(
+            endpoint,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+                blocks = response_payload.get("content", [])
+                if not isinstance(blocks, list) or not blocks:
+                    raise ValueError("Anthropic response missing content")
+                text = "".join(
+                    block.get("text", "")
+                    for block in blocks
+                    if isinstance(block, dict) and block.get("type") == "text"
+                )
+                if not text.strip():
+                    raise ValueError("Anthropic response did not contain text output")
+                review = _extract_json_object(text)
+                return _normalize_debug_ai_review(review, provider_name="Anthropic")
+        except Exception as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            last_error = exc
+            retryable, reason_code = _classify_provider_error(exc)
+
+        if attempt >= max_retries or not retryable:
+            break
+        time.sleep((2 ** attempt) + random.uniform(0.1, 0.35))
+
+    raise RuntimeError(f"[{reason_code}] Anthropic debug review failed after retries: {last_error}")
 
 
 def _apply_debug_ai_override(grading: dict, review: dict, provider: str) -> dict:
@@ -3200,14 +3326,33 @@ def _alien_ship_sprite(mode: str) -> str:
 def _alien_ship_art(mode: str) -> tuple[str, ...]:
     """Return compact ship art (top-to-bottom)."""
     return {
-        "single": ("^",),
-        "double": ("^^",),
-        "triple": ("^^^",),
-    }.get(mode, ("^",))
+        "single": ("|-o-|",),
+        "double": ("|--o--|",),
+        "triple": ("|---o---|",),
+    }.get(mode, ("|-o-|",))
 
 
-def _alien_sprite_lines(row: int, frame: int) -> tuple[str, str, str]:
-    sprites = (
+def _alien_sprite_pack(size: str) -> tuple[tuple[tuple[str, str, str], tuple[str, str, str]], ...]:
+    if size == "small":
+        return (
+            (
+                (" /^\\ ", "|o|", " \\v/ "),
+                (" /^\\ ", "|o|", " \\^/ "),
+            ),
+            (
+                (" /W\\ ", "|v|", " \\-/ "),
+                (" /W\\ ", "|^|", " \\-/ "),
+            ),
+            (
+                (" .^. ", "(o)", " =_= "),
+                (" .^. ", "(o)", " =_= "),
+            ),
+            (
+                (" /^\\ ", "|O|", " \\v/ "),
+                (" /^\\ ", "|O|", " \\^/ "),
+            ),
+        )
+    return (
         (
             (" /-\\ ", "|o^o|", "\\-v-/"),
             (" /-\\ ", "|o o|", "\\-^-/"),
@@ -3225,13 +3370,36 @@ def _alien_sprite_lines(row: int, frame: int) -> tuple[str, str, str]:
             (" /-\\ ", "|O O|", "\\-^-/"),
         ),
     )
+
+
+def _alien_sprite_size_for_level(level: int) -> str:
+    # Start with larger sprites, then tighten visual density as levels climb.
+    return "small" if level >= 5 else "large"
+
+
+def _alien_sprite_lines(row: int, frame: int, level: int = 1) -> tuple[str, str, str]:
+    sprites = _alien_sprite_pack(_alien_sprite_size_for_level(level))
     row_sprites = sprites[row % len(sprites)]
     return row_sprites[frame % len(row_sprites)]
 
 
-def _alien_sprite_dimensions() -> tuple[int, int]:
-    lines = _alien_sprite_lines(0, 0)
+def _alien_sprite_dimensions(level: int = 1) -> tuple[int, int]:
+    lines = _alien_sprite_lines(0, 0, level=level)
     return max(len(line) for line in lines), len(lines)
+
+
+def _alien_wave_shape(level: int, board_w: int) -> tuple[int, int]:
+    # Progression:
+    # - Add one alien column per level.
+    # - Add one extra row every 3 levels.
+    desired_cols = 8 + max(0, level - 1)
+    desired_rows = 4 + (max(0, level - 1) // 3)
+
+    # Keep formations renderable on smaller terminals.
+    safe_cols_max = max(6, min(18, (board_w // 6)))
+    cols = max(6, min(desired_cols, safe_cols_max))
+    rows = max(4, min(desired_rows, 7))
+    return cols, rows
 
 
 def _alien_attack_profile(mode: str, difficulty: str) -> dict:
@@ -3342,9 +3510,9 @@ def _alien_make_shields(board_w: int, board_h: int) -> set[tuple[int, int]]:
 def _alien_spawn_wave(state: dict) -> None:
     board_w = state["board_w"]
     board_h = state["board_h"]
-    sprite_w, sprite_h = _alien_sprite_dimensions()
-    cols = 8
-    rows = 4
+    level = int(state.get("level", 1))
+    sprite_w, sprite_h = _alien_sprite_dimensions(level=level)
+    cols, rows = _alien_wave_shape(level, board_w)
     spacing = max(sprite_w + 1, min(9, (board_w - sprite_w) // max(1, cols - 1)))
     formation_width = max(1, (cols - 1) * spacing + sprite_w)
     offset_x = max(0, (board_w - formation_width) // 2)
@@ -3397,10 +3565,11 @@ def _alien_positions(state: dict) -> dict[tuple[int, int], tuple[int, int]]:
     pos: dict[tuple[int, int], tuple[int, int]] = {}
     row_spacing = int(state.get("alien_row_spacing") or 4)
     anim_frame = int(state.get("alien_anim_frame") or 0)
+    level = int(state.get("level", 1))
     for row, col in state["aliens_alive"]:
         x = state["alien_offset_x"] + col * state["alien_spacing"]
         y = state["alien_offset_y"] + row * row_spacing
-        for dy, line in enumerate(_alien_sprite_lines(row, anim_frame)):
+        for dy, line in enumerate(_alien_sprite_lines(row, anim_frame, level=level)):
             for dx, ch in enumerate(line):
                 if ch == " ":
                     continue
@@ -3423,9 +3592,9 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
     palette = _prompt_ui_palette(active_theme)
 
     mode_options: list[tuple[str, str, str]] = [
-        ("single", "Single", "Small ship (harder to hit)."),
-        ("double", "Double", "Medium ship."),
-        ("triple", "Triple", "Wider ship (easier target)."),
+        ("single", "Single", "|-o-|   small ship (harder to hit)."),
+        ("double", "Double", "|--o--| medium ship."),
+        ("triple", "Triple", "|---o---| wide ship (easier target)."),
     ]
     difficulty_options: list[tuple[str, str, str]] = [
         ("normal", "Normal", "Balanced speed and bomb pressure."),
@@ -3487,9 +3656,10 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
                 _setup_style("ALIEN ATTACK", fg=palette["logo"]),
                 "",
                 _setup_style("Rules", fg=palette["title"]),
-                _setup_style("- Clear waves of 8-column aliens."),
+                _setup_style("- Clear waves from level 1 to level 10."),
                 _setup_style("- Move with ←/→, shoot with Space, pause with P, quit with Q."),
                 _setup_style("- One bomb hit ends the run. Faster hits earn more points."),
+                _setup_style("- Each level adds one column; every 3 levels adds one row."),
                 "",
                 _setup_style(
                     f"Mode: {mode_label} ({mode_desc})",
@@ -3648,6 +3818,9 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
         "shields": set(),
         "too_small": False,
         "message": "",
+        "max_level": 10,
+        "confetti": [],
+        "next_confetti_spawn": 0.0,
         "intro_field": 0,
         "intro_mode_idx": initial_mode_idx,
         "intro_diff_idx": initial_diff_idx,
@@ -3730,6 +3903,8 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
         state["lives"] = profile["lives"]
         state["message"] = ""
         state["phase"] = "running"
+        state["confetti"] = []
+        state["next_confetti_spawn"] = 0.0
         sync_board_size()
         state["player_x"] = state["board_w"] // 2
         state["player_x_float"] = float(state["player_x"])
@@ -3740,8 +3915,14 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
 
     def new_level() -> None:
         state["level"] += 1
-        state["message"] = f"Level {state['level']} — speed up!"
+        state["message"] = f"Level {state['level']} — harder wave!"
         _alien_spawn_wave(state)
+
+    def start_victory(now: float) -> None:
+        state["phase"] = "victory"
+        state["message"] = "Level 10 cleared! You won!"
+        state["confetti"] = []
+        state["next_confetti_spawn"] = now
 
     def draw_overlay(
         grid: list[list[str]],
@@ -3783,8 +3964,8 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
                 ),
                 _style("Controls: ←/→ move, Space shoot, P pause, Q quit", fg=palette["body"]),
                 _style("Intro: ↑/↓ choose field, ←/→ change value, Enter starts.", fg=palette["body"]),
-                _style("8-column alien wave with classic side-to-side movement.", fg=palette["body"]),
-                _style("One bomb hit ends the run. Hit aliens quickly for bonus points.", fg=palette["body"]),
+                _style("Progression: +1 alien column per level, +1 row every 3 levels.", fg=palette["body"]),
+                _style("Clear up to level 10 to win. One bomb hit ends the run.", fg=palette["body"]),
                 "",
                 _style("Press Enter to start.", fg=palette["warning"]),
             ]
@@ -3808,7 +3989,9 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
         for row, col in state["aliens_alive"]:
             x0 = state["alien_offset_x"] + col * state["alien_spacing"]
             y0 = state["alien_offset_y"] + row * state["alien_row_spacing"]
-            for dy, line in enumerate(_alien_sprite_lines(row, state["alien_anim_frame"])):
+            for dy, line in enumerate(
+                _alien_sprite_lines(row, state["alien_anim_frame"], level=int(state.get("level", 1)))
+            ):
                 yy = y0 + dy
                 if not (0 <= yy < board_h):
                     continue
@@ -3847,6 +4030,15 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
                 grid[y][x] = ch
                 styles[y][x] = palette["success"]
 
+        # Confetti burst on win.
+        if state["phase"] == "victory":
+            for particle in state.get("confetti", []):
+                x = int(particle.get("x", -1))
+                y = int(particle.get("y", -1))
+                if 0 <= x < board_w and 0 <= y < board_h:
+                    grid[y][x] = str(particle.get("ch", "*"))[:1]
+                    styles[y][x] = particle.get("color", palette["accent"])
+
         if state["phase"] == "paused":
             draw_overlay(grid, styles, "[ PAUSED ]", fg=palette["warning"])
         elif state["phase"] == "game_over":
@@ -3859,7 +4051,7 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
         shots_label = "∞" if int(profile.get("max_bullets", 1)) >= 999 else str(int(profile.get("max_bullets", 1)))
         hud = (
             f"Score: {state['score']}  Lives: {state['lives']}  "
-            f"Level: {state['level']}  Mode: {profile['mode'].title()}  "
+            f"Level: {state['level']}/{state['max_level']}  Mode: {profile['mode'].title()}  "
             f"Difficulty: {profile['difficulty'].title()}  Shots: {shots_label}"
         )
         border = "+" + "-" * board_w + "+"
@@ -3880,6 +4072,32 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
         return PromptHTML(text_out) if not no_color else re.sub(r"<[^>]+>", "", text_out)
 
     def update_running(now: float, dt: float) -> None:
+        if state["phase"] == "victory":
+            board_w = state["board_w"]
+            board_h = state["board_h"]
+            particles = state.get("confetti", [])
+            for p in particles:
+                p["y"] = float(p.get("y", 0.0)) + float(p.get("vy", 0.7)) * dt * 18.0
+                p["x"] = float(p.get("x", 0.0)) + float(p.get("vx", 0.0)) * dt * 6.0
+            state["confetti"] = [
+                p for p in particles if 0 <= int(p.get("x", -1)) < board_w and int(p.get("y", -1)) < board_h
+            ]
+            if now >= float(state.get("next_confetti_spawn", 0.0)):
+                colors = [palette["accent"], palette["secondary"], palette["warning"], palette["success"]]
+                for _ in range(max(6, min(18, board_w // 8))):
+                    state["confetti"].append(
+                        {
+                            "x": random.uniform(0, max(0, board_w - 1)),
+                            "y": 0.0,
+                            "vx": random.uniform(-1.2, 1.2),
+                            "vy": random.uniform(0.6, 1.8),
+                            "ch": random.choice(["*", "+", ".", "o", "•"]),
+                            "color": random.choice(colors),
+                        }
+                    )
+                state["next_confetti_spawn"] = now + 0.12
+            return
+
         if state["phase"] != "running" or state["too_small"]:
             return
 
@@ -4007,9 +4225,8 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
             return
 
         if not state["aliens_alive"]:
-            if state["level"] >= 9:
-                state["phase"] = "victory"
-                state["message"] = "All waves cleared!"
+            if state["level"] >= int(state.get("max_level", 10)):
+                start_victory(now)
                 return
             new_level()
 
@@ -4491,6 +4708,13 @@ def _rubric_markdown(criteria: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _markdown_preserve_linebreaks(text: str) -> str:
+    """Preserve single newlines in markdown blocks as visible line breaks."""
+    if not text:
+        return ""
+    return text.replace("\r\n", "\n").replace("\n", "  \n")
+
+
 def evaluate_essay_with_gemini(
     essay: dict,
     student_answer: str,
@@ -4800,6 +5024,16 @@ def _evaluator_for_provider(ai_provider: str):
     raise RuntimeError(f"Unsupported AI provider {ai_provider!r}.")
 
 
+def _debug_evaluator_for_provider(ai_provider: str):
+    if ai_provider == "gemini":
+        return evaluate_debug_with_gemini
+    if ai_provider == "openai":
+        return evaluate_debug_with_openai
+    if ai_provider == "anthropic":
+        return evaluate_debug_with_anthropic
+    raise RuntimeError(f"Unsupported AI provider {ai_provider!r}.")
+
+
 def _env_key_for_provider(ai_provider: str) -> str:
     if ai_provider == "gemini":
         return "GEMINI_API_KEY"
@@ -4870,18 +5104,41 @@ def _available_ai_providers_by_priority() -> list[str]:
 
 
 def _select_debug_ai_candidates(ai_provider: str) -> tuple[list[str], bool]:
-    """Return (provider_candidates, unsupported_requested).
-
-    Debug semantic fallback currently supports Gemini only.
-    """
+    """Return (provider_candidates, unsupported_requested)."""
     requested = str(ai_provider or DEFAULT_AI_PROVIDER)
     if requested == "auto":
-        return ([p for p in _available_ai_providers_by_priority() if p == "gemini"], False)
+        return (_available_ai_providers_by_priority(), False)
 
     resolved = _resolve_ai_provider(requested)
-    if resolved != "gemini":
+    if resolved == "auto":
         return ([], True)
     return ([resolved], False)
+
+
+def _debug_model_for_provider(
+    requested_provider: str,
+    ai_model: str,
+    provider: str,
+    provider_index: int,
+) -> str:
+    model_text = (ai_model or "").strip()
+    if requested_provider == "auto":
+        if model_text and provider_index == 0:
+            return model_text
+        return _default_model_for_provider(provider)
+    return model_text or _default_model_for_provider(provider)
+
+
+def _debug_missing_key_hint(
+    requested_provider: str,
+    provider_candidates: list[str],
+    providers_with_keys: list[str],
+) -> tuple[str, str]:
+    """Return (provider_name, env_key) when explicit provider key is missing."""
+    if requested_provider == "auto" or not provider_candidates or providers_with_keys:
+        return ("", "")
+    provider = provider_candidates[0]
+    return (provider, _env_key_for_provider(provider))
 
 
 def collect_essay_answer_via_editor(
@@ -6230,11 +6487,12 @@ def run_debug(
     debug_answers: list[dict] = []
     ai_provider_label = ""
 
+    requested_provider = str(ai_provider or DEFAULT_AI_PROVIDER)
     provider_candidates, unsupported_debug_provider = _select_debug_ai_candidates(ai_provider)
     debug_ai_enabled = bool(provider_candidates) and bool(sys.stdin.isatty() and sys.stdout.isatty())
     if unsupported_debug_provider:
         console.print(
-            f"[{theme_muted}]Debug semantic fallback currently supports Gemini only. "
+            f"[{theme_muted}]Debug semantic fallback is unavailable for the requested provider. "
             "Continuing with deterministic scoring.[/]"
         )
     if debug_ai_enabled:
@@ -6247,6 +6505,18 @@ def run_debug(
             ai_provider_label = ", ".join(ai_lines)
         else:
             debug_ai_enabled = False
+            provider_name, key_name = _debug_missing_key_hint(
+                requested_provider,
+                provider_candidates,
+                ai_lines,
+            )
+            if provider_name and key_name:
+                console.print(
+                    f"[{theme_muted}]Debug semantic fallback for '{provider_name}' requires {key_name}. "
+                    "Continuing with deterministic scoring.[/]"
+                )
+                console.print(f"[{theme_muted}]Set it before running, e.g.:[/]")
+                console.print(f"[{theme_muted}]{_platform_setup_hint_for_env_key(key_name)}[/]")
 
     for i, question in enumerate(questions, start=1):
         try:
@@ -6270,19 +6540,25 @@ def run_debug(
             student_code,
         )
         if not grading["is_perfect"] and debug_ai_enabled:
-            for provider in provider_candidates:
+            ai_applied = False
+            ai_failure: tuple[str, str] | None = None
+            for idx, provider in enumerate(provider_candidates):
                 key_name = _env_key_for_provider(provider)
                 api_key = os.environ.get(key_name, "").strip()
                 if not api_key:
                     continue
-                if provider != "gemini":
-                    continue
-                model_for_provider = ai_model.strip() or _default_model_for_provider(provider)
+                model_for_provider = _debug_model_for_provider(
+                    requested_provider,
+                    ai_model,
+                    provider,
+                    idx,
+                )
+                evaluator = _debug_evaluator_for_provider(provider)
                 try:
                     review = _evaluate_with_loading_message(
                         console,
                         theme,
-                        evaluate_debug_with_gemini,
+                        evaluator,
                         "Reviewing your answer...",
                         question,
                         student_code,
@@ -6292,18 +6568,25 @@ def run_debug(
                         timeout=ai_timeout,
                     )
                     grading = _apply_debug_ai_override(grading, review, provider)
+                    ai_applied = True
+                    break
                 except Exception as exc:
                     reason_code = _reason_code_from_provider_exception(exc)
-                    grading = dict(grading)
-                    grading["ai_reviewed"] = True
-                    grading["ai_accepted"] = False
-                    grading["ai_provider"] = provider
                     note = _redacted_ai_error(reason_code, True)
                     if reason_code in {"rate_limit", "server_error", "timeout", "network_error"}:
                         note += " This is usually temporary. Please try again later."
-                    grading["ai_reason"] = note
-                    grading["ai_confidence"] = "low"
-                break
+                    ai_failure = (provider, note)
+                    if ai_provider != "auto":
+                        break
+                    continue
+            if not ai_applied and ai_failure:
+                failed_provider, note = ai_failure
+                grading = dict(grading)
+                grading["ai_reviewed"] = True
+                grading["ai_accepted"] = False
+                grading["ai_provider"] = failed_provider
+                grading["ai_reason"] = note
+                grading["ai_confidence"] = "low"
         total_points += grading["question_points"]
         total_possible += grading["question_max_points"]
         if grading["is_perfect"]:
@@ -6400,7 +6683,7 @@ def run_debug(
             f"Percentage: [bold]{percentage:.1f}%[/bold]\n"
             f"Perfect fixes: [bold]{solved_count}/{len(questions)}[/bold]"
             + (
-                f"\nAI fallback: deterministic first, then Gemini on failures"
+                f"\nAI fallback: deterministic first, then provider semantic review on failures"
                 + (f" ({ai_provider_label})" if ai_provider_label else "")
                 if debug_ai_enabled
                 else ""
@@ -6731,9 +7014,9 @@ def run_essay(
     if ui != "next":
         console.print(LOGO)
         intro_markdown = (
-            f"## Question\n\n{question}\n\n"
-            f"## Instructions\n\n{instructions}\n\n"
-            f"## Hint\n\n{hint_text}\n\n"
+            f"## Question\n\n{_markdown_preserve_linebreaks(question)}\n\n"
+            f"## Instructions\n\n{_markdown_preserve_linebreaks(instructions)}\n\n"
+            f"## Hint\n\n{_markdown_preserve_linebreaks(hint_text)}\n\n"
             "**⏎ Press Enter to open your editor and write your answer.**"
         )
 
@@ -6749,9 +7032,9 @@ def run_essay(
             prompt_input()
         if ui == "next":
             submission_markdown = (
-                f"## Question\n\n{question}\n\n"
-                f"## Instructions\n\n{instructions}\n\n"
-                f"## Hint\n\n{hint_text}"
+                f"## Question\n\n{_markdown_preserve_linebreaks(question)}\n\n"
+                f"## Instructions\n\n{_markdown_preserve_linebreaks(instructions)}\n\n"
+                f"## Hint\n\n{_markdown_preserve_linebreaks(hint_text)}"
             )
             console.print(
                 Panel(
