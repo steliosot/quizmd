@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import asyncio
 import html
 import json
@@ -25,7 +26,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.0"
+__version__ = "2.4.1"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -258,6 +259,7 @@ def greet(name):
 
 Type: debug
 Hint: Start at line 1, then check missing punctuation on line 2.
+AI Note: Accept equivalent fixes that preserve behavior, including single quotes or f-strings.
 Explanation: Function definitions need a trailing colon, and print call needs a closing parenthesis.
 
 ## Question 2
@@ -279,6 +281,7 @@ def average(nums):
 
 Type: debug
 Hint: The issue starts on line 2, then look at the last token on line 3.
+AI Note: Accept equivalent numeric-average implementations if they keep the same result and handle lists correctly.
 Explanation: Python requires indentation inside the function body, and `num` should be `nums`.
 
 ## Question 3
@@ -302,6 +305,7 @@ def pick_last(items):
 
 Type: debug
 Hint: Check line 1 first, then the return logic on lines 3 and 4.
+AI Note: Accept alternatives that safely return None on empty input and the true last element otherwise.
 Explanation: Add function colon, guard empty list with None, and use last index `len(items) - 1`.
 """
 
@@ -443,13 +447,17 @@ def _is_light_theme(theme: dict) -> bool:
 
 
 def _prompt_ui_palette(theme: dict) -> dict[str, str]:
-    """Prompt-toolkit colors tuned for readability on both dark/light terminals."""
+    """Prompt-toolkit colors tuned for readability on both dark/light terminals.
+
+    Keep core text on terminal default foreground so full-screen prompt_toolkit
+    views stay readable even when auto theme detection picks the wrong background.
+    """
     if _is_light_theme(theme):
         return {
             "logo": "ansiblue",
-            "title": "ansiblack",
-            "body": "ansiblack",
-            "muted": "ansiblack",
+            "title": "default",
+            "body": "default",
+            "muted": "default",
             "accent": "ansiblue",
             "secondary": "ansimagenta",
             "warning": "ansimagenta",
@@ -464,9 +472,9 @@ def _prompt_ui_palette(theme: dict) -> dict[str, str]:
         }
     return {
         "logo": "ansicyan",
-        "title": "ansiwhite",
-        "body": "ansiwhite",
-        "muted": "ansigray",
+        "title": "default",
+        "body": "default",
+        "muted": "default",
         "accent": "ansiyellow",
         "secondary": "ansimagenta",
         "warning": "ansiyellow",
@@ -842,6 +850,14 @@ def _debug_changed_line_numbers(broken_code: str, fixed_code: str) -> list[int]:
 
 
 def _score_debug_submission(broken_code: str, fixed_code: str, student_code: str) -> dict:
+    def _python_ast_equivalent(left_code: str, right_code: str) -> bool:
+        try:
+            left_tree = ast.parse(left_code)
+            right_tree = ast.parse(right_code)
+        except SyntaxError:
+            return False
+        return ast.dump(left_tree, include_attributes=False) == ast.dump(right_tree, include_attributes=False)
+
     broken_lines = _normalize_code_lines(broken_code)
     fixed_lines = _normalize_code_lines(fixed_code)
     student_lines = _normalize_code_lines(student_code)
@@ -854,16 +870,171 @@ def _score_debug_submission(broken_code: str, fixed_code: str, student_code: str
         if student_line == fixed_line:
             fixed_count += 1
 
+    def _is_comment_or_blank(line: str) -> bool:
+        stripped = line.strip()
+        return (not stripped) or stripped.startswith("#")
+
+    def _semantic_fallback_allowed() -> bool:
+        # AST-equivalence is great for formatting-only code changes, but comments
+        # are not part of the AST. For comment/blank-line fixes, keep exact mode.
+        for line_no in changed_lines:
+            broken_line = broken_lines[line_no - 1] if line_no - 1 < len(broken_lines) else ""
+            fixed_line = fixed_lines[line_no - 1] if line_no - 1 < len(fixed_lines) else ""
+            if _is_comment_or_blank(broken_line) or _is_comment_or_blank(fixed_line):
+                return False
+        return True
+
     max_points = len(changed_lines) if changed_lines else 1
-    is_exact = student_lines == fixed_lines
+    exact_match = student_lines == fixed_lines
+    semantic_match = False
+    if not exact_match:
+        semantic_match = _semantic_fallback_allowed() and _python_ast_equivalent(
+            "\n".join(student_lines),
+            "\n".join(fixed_lines),
+        )
+        if semantic_match:
+            fixed_count = max_points
+    is_perfect = exact_match or semantic_match
+    if is_perfect:
+        scoring_mode = "exact" if exact_match else "python_ast"
+    else:
+        scoring_mode = "line_exact"
     return {
         "fixed_count": fixed_count,
         "total_errors": max_points,
         "question_points": fixed_count,
         "question_max_points": max_points,
-        "is_perfect": is_exact,
+        "is_perfect": is_perfect,
         "changed_lines": changed_lines,
+        "exact_match": exact_match,
+        "semantic_match": semantic_match,
+        "scoring_mode": scoring_mode,
+        "ai_reviewed": False,
+        "ai_accepted": False,
+        "ai_provider": "",
+        "ai_reason": "",
+        "ai_confidence": "",
     }
+
+
+def _build_debug_ai_eval_prompt(question: dict, student_code: str, deterministic: dict) -> str:
+    changed = ", ".join(str(n) for n in deterministic.get("changed_lines", [])) or "None"
+    ai_note = (question.get("ai_note") or "").strip()
+    note_block = f"\nTeacher AI note:\n{ai_note}\n" if ai_note else ""
+    return (
+        "You are validating a student's Python debug fix.\n"
+        "A deterministic checker already compared exact changed lines and did not confirm a perfect fix.\n"
+        "Your job: decide if the student's code is still semantically correct and should be accepted.\n\n"
+        "Rules:\n"
+        "- Accept equivalent solutions that preserve intended behavior, even with different structure.\n"
+        "- Reject if syntax errors remain, runtime behavior is wrong, or required fixes are missing.\n"
+        "- Be strict but fair.\n"
+        f"{note_block}\n"
+        f"Question prompt:\n{question.get('prompt', '').strip()}\n\n"
+        f"Broken code:\n```python\n{question.get('broken_code', '').strip()}\n```\n\n"
+        f"Reference fixed code:\n```python\n{question.get('fixed_code', '').strip()}\n```\n\n"
+        f"Student submitted code:\n```python\n{student_code.strip()}\n```\n\n"
+        f"Expected changed lines from deterministic diff: {changed}\n"
+        f"Deterministic score: {deterministic.get('question_points', 0)}/{deterministic.get('question_max_points', 0)}\n\n"
+        "Return strict JSON only with keys:\n"
+        "- accept (boolean)\n"
+        "- confidence (one of: low, medium, high)\n"
+        "- reason (short string)\n"
+    )
+
+
+def _normalize_debug_ai_review(raw_review, provider_name: str = "model") -> dict:
+    if isinstance(raw_review, list):
+        if len(raw_review) == 1 and isinstance(raw_review[0], dict):
+            raw_review = raw_review[0]
+        else:
+            raise ValueError(f"{provider_name} JSON returned a list instead of a single object")
+    if not isinstance(raw_review, dict):
+        raise ValueError(f"{provider_name} JSON must be an object")
+    if "accept" not in raw_review:
+        raise ValueError(f"{provider_name} JSON missing key: accept")
+
+    raw_accept = raw_review.get("accept")
+    if isinstance(raw_accept, bool):
+        accept = raw_accept
+    elif isinstance(raw_accept, str):
+        accept = raw_accept.strip().lower() in {"true", "yes", "y", "1", "accept", "accepted"}
+    else:
+        accept = bool(raw_accept)
+
+    confidence = str(raw_review.get("confidence", "medium")).strip().lower()
+    if confidence not in {"low", "medium", "high"}:
+        confidence = "medium"
+    reason = str(raw_review.get("reason", "")).strip() or "No reason provided."
+    return {"accept": accept, "confidence": confidence, "reason": reason}
+
+
+def evaluate_debug_with_gemini(
+    question: dict,
+    student_code: str,
+    deterministic: dict,
+    api_key: str,
+    model: str,
+    timeout: int,
+    max_retries: int = 2,
+) -> dict:
+    prompt = _build_debug_ai_eval_prompt(question, student_code, deterministic)
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"responseMimeType": "application/json"},
+    }
+    body = json.dumps(payload).encode("utf-8")
+    if len(body) > MAX_AI_REQUEST_BYTES:
+        raise RuntimeError("[payload_too_large] Debug payload too large for AI review.")
+    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    last_error = None
+    reason_code = "unknown_error"
+    for attempt in range(max_retries + 1):
+        _wait_for_gemini_window()
+        request = urllib.request.Request(
+            endpoint,
+            data=body,
+            headers={"Content-Type": "application/json", "X-goog-api-key": api_key},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                _GEMINI_REQUEST_TIMES.append(time.time())
+                response_payload = json.loads(response.read().decode("utf-8"))
+                candidates = response_payload.get("candidates", [])
+                if not candidates:
+                    raise ValueError("Gemini response missing candidates")
+                parts = candidates[0].get("content", {}).get("parts", [])
+                text = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
+                if not text.strip():
+                    raise ValueError("Gemini response did not contain text output")
+                review = _extract_json_object(text)
+                return _normalize_debug_ai_review(review, provider_name="Gemini")
+        except Exception as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            last_error = exc
+            retryable, reason_code = _classify_provider_error(exc)
+        if attempt >= max_retries or not retryable:
+            break
+        time.sleep((2 ** attempt) + random.uniform(0.1, 0.35))
+    raise RuntimeError(f"[{reason_code}] Gemini debug review failed after retries: {last_error}")
+
+
+def _apply_debug_ai_override(grading: dict, review: dict, provider: str) -> dict:
+    merged = dict(grading)
+    merged["ai_reviewed"] = True
+    merged["ai_provider"] = provider
+    merged["ai_reason"] = str(review.get("reason", "")).strip()
+    merged["ai_confidence"] = str(review.get("confidence", "")).strip()
+    accepted = bool(review.get("accept"))
+    merged["ai_accepted"] = accepted
+    if accepted and not merged.get("is_perfect"):
+        merged["fixed_count"] = int(merged.get("question_max_points", merged.get("fixed_count", 0)))
+        merged["question_points"] = int(merged.get("question_max_points", merged.get("question_points", 0)))
+        merged["is_perfect"] = True
+        merged["scoring_mode"] = "ai_semantic"
+    return merged
 
 
 def _extract_labeled_code_block(
@@ -924,7 +1095,7 @@ def parse_debug_markdown(path: str) -> tuple[str, list[dict]]:
             )
 
     questions: list[dict] = []
-    field_pattern = re.compile(r"(?i)^(type|hint|explanation)\s*:\s*(.*)$")
+    field_pattern = re.compile(r"(?i)^(type|hint|explanation|ai\s*note)\s*:\s*(.*)$")
 
     for block in blocks[1:]:
         block = block.strip("\n")
@@ -953,6 +1124,7 @@ def parse_debug_markdown(path: str) -> tuple[str, list[dict]]:
         qtype = ""
         hint = ""
         explanation = ""
+        ai_note = ""
         for raw_line in metadata_lines:
             stripped = raw_line.strip()
             if not stripped:
@@ -961,7 +1133,7 @@ def parse_debug_markdown(path: str) -> tuple[str, list[dict]]:
             if not match:
                 raise ValueError(
                     f"{source}: unrecognized debug metadata line {raw_line!r} in question {title!r}. "
-                    "Expected Type, Hint, Explanation."
+                    "Expected Type, Hint, Explanation, AI Note."
                 )
             key = match.group(1).lower()
             value = match.group(2).strip()
@@ -971,6 +1143,8 @@ def parse_debug_markdown(path: str) -> tuple[str, list[dict]]:
                 hint = value
             elif key == "explanation":
                 explanation = value
+            elif key.replace(" ", "") == "ainote":
+                ai_note = value
 
         if qtype and qtype != "debug":
             raise ValueError(
@@ -994,6 +1168,7 @@ def parse_debug_markdown(path: str) -> tuple[str, list[dict]]:
                 "fixed_code": fixed_code,
                 "hint": hint,
                 "explanation": explanation,
+                "ai_note": ai_note,
                 "changed_lines": changed_lines,
             }
         )
@@ -3109,6 +3284,31 @@ def _alien_clamp(value: int, minimum: int, maximum: int) -> int:
     return value
 
 
+def _alien_apply_player_motion(state: dict, ship_sprite: str, dt: float, now: float) -> None:
+    """Apply smooth player movement based on short-lived direction intent."""
+    if dt <= 0:
+        return
+    if state.get("phase") != "running" or state.get("too_small"):
+        return
+    move_dir = int(state.get("move_dir", 0))
+    if move_dir == 0:
+        return
+    hold_until = float(state.get("move_hold_until", 0.0))
+    if now > hold_until:
+        state["move_dir"] = 0
+        return
+    speed_cps = float(state.get("move_speed_cps", 18.0))
+    min_x = len(ship_sprite) // 2
+    max_x = int(state.get("board_w", 80)) - 1 - min_x
+    if max_x < min_x:
+        return
+    player_x_float = float(state.get("player_x_float", state.get("player_x", 0)))
+    player_x_float += move_dir * speed_cps * dt
+    player_x_float = float(max(min_x, min(max_x, player_x_float)))
+    state["player_x_float"] = player_x_float
+    state["player_x"] = int(round(player_x_float))
+
+
 def _alien_make_shields(board_w: int, board_h: int) -> set[tuple[int, int]]:
     shields: set[tuple[int, int]] = set()
     pattern = [
@@ -3427,6 +3627,7 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
         "lives": profile["lives"],
         "level": 1,
         "player_x": 40,
+        "player_x_float": 40.0,
         "aliens_alive": set(),
         "alien_rows": 0,
         "alien_cols": 0,
@@ -3451,6 +3652,11 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
         "intro_mode_idx": initial_mode_idx,
         "intro_diff_idx": initial_diff_idx,
         "shooting_cap": int(profile.get("max_bullets", 1)),
+        "move_dir": 0,
+        "move_hold_until": 0.0,
+        "move_speed_cps": 22.0,
+        "move_impulse_seconds": 0.2,
+        "last_tick_time": None,
     }
 
     def _escape(text: str) -> str:
@@ -3501,6 +3707,7 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
             len(profile["ship_sprite"]) // 2,
             board_w - 1 - (len(profile["ship_sprite"]) // 2),
         )
+        state["player_x_float"] = float(state["player_x"])
         state["bullets"] = [b for b in state["bullets"] if 0 <= b["x"] < board_w and 0 <= b["y"] < board_h]
         state["bombs"] = [b for b in state["bombs"] if 0 <= b["x"] < board_w and 0 <= b["y"] < board_h]
         state["shields"] = {(x, y) for (x, y) in state["shields"] if 0 <= x < board_w and 0 <= y < board_h}
@@ -3525,6 +3732,10 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
         state["phase"] = "running"
         sync_board_size()
         state["player_x"] = state["board_w"] // 2
+        state["player_x_float"] = float(state["player_x"])
+        state["move_dir"] = 0
+        state["move_hold_until"] = 0.0
+        state["last_tick_time"] = None
         _alien_spawn_wave(state)
 
     def new_level() -> None:
@@ -3668,12 +3879,13 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
         text_out = "\n".join(lines)
         return PromptHTML(text_out) if not no_color else re.sub(r"<[^>]+>", "", text_out)
 
-    def update_running(now: float) -> None:
+    def update_running(now: float, dt: float) -> None:
         if state["phase"] != "running" or state["too_small"]:
             return
 
         board_w = state["board_w"]
         board_h = state["board_h"]
+        _alien_apply_player_motion(state, profile["ship_sprite"], dt, now)
 
         # Move bullets up.
         for bullet in state["bullets"]:
@@ -3833,12 +4045,9 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
             return
         if state["phase"] != "running" or state["too_small"]:
             return
-        state["player_x"] -= 1
-        state["player_x"] = _alien_clamp(
-            state["player_x"],
-            len(profile["ship_sprite"]) // 2,
-            state["board_w"] - 1 - (len(profile["ship_sprite"]) // 2),
-        )
+        state["move_dir"] = -1
+        state["move_hold_until"] = time.monotonic() + float(state["move_impulse_seconds"])
+        _alien_apply_player_motion(state, profile["ship_sprite"], 1 / 45, state["move_hold_until"])
         event.app.invalidate()
 
     @kb.add("right")
@@ -3853,12 +4062,9 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
             return
         if state["phase"] != "running" or state["too_small"]:
             return
-        state["player_x"] += 1
-        state["player_x"] = _alien_clamp(
-            state["player_x"],
-            len(profile["ship_sprite"]) // 2,
-            state["board_w"] - 1 - (len(profile["ship_sprite"]) // 2),
-        )
+        state["move_dir"] = 1
+        state["move_hold_until"] = time.monotonic() + float(state["move_impulse_seconds"])
+        _alien_apply_player_motion(state, profile["ship_sprite"], 1 / 45, state["move_hold_until"])
         event.app.invalidate()
 
     @kb.add("space")
@@ -3878,6 +4084,8 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
     def _(event):
         if state["phase"] == "running":
             state["phase"] = "paused"
+            state["move_dir"] = 0
+            state["move_hold_until"] = 0.0
         elif state["phase"] == "paused":
             state["phase"] = "running"
             now = time.monotonic()
@@ -3926,7 +4134,13 @@ async def _run_alien_attack(mode: str, difficulty: str, no_color: bool = False) 
         while True:
             await asyncio.sleep(1 / 30)
             now = time.monotonic()
-            update_running(now)
+            last_tick = state.get("last_tick_time")
+            if isinstance(last_tick, (int, float)):
+                dt = max(1 / 240, min(0.1, now - float(last_tick)))
+            else:
+                dt = 1 / 30
+            state["last_tick_time"] = now
+            update_running(now, dt)
             app.invalidate()
 
     loop_task = asyncio.create_task(game_loop())
@@ -4086,6 +4300,9 @@ def save_debug_attempt(
                 f"Result: {'Perfect' if item['is_perfect'] else 'Partial/Wrong'}",
                 f"Points: {item['question_points']}/{item['question_max_points']}",
                 f"Hint used: {'yes' if item['used_hint'] else 'no'}",
+                f"Scoring mode: {item.get('scoring_mode', 'line_exact')}",
+                f"AI reviewed: {'yes' if item.get('ai_reviewed') else 'no'}",
+                f"AI accepted: {'yes' if item.get('ai_accepted') else 'no'}",
                 f"Changed lines expected: {', '.join(str(n) for n in item['changed_lines']) or '-'}",
                 "Submitted fix:",
                 item["student_code"] or "-",
@@ -4638,7 +4855,26 @@ def _available_ai_providers_by_priority() -> list[str]:
     return providers
 
 
-def collect_essay_answer_via_editor(question_title: str, question_text: str = "") -> str:
+def _select_debug_ai_candidates(ai_provider: str) -> tuple[list[str], bool]:
+    """Return (provider_candidates, unsupported_requested).
+
+    Debug semantic fallback currently supports Gemini only.
+    """
+    requested = str(ai_provider or DEFAULT_AI_PROVIDER)
+    if requested == "auto":
+        return ([p for p in _available_ai_providers_by_priority() if p == "gemini"], False)
+
+    resolved = _resolve_ai_provider(requested)
+    if resolved != "gemini":
+        return ([], True)
+    return ([resolved], False)
+
+
+def collect_essay_answer_via_editor(
+    question_title: str,
+    question_text: str = "",
+    hint_text: str = "",
+) -> str:
     editor = (os.environ.get("EDITOR") or "").strip()
     if not editor:
         if _is_windows():
@@ -4652,12 +4888,16 @@ def collect_essay_answer_via_editor(question_title: str, question_text: str = ""
             editor = "vi"
 
     header_line = question_text.strip() or question_title
+    hint_line = hint_text.strip()
     template = (
         f"# {header_line}\n\n"
         "# When ready: Press Esc, type :wq!, then Enter to save and exit (or :q! to quit without saving).\n"
         "# Write your answer below. Keep 5-10 lines.\n"
-        "# Lines starting with '#' will be ignored.\n\n"
+        "# Lines starting with '#' will be ignored.\n"
     )
+    if hint_line:
+        template += f"# Hint: {hint_line}\n"
+    template += "\n"
 
     with tempfile.NamedTemporaryFile("w+", suffix=".txt", delete=False, encoding="utf-8") as handle:
         temp_path = Path(handle.name)
@@ -5914,6 +6154,9 @@ def run_debug(
     no_color: bool = False,
     show_feedback: bool = True,
     ui: str = "classic",
+    ai_provider: str = DEFAULT_AI_PROVIDER,
+    ai_model: str = "",
+    ai_timeout: int = 30,
 ):
     try:
         from rich.console import Console
@@ -5927,6 +6170,7 @@ def run_debug(
     start_clean_screen(ui == "next")
     console.print(LOGO)
     theme = select_theme(theme_name)
+    theme_muted = theme.get("muted", theme.get("secondary", "white"))
 
     intro = (
         "[bold]Rules:[/bold]\n"
@@ -5950,6 +6194,25 @@ def run_debug(
     total_possible = 0
     solved_count = 0
     debug_answers: list[dict] = []
+    ai_provider_label = ""
+
+    provider_candidates, unsupported_debug_provider = _select_debug_ai_candidates(ai_provider)
+    debug_ai_enabled = bool(provider_candidates) and bool(sys.stdin.isatty() and sys.stdout.isatty())
+    if unsupported_debug_provider:
+        console.print(
+            f"[{theme_muted}]Debug semantic fallback currently supports Gemini only. "
+            "Continuing with deterministic scoring.[/]"
+        )
+    if debug_ai_enabled:
+        ai_lines = []
+        for provider in provider_candidates:
+            key_name = _env_key_for_provider(provider)
+            if os.environ.get(key_name, "").strip():
+                ai_lines.append(f"{provider} ({key_name})")
+        if ai_lines:
+            ai_provider_label = ", ".join(ai_lines)
+        else:
+            debug_ai_enabled = False
 
     for i, question in enumerate(questions, start=1):
         try:
@@ -5972,6 +6235,36 @@ def run_debug(
             question["fixed_code"],
             student_code,
         )
+        if not grading["is_perfect"] and debug_ai_enabled:
+            for provider in provider_candidates:
+                key_name = _env_key_for_provider(provider)
+                api_key = os.environ.get(key_name, "").strip()
+                if not api_key:
+                    continue
+                if provider != "gemini":
+                    continue
+                model_for_provider = ai_model.strip() or _default_model_for_provider(provider)
+                try:
+                    review = evaluate_debug_with_gemini(
+                        question,
+                        student_code,
+                        grading,
+                        api_key=api_key,
+                        model=model_for_provider,
+                        timeout=ai_timeout,
+                    )
+                    grading = _apply_debug_ai_override(grading, review, provider)
+                except Exception as exc:
+                    grading = dict(grading)
+                    grading["ai_reviewed"] = True
+                    grading["ai_accepted"] = False
+                    grading["ai_provider"] = provider
+                    grading["ai_reason"] = _redacted_ai_error(
+                        _classify_provider_error(exc)[1] if isinstance(exc, Exception) else "unknown_error",
+                        True,
+                    )
+                    grading["ai_confidence"] = "low"
+                break
         total_points += grading["question_points"]
         total_possible += grading["question_max_points"]
         if grading["is_perfect"]:
@@ -5988,6 +6281,14 @@ def run_debug(
                 "question_points": grading["question_points"],
                 "question_max_points": grading["question_max_points"],
                 "is_perfect": grading["is_perfect"],
+                "exact_match": grading.get("exact_match", False),
+                "semantic_match": grading.get("semantic_match", False),
+                "scoring_mode": grading.get("scoring_mode", "line_exact"),
+                "ai_reviewed": grading.get("ai_reviewed", False),
+                "ai_accepted": grading.get("ai_accepted", False),
+                "ai_provider": grading.get("ai_provider", ""),
+                "ai_reason": grading.get("ai_reason", ""),
+                "ai_confidence": grading.get("ai_confidence", ""),
                 "used_hint": used_hint,
             }
         )
@@ -6006,6 +6307,20 @@ def run_debug(
             f"[{status_style}]{status}[/{status_style}]",
             f"Question points: [bold]{grading['question_points']}/{grading['question_max_points']}[/bold]",
         ]
+        if grading.get("semantic_match") and not grading.get("exact_match"):
+            summary_lines.append(
+                f"[{theme['secondary']}]Accepted equivalent Python fix (AST match).[/]"
+            )
+        if grading.get("ai_accepted"):
+            provider = grading.get("ai_provider", "gemini")
+            confidence = grading.get("ai_confidence", "medium")
+            summary_lines.append(
+                f"[{theme['secondary']}]Accepted by AI semantic check ({provider}, confidence: {confidence}).[/]"
+            )
+        elif grading.get("ai_reviewed") and grading.get("ai_reason"):
+            summary_lines.append(
+                f"[{theme_muted}]AI review note: {grading['ai_reason']}[/]"
+            )
         if used_hint:
             summary_lines.append(f"[{theme['secondary']}]Hint used[/]")
         console.print(Panel("\n".join(summary_lines), border_style=theme["panel"]))
@@ -6044,7 +6359,13 @@ def run_debug(
             f"[bold {theme['primary']}]Debug Summary[/bold {theme['primary']}]\n\n"
             f"Score: [bold]{total_points}/{total_possible}[/bold]\n"
             f"Percentage: [bold]{percentage:.1f}%[/bold]\n"
-            f"Perfect fixes: [bold]{solved_count}/{len(questions)}[/bold]",
+            f"Perfect fixes: [bold]{solved_count}/{len(questions)}[/bold]"
+            + (
+                f"\nAI fallback: deterministic first, then Gemini on failures"
+                + (f" ({ai_provider_label})" if ai_provider_label else "")
+                if debug_ai_enabled
+                else ""
+            ),
             border_style=theme["panel"],
         )
     )
@@ -6364,31 +6685,28 @@ def run_essay(
     theme = select_theme(theme_name)
     console = Console(no_color=no_color)
     start_clean_screen(ui == "next")
-    console.print(LOGO)
     title = essay["title"]
     question = essay["question"]
     instructions = essay["instructions"]
     hint_text = essay.get("hint", "").strip() or "🤔 Hint: Focus on the key points your instructor expects."
-    intro_markdown = (
-        f"## Question\n\n{question}\n\n"
-        f"## Instructions\n\n{instructions}\n\n"
-        f"## Hint\n\n{hint_text}\n\n"
-        + (
-            "**Type your answer in the terminal. Write 4-8 lines, then type `/end`.**"
-            if ui == "next"
-            else "**⏎ Press Enter to open your editor and write your answer.**"
+    if ui != "next":
+        console.print(LOGO)
+        intro_markdown = (
+            f"## Question\n\n{question}\n\n"
+            f"## Instructions\n\n{instructions}\n\n"
+            f"## Hint\n\n{hint_text}\n\n"
+            "**⏎ Press Enter to open your editor and write your answer.**"
         )
-    )
 
     try:
-        console.print(
-            Panel(
-                Markdown(intro_markdown, code_theme="monokai"),
-                title=f"[bold {theme['primary']}]{title}[/bold {theme['primary']}]",
-                border_style=theme["panel"],
-            )
-        )
         if ui != "next":
+            console.print(
+                Panel(
+                    Markdown(intro_markdown, code_theme="monokai"),
+                    title=f"[bold {theme['primary']}]{title}[/bold {theme['primary']}]",
+                    border_style=theme["panel"],
+                )
+            )
             prompt_input()
         if ui == "next":
             student_answer = collect_essay_answer_inline(
@@ -6398,8 +6716,32 @@ def run_essay(
                 hint_text=hint_text,
                 theme=theme,
             )
+            submission_markdown = (
+                f"## Question\n\n{question}\n\n"
+                f"## Instructions\n\n{instructions}\n\n"
+                f"## Hint\n\n{hint_text}"
+            )
+            console.print(
+                Panel(
+                    Markdown(submission_markdown, code_theme="monokai"),
+                    title=f"[bold {theme['primary']}]{title}[/bold {theme['primary']}]",
+                    border_style=theme["panel"],
+                )
+            )
+            answer_heading = f"[bold {theme['primary']}]Your answer[/bold {theme['primary']}]"
+            console.print(
+                Panel(
+                    student_answer,
+                    title=answer_heading,
+                    border_style=theme["panel"],
+                )
+            )
         else:
-            student_answer = collect_essay_answer_via_editor(title, question)
+            student_answer = collect_essay_answer_via_editor(
+                title,
+                question,
+                hint_text=hint_text,
+            )
 
         if no_color:
             console.print("✓ Answer captured.")
@@ -6893,12 +7235,12 @@ def main():
         "--ai-provider",
         default=DEFAULT_AI_PROVIDER,
         choices=["auto", "gemini", "openai", "anthropic"],
-        help="AI provider for essay mode. 'auto' priority: gemini -> openai -> anthropic.",
+        help="'auto' priority: gemini -> openai -> anthropic.",
     )
     parser.add_argument(
         "--ai-model",
         default="",
-        help="AI model name for essay mode (defaults by provider).",
+        help="AI model name for essay/debug fallback (defaults by provider).",
     )
     parser.add_argument(
         "--ai-timeout",
@@ -6960,6 +7302,9 @@ def main():
                 no_color=no_color,
                 show_feedback=not args.hide_feedback,
                 ui=args.ui,
+                ai_provider=args.ai_provider,
+                ai_model=args.ai_model,
+                ai_timeout=args.ai_timeout,
             )
         else:
             run(

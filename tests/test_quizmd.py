@@ -17,6 +17,7 @@ from quizmd import (
     DEFAULT_OPENAI_MODEL,
     DEFAULT_ROOM_SERVER_CLOUD,
     _alien_attack_profile,
+    _alien_apply_player_motion,
     _alien_make_shields,
     _alien_positions,
     _alien_score_for_hit,
@@ -44,13 +45,16 @@ from quizmd import (
     _available_ai_providers_by_priority,
     _clean_inline_essay_answer,
     _debug_changed_line_numbers,
+    _apply_debug_ai_override,
     _score_debug_submission,
     _env_key_for_provider,
     _evaluator_for_provider,
     _provider_display_name,
+    _prompt_ui_palette,
     _inline_essay_answer_height,
     _numbered_code_block_markup,
     _redacted_ai_error,
+    _select_debug_ai_candidates,
     _resolve_ai_provider,
     _score_encouragement,
     THEMES,
@@ -303,6 +307,34 @@ class QuizMarkdownTests(unittest.TestCase):
             self.assertEqual(len(questions), 1)
             self.assertEqual(questions[0]["type"], "debug")
             self.assertEqual(questions[0]["changed_lines"], [1, 2])
+            self.assertEqual(questions[0]["ai_note"], "")
+        finally:
+            Path(debug_path).unlink(missing_ok=True)
+
+    def test_parse_debug_markdown_keeps_ai_note(self):
+        debug_path = self.write_quiz(
+            "# Debug Quiz: Basics\n\n"
+            "## Question 1\n"
+            "Fix two errors.\n\n"
+            "Broken:\n"
+            "```python\n"
+            "def greet(name)\n"
+            "    print(name\n"
+            "```\n\n"
+            "Fixed:\n"
+            "```python\n"
+            "def greet(name):\n"
+            "    print(name)\n"
+            "```\n\n"
+            "Type: debug\n"
+            "AI Note: Accept equivalent string formatting styles.\n"
+        )
+        try:
+            _title, questions = parse_debug_markdown(debug_path)
+            self.assertEqual(
+                questions[0]["ai_note"],
+                "Accept equivalent string formatting styles.",
+            )
         finally:
             Path(debug_path).unlink(missing_ok=True)
 
@@ -322,6 +354,49 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(grading["question_points"], 1)
         self.assertEqual(grading["question_max_points"], 2)
         self.assertFalse(grading["is_perfect"])
+
+    def test_debug_scoring_accepts_python_ast_equivalent_fix(self):
+        broken = "x == 0\nprint(x)\n"
+        fixed = "x = 0\nprint(x)\n"
+        student = "x=0\nprint(x)\n"
+        grading = _score_debug_submission(broken, fixed, student)
+        self.assertEqual(grading["question_points"], 1)
+        self.assertEqual(grading["question_max_points"], 1)
+        self.assertTrue(grading["is_perfect"])
+        self.assertFalse(grading["exact_match"])
+        self.assertTrue(grading["semantic_match"])
+        self.assertEqual(grading["scoring_mode"], "python_ast")
+
+    def test_debug_scoring_does_not_ast_accept_comment_only_change(self):
+        broken = "x = 1\n# bad note\n"
+        fixed = "x = 1\n# good note\n"
+        student = "x=1\n# bad note\n"
+        grading = _score_debug_submission(broken, fixed, student)
+        self.assertEqual(grading["question_points"], 0)
+        self.assertEqual(grading["question_max_points"], 1)
+        self.assertFalse(grading["is_perfect"])
+        self.assertFalse(grading["semantic_match"])
+        self.assertEqual(grading["scoring_mode"], "line_exact")
+
+    def test_apply_debug_ai_override_accepts_semantic_fix(self):
+        grading = {
+            "question_points": 1,
+            "question_max_points": 2,
+            "fixed_count": 1,
+            "is_perfect": False,
+            "scoring_mode": "line_exact",
+        }
+        merged = _apply_debug_ai_override(
+            grading,
+            {"accept": True, "confidence": "high", "reason": "Equivalent behavior."},
+            provider="gemini",
+        )
+        self.assertTrue(merged["is_perfect"])
+        self.assertEqual(merged["question_points"], 2)
+        self.assertEqual(merged["fixed_count"], 2)
+        self.assertEqual(merged["scoring_mode"], "ai_semantic")
+        self.assertTrue(merged["ai_reviewed"])
+        self.assertTrue(merged["ai_accepted"])
 
     def test_numbered_code_block_markup_highlights_requested_lines(self):
         markup = _numbered_code_block_markup(
@@ -542,6 +617,24 @@ class QuizMarkdownTests(unittest.TestCase):
                 answer = collect_essay_answer_via_editor("Title", "Why do we use .venv?")
         self.assertEqual(answer, "Line 1")
         self.assertIn("# Why do we use .venv?", seen_template["value"])
+
+    def test_collect_essay_answer_template_includes_hint_line(self):
+        seen_template = {"value": ""}
+
+        def fake_editor(cmd, check):
+            target = Path(cmd[-1])
+            seen_template["value"] = target.read_text(encoding="utf-8")
+            target.write_text("Line 1\n", encoding="utf-8")
+
+        with patch("subprocess.run", side_effect=fake_editor):
+            with patch.dict("os.environ", {"EDITOR": "fake-editor"}, clear=False):
+                answer = collect_essay_answer_via_editor(
+                    "Title",
+                    "Question",
+                    hint_text="Mention complexity.",
+                )
+        self.assertEqual(answer, "Line 1")
+        self.assertIn("# Hint: Mention complexity.", seen_template["value"])
 
     def test_collect_essay_answer_inline_stops_on_end(self):
         with patch("builtins.print"):
@@ -912,6 +1005,12 @@ class QuizMarkdownTests(unittest.TestCase):
             self.assertEqual(_resolve_ai_provider("auto"), "anthropic")
         with patch.dict("os.environ", {"GEMINI_API_KEY": "g", "OPENAI_API_KEY": "o"}, clear=True):
             self.assertEqual(_available_ai_providers_by_priority(), ["gemini", "openai"])
+            self.assertEqual(_select_debug_ai_candidates("auto"), (["gemini"], False))
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "o", "ANTHROPIC_API_KEY": "a"}, clear=True):
+            self.assertEqual(_select_debug_ai_candidates("auto"), ([], False))
+        self.assertEqual(_select_debug_ai_candidates("openai"), ([], True))
+        self.assertEqual(_select_debug_ai_candidates("anthropic"), ([], True))
+        self.assertEqual(_select_debug_ai_candidates("gemini"), (["gemini"], False))
         self.assertEqual(_provider_display_name("openai"), "OpenAI")
         self.assertEqual(_provider_display_name("anthropic"), "Claude")
 
@@ -1063,7 +1162,53 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("theme", kwargs)
         mocked_editor.assert_not_called()
 
-    def test_run_essay_next_ui_starts_with_clean_screen_and_logo(self):
+    def test_run_essay_next_ui_prints_submission_snapshot(self):
+        essay = {
+            "title": "Sample",
+            "question": "Q",
+            "instructions": "I",
+            "criteria": [{"name": "A", "points": 1, "details": []}],
+            "total_points": 1,
+            "reference_answer": "R",
+            "ai_evaluation_rules": "Rules",
+            "output_format": "Format",
+        }
+        fake_grade = {
+            "points_awarded": 1,
+            "total_points": 1,
+            "score_percent": 100.0,
+            "did_well": ["A"],
+            "missing": [],
+            "suggestions": ["Great"],
+            "ai_unavailable": False,
+            "ai_error": "",
+            "ai_reason": "none",
+            "scoring_mode": "llm_rubric",
+            "scoring_confidence": "high",
+        }
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "k"}, clear=True):
+            with patch("quizmd.collect_essay_answer_inline", return_value="student answer"):
+                with patch("quizmd.ask_yes_no", return_value=False):
+                    with patch("quizmd.evaluate_essay_with_loading", return_value=fake_grade):
+                        with patch("rich.console.Console.print") as mocked_print:
+                            run_essay(essay, no_color=True, ui="next")
+
+        panel_titles = []
+        panel_bodies = []
+        for call in mocked_print.call_args_list:
+            if not call.args:
+                continue
+            obj = call.args[0]
+            title = getattr(obj, "title", None)
+            renderable = getattr(obj, "renderable", None)
+            if title is not None:
+                panel_titles.append(str(title))
+            if renderable is not None:
+                panel_bodies.append(str(renderable))
+        self.assertTrue(any("Your answer" in title for title in panel_titles))
+        self.assertTrue(any("student answer" in body for body in panel_bodies))
+
+    def test_run_essay_next_ui_skips_extra_intro_panel(self):
         essay = {
             "title": "Sample",
             "question": "Q",
@@ -1082,11 +1227,8 @@ class QuizMarkdownTests(unittest.TestCase):
                         run_essay(essay, no_color=True, ui="next")
         mocked_clean.assert_called_once_with(True)
         out = buf.getvalue()
-        self.assertIn("▞▀▖", out)
-        self.assertIn("Sample", out)
-        self.assertIn("Question", out)
-        self.assertIn("Instructions", out)
-        self.assertIn("Type your answer in the terminal", out)
+        self.assertIn("Essay closed. Your answer was not submitted.", out)
+        self.assertNotIn("Type your answer in the terminal", out)
 
     def test_run_essay_openai_uses_default_model_and_key(self):
         essay = {
@@ -1850,6 +1992,33 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertGreaterEqual(state["alien_spacing"], sprite_w + 1)
         self.assertEqual(len(state["aliens_alive"]), 32)
 
+    def test_alien_apply_player_motion_moves_and_clamps_with_intent(self):
+        state = {
+            "phase": "running",
+            "too_small": False,
+            "board_w": 20,
+            "player_x": 10,
+            "player_x_float": 10.0,
+            "move_dir": 1,
+            "move_hold_until": 10.0,
+            "move_speed_cps": 20.0,
+        }
+        _alien_apply_player_motion(state, "^", dt=0.1, now=9.9)
+        self.assertEqual(state["player_x"], 12)
+        self.assertAlmostEqual(state["player_x_float"], 12.0)
+
+        # Clamp at right wall.
+        state["player_x"] = 19
+        state["player_x_float"] = 19.0
+        _alien_apply_player_motion(state, "^", dt=0.2, now=9.95)
+        self.assertEqual(state["player_x"], 19)
+
+        # Expired input intent should stop movement.
+        state["move_dir"] = -1
+        state["move_hold_until"] = 9.0
+        _alien_apply_player_motion(state, "^", dt=0.2, now=9.5)
+        self.assertEqual(state["move_dir"], 0)
+
     def test_alien_shields_move_up_in_tall_terminals(self):
         short = _alien_make_shields(90, 24)
         tall = _alien_make_shields(90, 60)
@@ -1903,6 +2072,14 @@ class QuizMarkdownTests(unittest.TestCase):
         with patch.dict("os.environ", {"COLORSCHEME": "Dark Plus"}, clear=False):
             theme = select_theme("auto")
             self.assertEqual(theme["pt_title"], THEMES["dark"]["pt_title"])
+
+    def test_prompt_ui_palette_uses_default_foreground_for_readability(self):
+        light_palette = _prompt_ui_palette(THEMES["light"])
+        dark_palette = _prompt_ui_palette(THEMES["dark"])
+        self.assertEqual(light_palette["body"], "default")
+        self.assertEqual(light_palette["muted"], "default")
+        self.assertEqual(dark_palette["body"], "default")
+        self.assertEqual(dark_palette["muted"], "default")
 
     def test_no_color_detection_from_cli_or_env(self):
         self.assertTrue(is_no_color_requested(True))
