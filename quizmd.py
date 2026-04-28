@@ -26,7 +26,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.1"
+__version__ = "2.4.2rc1"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -4459,6 +4459,20 @@ def _classify_provider_error(exc: Exception) -> tuple[bool, str]:
     return retryable, "unknown_error"
 
 
+def _reason_code_from_provider_exception(exc: Exception) -> str:
+    """Best-effort provider reason code extraction, including wrapped runtime errors."""
+    _retryable, reason_code = _classify_provider_error(exc)
+    if reason_code != "unknown_error":
+        return reason_code
+
+    text = str(exc).strip()
+    if text.startswith("[") and "]" in text:
+        bracket_code = text[1:text.index("]")].strip().lower()
+        if bracket_code:
+            return bracket_code
+    return "unknown_error"
+
+
 def _rubric_lines(criteria: list[dict]) -> list[str]:
     lines = []
     for idx, item in enumerate(criteria, start=1):
@@ -4939,9 +4953,11 @@ def collect_essay_answer_inline(
     instructions: str = "",
     hint_text: str = "",
     theme: dict | None = None,
+    use_fullscreen_box: bool = False,
+    show_intro: bool = True,
 ) -> str:
     """Collect a short essay directly in the terminal for the vNext prototype."""
-    if sys.stdin.isatty() and sys.stdout.isatty():
+    if use_fullscreen_box and sys.stdin.isatty() and sys.stdout.isatty():
         try:
             return collect_essay_answer_inline_box(
                 question_title,
@@ -4953,17 +4969,18 @@ def collect_essay_answer_inline(
         except ModuleNotFoundError:
             pass
 
-    print("")
-    print(LOGO)
-    print(question_title)
-    if question_text:
-        print(question_text)
-    if instructions:
+    if show_intro:
         print("")
-        print(instructions)
-    if hint_text:
-        print("")
-        print(hint_text)
+        print(LOGO)
+        print(question_title)
+        if question_text:
+            print(question_text)
+        if instructions:
+            print("")
+            print(instructions)
+        if hint_text:
+            print("")
+            print(hint_text)
     print("")
     print("Type your answer below.")
     print("Write 4-8 lines. Type /end on a new line when finished.")
@@ -5106,7 +5123,14 @@ def collect_essay_answer_inline_box(
     return answer
 
 
-def evaluate_essay_with_loading(console, theme: dict, evaluator, *args, **kwargs):
+def _evaluate_with_loading_message(
+    console,
+    theme: dict,
+    evaluator,
+    message: str,
+    *args,
+    **kwargs,
+):
     try:
         from rich.progress import BarColumn
         from rich.progress import Progress
@@ -5120,7 +5144,6 @@ def evaluate_essay_with_loading(console, theme: dict, evaluator, *args, **kwargs
 
     import threading
 
-    instructor_name = str(kwargs.pop("instructor_name", "")).strip()
     result: dict = {}
 
     def worker():
@@ -5131,11 +5154,6 @@ def evaluate_essay_with_loading(console, theme: dict, evaluator, *args, **kwargs
 
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
-
-    if instructor_name:
-        message = f"Reviewing your answer using {instructor_name}'s rubric and guidance..."
-    else:
-        message = "Reviewing your answer using the rubric and guidance..."
 
     text = f"[{theme['accent']}]{message}[/]" if not console.no_color else message
     with Progress(
@@ -5155,6 +5173,22 @@ def evaluate_essay_with_loading(console, theme: dict, evaluator, *args, **kwargs
     if "error" in result:
         raise result["error"]
     return result["value"]
+
+
+def evaluate_essay_with_loading(console, theme: dict, evaluator, *args, **kwargs):
+    instructor_name = str(kwargs.pop("instructor_name", "")).strip()
+    if instructor_name:
+        message = f"Reviewing your answer using {instructor_name}'s rubric and guidance..."
+    else:
+        message = "Reviewing your answer using the rubric and guidance..."
+    return _evaluate_with_loading_message(
+        console,
+        theme,
+        evaluator,
+        message,
+        *args,
+        **kwargs,
+    )
 
 
 def build_question_markup(
@@ -6245,7 +6279,11 @@ def run_debug(
                     continue
                 model_for_provider = ai_model.strip() or _default_model_for_provider(provider)
                 try:
-                    review = evaluate_debug_with_gemini(
+                    review = _evaluate_with_loading_message(
+                        console,
+                        theme,
+                        evaluate_debug_with_gemini,
+                        "Reviewing your answer...",
                         question,
                         student_code,
                         grading,
@@ -6255,14 +6293,15 @@ def run_debug(
                     )
                     grading = _apply_debug_ai_override(grading, review, provider)
                 except Exception as exc:
+                    reason_code = _reason_code_from_provider_exception(exc)
                     grading = dict(grading)
                     grading["ai_reviewed"] = True
                     grading["ai_accepted"] = False
                     grading["ai_provider"] = provider
-                    grading["ai_reason"] = _redacted_ai_error(
-                        _classify_provider_error(exc)[1] if isinstance(exc, Exception) else "unknown_error",
-                        True,
-                    )
+                    note = _redacted_ai_error(reason_code, True)
+                    if reason_code in {"rate_limit", "server_error", "timeout", "network_error"}:
+                        note += " This is usually temporary. Please try again later."
+                    grading["ai_reason"] = note
                     grading["ai_confidence"] = "low"
                 break
         total_points += grading["question_points"]
@@ -6709,13 +6748,6 @@ def run_essay(
             )
             prompt_input()
         if ui == "next":
-            student_answer = collect_essay_answer_inline(
-                title,
-                question,
-                instructions=instructions,
-                hint_text=hint_text,
-                theme=theme,
-            )
             submission_markdown = (
                 f"## Question\n\n{question}\n\n"
                 f"## Instructions\n\n{instructions}\n\n"
@@ -6727,6 +6759,15 @@ def run_essay(
                     title=f"[bold {theme['primary']}]{title}[/bold {theme['primary']}]",
                     border_style=theme["panel"],
                 )
+            )
+            student_answer = collect_essay_answer_inline(
+                title,
+                question,
+                instructions=instructions,
+                hint_text=hint_text,
+                theme=theme,
+                use_fullscreen_box=False,
+                show_intro=False,
             )
             answer_heading = f"[bold {theme['primary']}]Your answer[/bold {theme['primary']}]"
             console.print(

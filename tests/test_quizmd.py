@@ -54,6 +54,7 @@ from quizmd import (
     _inline_essay_answer_height,
     _numbered_code_block_markup,
     _redacted_ai_error,
+    _reason_code_from_provider_exception,
     _select_debug_ai_candidates,
     _resolve_ai_provider,
     _score_encouragement,
@@ -1040,6 +1041,16 @@ class QuizMarkdownTests(unittest.TestCase):
             "AI unavailable (network_error). Detailed provider error omitted for privacy.",
         )
         self.assertEqual(_redacted_ai_error("none", False), "")
+
+    def test_reason_code_from_provider_exception_runtime_wrapped(self):
+        self.assertEqual(
+            _reason_code_from_provider_exception(RuntimeError("[rate_limit] provider busy")),
+            "rate_limit",
+        )
+        self.assertEqual(
+            _reason_code_from_provider_exception(RuntimeError("[server_error] temporary upstream issue")),
+            "server_error",
+        )
 
     def test_run_essay_missing_api_key_fails(self):
         essay = {
