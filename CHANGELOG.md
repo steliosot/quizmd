@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## v2.4.3rc2 - 2026-04-29
+
+- Fixed confusing MCQ parser failure for challenge-style content:
+  - when a standard quiz contains `### Easy/Normal/Hard` inside `## Category: ...`, `quizmd` now raises a targeted message telling users to switch to `# Challenge Quiz: <title>`.
+- Includes full starter generation in `quizmd init` (including `hello-challenge.md`, `hello-debug.md`, and `hello-reverse.md`) for clean installs.
+
 ## v2.4.0rc2 - 2026-04-26
 
 - Follow-up RC with room UX and reliability refinements:

@@ -2444,6 +2444,23 @@ class QuizMarkdownTests(unittest.TestCase):
 
         Path(quiz_path).unlink()
 
+    def test_challenge_heading_inside_mcq_shows_actionable_error(self):
+        quiz_path = self.write_quiz(
+            "# Test Quiz\n\n"
+            "## Category: Geography\n"
+            "Which river flows through Paris?\n\n"
+            "### Normal\n"
+            "- Seine\n"
+            "- Loire\n"
+            "Answer: 1\n"
+            "Type: single\n"
+        )
+
+        with self.assertRaisesRegex(ValueError, "found challenge difficulty heading"):
+            parse_quiz_markdown(quiz_path)
+
+        Path(quiz_path).unlink()
+
     def test_parser_accepts_indented_options_and_spaced_fields(self):
         quiz_path = self.write_quiz(
             "# Test Quiz\n\n"

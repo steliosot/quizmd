@@ -26,7 +26,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.3rc1"
+__version__ = "2.4.3rc2"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -973,6 +973,16 @@ def parse_quiz_markdown(path: str):
         title = lines[0].strip()
         body_lines = lines[1:]
 
+        # Guard against challenge-style difficulty headings being parsed as plain MCQ text.
+        if title.lower().startswith("category:"):
+            for raw in body_lines:
+                stripped = raw.strip().lower()
+                if re.match(r"^###\s*(easy|normal|hard)\s*$", stripped):
+                    raise ValueError(
+                        f"{source}: found challenge difficulty heading {raw.strip()!r} in question {title!r}. "
+                        "Use '# Challenge Quiz: <title>' at the top for category difficulty quizzes."
+                    )
+
         field_pattern = re.compile(r"(?i)^(answer|type|time|explanation|imposters)\s*:\s*(.*)$")
         option_pattern = re.compile(r"^\s*-\s*(.*)$")
         option_with_content_pattern = re.compile(r"^\s*-\s+\S.*$")
@@ -1110,6 +1120,12 @@ def parse_quiz_markdown(path: str):
                 else:
                     explanation = value.strip()
             else:
+                if stripped.startswith("### "):
+                    raise ValueError(
+                        f"{source}: unrecognized line {l!r} in question {title!r}. "
+                        "This looks like challenge difficulty syntax. "
+                        "Use '# Challenge Quiz: <title>' at the top and '### Easy/Normal/Hard' inside each category."
+                    )
                 raise ValueError(
                     f"{source}: unrecognized line {l!r} in question {title!r}. "
                     "Expected options ('- ...') or fields: Answer, Type, Time, Explanation, Imposters."
