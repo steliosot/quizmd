@@ -26,7 +26,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.2"
+__version__ = "2.4.3rc1"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -309,6 +309,325 @@ AI Note: Accept alternatives that safely return None on empty input and the true
 Explanation: Add function colon, guard empty list with None, and use last index `len(items) - 1`.
 """
 
+HELLO_CHALLENGE_TEMPLATE = """# Challenge Quiz: General Knowledge Stars
+
+## Category: Geography
+Which river flows through Paris?
+
+### Easy
+- Thames
+- Seine
+- Danube
+Answer: 2
+Type: single
+Explanation: Paris is built along the Seine River.
+
+### Normal
+- Seine
+- Loire
+- Rhine
+Answer: 1
+Type: single
+Explanation: The Seine is the river that runs through Paris.
+
+### Hard
+- Seine
+- Oise
+- Garonne
+- Rhone
+Answer: 1
+Type: single
+Explanation: The Seine is correct; the others are major French rivers but not the one through central Paris.
+
+## Category: Literature
+Who wrote *Pride and Prejudice*?
+
+### Easy
+- Jane Austen
+- Charles Dickens
+- Mary Shelley
+Answer: 1
+Type: single
+Explanation: Jane Austen published *Pride and Prejudice* in 1813.
+
+### Normal
+- Jane Austen
+- Emily Bronte
+- George Eliot
+Answer: 1
+Type: single
+Explanation: The novel is one of Jane Austen's best-known works.
+
+### Hard
+- Jane Austen
+- Charlotte Bronte
+- Virginia Woolf
+- Thomas Hardy
+Answer: 1
+Type: single
+Explanation: Jane Austen is the correct author.
+
+## Category: Science
+What gas do plants absorb from the atmosphere during photosynthesis?
+
+### Easy
+- Oxygen
+- Carbon dioxide
+- Nitrogen
+Answer: 2
+Type: single
+Explanation: Plants use carbon dioxide and release oxygen.
+
+### Normal
+- Carbon dioxide
+- Helium
+- Hydrogen
+Answer: 1
+Type: single
+Explanation: Carbon dioxide is absorbed and used to produce glucose.
+
+### Hard
+- Carbon dioxide
+- Methane
+- Neon
+- Argon
+Answer: 1
+Type: single
+Explanation: Carbon dioxide is the key input gas for photosynthesis.
+
+## Category: Athletics
+How long is an Olympic marathon (approximately)?
+
+### Easy
+- 21.1 km
+- 42.2 km
+- 50 km
+Answer: 2
+Type: single
+Explanation: The official marathon distance is 42.195 km.
+
+### Normal
+- 42.195 km
+- 40.000 km
+- 45.000 km
+Answer: 1
+Type: single
+Explanation: Olympic marathons use the standard 42.195 km distance.
+
+### Hard
+- 42.195 km
+- 26.2 miles
+- about 42.2 km
+- all of the above
+Answer: 4
+Type: single
+Explanation: 42.195 km equals 26.2 miles and is commonly rounded to about 42.2 km.
+
+## Category: History
+In which year did World War II end?
+
+### Easy
+- 1945
+- 1939
+- 1950
+Answer: 1
+Type: single
+Explanation: WWII ended in 1945.
+
+### Normal
+- 1945
+- 1944
+- 1946
+Answer: 1
+Type: single
+Explanation: The war ended in 1945 in both Europe and Asia.
+
+### Hard
+- 1945
+- 1943
+- 1947
+- 1939
+Answer: 1
+Type: single
+Explanation: 1939 is the start year; 1945 is the end year.
+
+## Category: Lifestyle
+Which habits are generally linked to better sleep quality?
+
+### Easy
+- Consistent sleep schedule
+- Late caffeine every evening
+- Bright screens right before bed
+Answer: 1
+Type: single
+Explanation: A regular sleep schedule supports healthy sleep.
+
+### Normal
+- Keep a stable bedtime and wake time
+- Exercise only at midnight
+- Drink energy drinks before bed
+Answer: 1
+Type: single
+Explanation: Consistency helps regulate the body's sleep rhythm.
+
+### Hard
+- Keep a consistent schedule
+- Limit caffeine late in the day
+- Reduce bright screen exposure before bed
+- all of the above
+Answer: 4
+Type: single
+Explanation: All three habits are evidence-based sleep hygiene practices.
+"""
+
+HELLO_REVERSE_TEMPLATE = """# Reverse Quiz: Python Reverse Engineering
+
+## Question 1
+Output:
+HELLO
+HELLO
+HELLO
+
+Which code produced this?
+
+```python
+# A
+for i in range(3):
+    print("HELLO")
+```
+
+```python
+# B
+for i in range(1, 3):
+    print("HELLO")
+```
+
+```python
+# C
+print("HELLO" * 3)
+```
+
+Options:
+- A only
+- B only
+- C only
+- A and C
+
+Answer: 1
+Type: single
+Explanation: Only option A prints HELLO on three separate lines.
+
+## Question 2
+This program should print only even numbers from 0 to 10 (inclusive).
+Which implementation is correct?
+
+```python
+# A
+for i in range(11):
+    if i % 2 == 0:
+        print(i)
+```
+
+```python
+# B
+for i in range(1, 11):
+    print(i)
+```
+
+```python
+# C
+for i in range(11):
+    if i % 2 == 1:
+        print(i)
+```
+
+Options:
+- A
+- B
+- C
+- B and C
+
+Answer: 1
+Type: single
+Explanation: A checks parity and includes 0..10.
+
+## Question 3
+Bug-fix reverse engineering:
+This code should print numbers 1 to 5, but currently prints 0 to 4.
+
+```python
+for i in range(5):
+    print(i)
+```
+
+Which change fixes it?
+
+Options:
+- range(1, 6)
+- range(5, 1)
+- range(0, 6)
+- keep range(5)
+
+Answer: 1
+Type: single
+Explanation: range(1, 6) yields 1, 2, 3, 4, 5.
+
+## Question 4
+Output:
+2
+4
+6
+8
+
+Which rules can generate this output?
+
+Options:
+- Print the first four positive even numbers
+- Print multiples of 2 from 2 through 8
+- Print square numbers from 1 through 4
+- Print odd numbers from 1 through 7
+
+Answer: 1,2
+Type: multiple
+Explanation: Both A and B describe the same generated sequence.
+
+## Question 5
+Output:
+3
+2
+1
+
+Which code produced this?
+
+```python
+# A
+for i in range(3, 0, -1):
+    print(i)
+```
+
+```python
+# B
+for i in range(3):
+    print(i)
+```
+
+```python
+# C
+for i in range(1, 4):
+    print(i)
+```
+
+Options:
+- A
+- B
+- C
+- B and C
+
+Answer: 1
+Type: single
+Explanation: Only A iterates downward from 3 to 1.
+"""
+
 QUIZ_GUIDE_TEMPLATE = """# QuizMD Quick Start
 
 ## Local modes
@@ -320,6 +639,10 @@ quizmd --validate hello-imposter.md
 quizmd hello-imposter.md
 quizmd --validate hello-debug.md
 quizmd hello-debug.md
+quizmd --validate hello-challenge.md
+quizmd hello-challenge.md
+quizmd --validate hello-reverse.md
+quizmd hello-reverse.md
 ```
 
 ## Essay mode
@@ -829,6 +1152,250 @@ def parse_quiz_markdown(path: str):
     return quiz_title, questions
 
 
+CHALLENGE_DIFFICULTY_ORDER = ("easy", "normal", "hard")
+CHALLENGE_STARS_BY_DIFFICULTY = {"easy": 1, "normal": 2, "hard": 3}
+CHALLENGE_DEFAULT_TIME_LIMIT_SECONDS = 45
+REVERSE_DEFAULT_TIME_LIMIT_SECONDS = 45
+
+
+def parse_challenge_markdown(path: str) -> tuple[str, list[dict]]:
+    source = Path(path)
+    text = source.read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    if not lines:
+        raise ValueError(f"{source}: empty challenge markdown file")
+
+    first_nonempty = ""
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if stripped:
+            first_nonempty = stripped
+            break
+    if not first_nonempty.startswith("# Challenge Quiz:"):
+        raise ValueError(f"{source}: challenge quiz must start with '# Challenge Quiz: <title>'")
+    quiz_title = first_nonempty.split(":", 1)[1].strip()
+    if not quiz_title:
+        raise ValueError(f"{source}: challenge quiz title cannot be empty")
+
+    category_pattern = re.compile(r"^##\s+Category:\s*(.+?)\s*$", flags=re.IGNORECASE)
+    difficulty_pattern = re.compile(r"^###\s*(Easy|Normal|Hard)\s*$", flags=re.IGNORECASE)
+    field_pattern = re.compile(r"(?i)^(answer|type|explanation)\s*:\s*(.*)$")
+    option_pattern = re.compile(r"^\s*-\s*(.*)$")
+
+    category_blocks: list[tuple[str, list[str]]] = []
+    current_category_name: str | None = None
+    current_category_lines: list[str] = []
+    in_code_fence = False
+    saw_header = False
+
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if stripped.startswith("# Challenge Quiz:") and not saw_header:
+            saw_header = True
+            continue
+        if stripped.startswith("```"):
+            if current_category_name is not None:
+                current_category_lines.append(raw_line)
+            in_code_fence = not in_code_fence
+            continue
+        if (
+            not in_code_fence
+            and (match := category_pattern.match(stripped)) is not None
+        ):
+            if current_category_name is not None:
+                category_blocks.append((current_category_name, current_category_lines))
+            current_category_name = match.group(1).strip()
+            current_category_lines = []
+            continue
+        if current_category_name is None:
+            if stripped:
+                raise ValueError(
+                    f"{source}: unexpected content before first category. Use '## Category: <name>'."
+                )
+            continue
+        current_category_lines.append(raw_line)
+
+    if current_category_name is not None:
+        category_blocks.append((current_category_name, current_category_lines))
+
+    if not category_blocks:
+        raise ValueError(f"{source}: no categories found. Add at least one '## Category: <name>' block.")
+
+    seen_categories: set[str] = set()
+    categories: list[dict] = []
+
+    for category_name, block_lines in category_blocks:
+        if not category_name:
+            raise ValueError(f"{source}: category name cannot be empty")
+        normalized_name = category_name.casefold()
+        if normalized_name in seen_categories:
+            raise ValueError(f"{source}: duplicate category name {category_name!r}")
+        seen_categories.add(normalized_name)
+
+        line_info: list[dict] = []
+        in_code = False
+        for raw_line in block_lines:
+            stripped = raw_line.strip()
+            line_info.append({"raw": raw_line, "stripped": stripped, "in_code": in_code})
+            if stripped.startswith("```"):
+                in_code = not in_code
+
+        difficulty_indexes: list[tuple[int, str]] = []
+        for idx, info in enumerate(line_info):
+            if info["in_code"]:
+                continue
+            match = difficulty_pattern.match(info["stripped"])
+            if match is not None:
+                difficulty_indexes.append((idx, match.group(1).lower()))
+
+        if not difficulty_indexes:
+            raise ValueError(
+                f"{source}: category {category_name!r} is missing difficulty sections. "
+                "Add '### Easy', '### Normal', and '### Hard'."
+            )
+
+        question_lines = block_lines[: difficulty_indexes[0][0]]
+        question_text = "\n".join(question_lines).strip()
+        if not question_text:
+            raise ValueError(f"{source}: category {category_name!r} is missing question text before '### Easy'")
+
+        difficulties: dict[str, dict] = {}
+        for i, (start_idx, diff_name) in enumerate(difficulty_indexes):
+            end_idx = difficulty_indexes[i + 1][0] if i + 1 < len(difficulty_indexes) else len(block_lines)
+            body_lines = block_lines[start_idx + 1 : end_idx]
+
+            if diff_name in difficulties:
+                raise ValueError(f"{source}: category {category_name!r} has duplicate difficulty {diff_name!r}")
+
+            options: list[str] = []
+            answer: list[int] = []
+            qtype = "single"
+            explanation = ""
+            seen_field = False
+
+            for raw_line in body_lines:
+                stripped = raw_line.strip()
+                if not stripped:
+                    continue
+                option_match = option_pattern.match(raw_line)
+                if option_match:
+                    if seen_field:
+                        raise ValueError(
+                            f"{source}: options must appear before metadata fields in category {category_name!r}, "
+                            f"difficulty {diff_name!r}"
+                        )
+                    option_text = option_match.group(1).strip()
+                    if not option_text:
+                        raise ValueError(
+                            f"{source}: blank option text in category {category_name!r}, difficulty {diff_name!r}"
+                        )
+                    options.append(option_text)
+                    continue
+
+                field_match = field_pattern.match(stripped)
+                if field_match is None:
+                    raise ValueError(
+                        f"{source}: unrecognized line {raw_line!r} in category {category_name!r}, difficulty {diff_name!r}. "
+                        "Expected options ('- ...') or fields: Answer, Type, Explanation."
+                    )
+
+                seen_field = True
+                field_name = field_match.group(1).lower()
+                field_value = field_match.group(2)
+                title = f"{category_name} [{diff_name}]"
+                if field_name == "answer":
+                    answer = parse_int_list(field_value, "answer", title, source)
+                elif field_name == "type":
+                    qtype = field_value.strip().lower() or "single"
+                else:
+                    explanation = field_value.strip()
+
+            if not options:
+                raise ValueError(
+                    f"{source}: category {category_name!r}, difficulty {diff_name!r} is missing options"
+                )
+            if not answer:
+                raise ValueError(
+                    f"{source}: category {category_name!r}, difficulty {diff_name!r} is missing answer"
+                )
+            if qtype != "single":
+                raise ValueError(
+                    f"{source}: challenge mode supports only Type: single in category {category_name!r}, "
+                    f"difficulty {diff_name!r}"
+                )
+            if len(answer) != 1:
+                raise ValueError(
+                    f"{source}: challenge mode requires exactly one correct answer in category {category_name!r}, "
+                    f"difficulty {diff_name!r}"
+                )
+
+            question_data = {
+                "title": f"{category_name} [{diff_name.title()}]",
+                "question": question_text,
+                "options": options,
+                "correct": sorted(answer),
+                "type": qtype,
+                "time_limit": CHALLENGE_DEFAULT_TIME_LIMIT_SECONDS,
+                "explanation": explanation,
+                "imposters": [],
+            }
+            validate_question(question_data, source)
+            difficulties[diff_name] = question_data
+
+        missing_difficulties = [d for d in CHALLENGE_DIFFICULTY_ORDER if d not in difficulties]
+        if missing_difficulties:
+            human = ", ".join(d.title() for d in missing_difficulties)
+            raise ValueError(
+                f"{source}: category {category_name!r} is missing required difficulty section(s): {human}"
+            )
+
+        categories.append(
+            {
+                "category": category_name,
+                "question": question_text,
+                "difficulties": difficulties,
+            }
+        )
+
+    return quiz_title, categories
+
+
+def parse_reverse_markdown(path: str) -> tuple[str, list[dict]]:
+    source = Path(path)
+    text = source.read_text(encoding="utf-8")
+    first_nonempty = ""
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if stripped:
+            first_nonempty = stripped
+            break
+    if not first_nonempty.startswith("# Reverse Quiz:"):
+        raise ValueError(f"{source}: reverse quiz must start with '# Reverse Quiz: <title>'")
+
+    title, questions = parse_quiz_markdown(path)
+    for question in questions:
+        if question.get("imposters"):
+            raise ValueError(
+                f"{source}: reverse quiz does not support Imposters in question {question['title']!r}"
+            )
+        raw_limit = question.get("time_limit")
+        try:
+            parsed_limit = int(raw_limit) if raw_limit is not None else 0
+        except (TypeError, ValueError):
+            parsed_limit = 0
+        if parsed_limit <= 0:
+            question["time_limit"] = REVERSE_DEFAULT_TIME_LIMIT_SECONDS
+        else:
+            question["time_limit"] = parsed_limit
+
+    if title.lower().startswith("reverse quiz:"):
+        cleaned = title.split(":", 1)[1].strip()
+        if cleaned:
+            title = cleaned
+    return title, questions
+
+
 def _normalize_code_lines(text: str) -> list[str]:
     lines = [line.rstrip() for line in text.splitlines()]
     while lines and not lines[-1].strip():
@@ -1314,6 +1881,10 @@ def detect_quiz_mode(path: str) -> str:
             continue
         if line.startswith("# Essay Question:"):
             return "essay"
+        if line.startswith("# Reverse Quiz:"):
+            return "reverse"
+        if line.startswith("# Challenge Quiz:"):
+            return "challenge"
         if line.lower().startswith("# debug quiz"):
             return "debug"
         if line.startswith("# "):
@@ -1322,7 +1893,7 @@ def detect_quiz_mode(path: str) -> str:
             return "mcq"
         break
     raise ValueError(
-        f"{source}: expected a top-level '# ...' title or '# Essay Question: ...' header"
+        f"{source}: expected '# ...', '# Essay Question: ...', '# Reverse Quiz: ...', or '# Challenge Quiz: ...' header"
     )
 
 
@@ -1627,6 +2198,8 @@ def init_starter_files(target_dir: str = ".", force: bool = False) -> list[Path]
         ("hello-quiz.md", HELLO_QUIZ_TEMPLATE),
         ("hello-imposter.md", HELLO_IMPOSTER_TEMPLATE),
         ("hello-debug.md", HELLO_DEBUG_TEMPLATE),
+        ("hello-challenge.md", HELLO_CHALLENGE_TEMPLATE),
+        ("hello-reverse.md", HELLO_REVERSE_TEMPLATE),
         ("hello-essay.md", HELLO_ESSAY_TEMPLATE),
         ("QUIZ_GUIDE.md", QUIZ_GUIDE_TEMPLATE),
     ]
@@ -1721,11 +2294,15 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
     mode_cards = (
         "[bold]1 Classic[/bold]\n[dim]Fast MCQ practice[/dim]\n[green]No AI key[/green]",
         "[bold]2 Imposter[/bold]\n[dim]Spot misleading answers[/dim]\n[green]No AI key[/green]",
-        "[bold]3 Debug[/bold]\n[dim]Fix broken code[/dim]\n[green]No AI key[/green]",
-        "[bold]4 Essay[/bold]\n[dim]Rubric + AI feedback[/dim]\n[yellow]Needs AI key[/yellow]",
+        "[bold]3 Debug[/bold]\n[dim]Fix broken code[/dim]\n[yellow]Optional AI key[/yellow]",
+        "[bold]4 Challenge[/bold]\n[dim]Category + risk stars[/dim]\n[green]No AI key[/green]",
+        "[bold]5 Reverse[/bold]\n[dim]Output/behavior to code[/dim]\n[green]No AI key[/green]",
+        "[bold]6 Essay[/bold]\n[dim]Rubric + AI feedback[/dim]\n[yellow]Needs AI key[/yellow]",
     )
     if wide_layout:
         modes = Table.grid(expand=True)
+        modes.add_column(ratio=1)
+        modes.add_column(ratio=1)
         modes.add_column(ratio=1)
         modes.add_column(ratio=1)
         modes.add_column(ratio=1)
@@ -1771,6 +2348,8 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
             "hello-quiz.md": "Single + multiple choice",
             "hello-imposter.md": "Imposter distractor spotting",
             "hello-debug.md": "Fix broken code with line hints",
+            "hello-challenge.md": "Category mode with star scoring",
+            "hello-reverse.md": "Reverse engineering MCQ mode",
             "hello-essay.md": "Short answer with AI feedback",
             "QUIZ_GUIDE.md": "Starter commands and notes",
         }
@@ -4531,6 +5110,64 @@ def save_debug_attempt(
     return attempt_dir
 
 
+def _challenge_star_badge(stars: int) -> str:
+    if stars <= 0:
+        return "🐐"
+    return "⭐" * stars
+
+
+def _challenge_difficulty_text(level: str) -> str:
+    labels = {
+        "easy": "⭐ Easy",
+        "normal": "⭐⭐ Normal",
+        "hard": "⭐⭐⭐ Hard",
+    }
+    return labels.get(level, level.title())
+
+
+def save_challenge_attempt(
+    quiz_title: str,
+    total_stars: int,
+    categories: list[dict],
+    answers: list[dict],
+) -> Path:
+    attempt_dir = next_attempt_dir(quiz_title)
+    payload = {
+        "mode": "challenge",
+        "quiz_title": quiz_title,
+        "stars_earned": total_stars,
+        "stars_total": len(categories) * 3,
+        "total_categories": len(categories),
+        "answers": answers,
+    }
+    (attempt_dir / "answers.json").write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    lines = [
+        f"Quiz: {quiz_title}",
+        f"Stars: {total_stars}/{len(categories) * 3}",
+        "",
+    ]
+    for item in answers:
+        lines.extend(
+            [
+                f"Category: {item['category']}",
+                f"Difficulty: {_challenge_difficulty_text(item['difficulty'])}",
+                f"Stars earned: {_challenge_star_badge(item['stars_earned'])} ({item['stars_earned']})",
+                f"Correct: {'yes' if item['is_correct'] else 'no'}",
+                f"Selected: {item['selected_labels'] or 'No answer'}",
+                f"Expected: {item['expected_labels']}",
+                f"Explanation: {item['explanation'] or '-'}",
+                "",
+            ]
+        )
+
+    (attempt_dir / "answers.txt").write_text("\n".join(lines), encoding="utf-8")
+    return attempt_dir
+
+
 def _wait_for_gemini_window(limit_per_minute: int = GEMINI_REQUESTS_PER_MINUTE) -> None:
     now = time.time()
     while _GEMINI_REQUEST_TIMES and (now - _GEMINI_REQUEST_TIMES[0]) >= 60:
@@ -6959,6 +7596,303 @@ def run(
         render_exit_message("Quiz closed. Thanks for trying QuizMD.", no_color=no_color)
 
 
+def run_challenge(
+    title: str,
+    categories: list[dict],
+    theme_name: str = "auto",
+    no_color: bool = False,
+    full_screen: bool = False,
+    ui: str = "classic",
+    show_feedback: bool = True,
+):
+    try:
+        from rich.console import Console
+        from rich.markdown import Markdown
+        from rich.panel import Panel
+        from rich.table import Table
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Running the quiz requires rich. Install dependencies from requirements.txt."
+        ) from exc
+
+    if not categories:
+        raise RuntimeError("Challenge mode requires at least one category.")
+
+    theme = select_theme(theme_name)
+    console = Console(no_color=no_color)
+    start_clean_screen(ui == "next")
+    console.print(LOGO)
+
+    challenge_results: dict[int, dict] = {}
+    difficulty_choices = [
+        ("easy", "⭐ Easy", "Safer distractors, 1 star on correct answer."),
+        ("normal", "⭐⭐ Normal", "Balanced distractors, 2 stars on correct answer."),
+        ("hard", "⭐⭐⭐ Hard", "Hard distractors, 3 stars on correct answer."),
+    ]
+    difficulty_aliases = {
+        "1": "easy",
+        "easy": "easy",
+        "e": "easy",
+        "2": "normal",
+        "normal": "normal",
+        "n": "normal",
+        "3": "hard",
+        "hard": "hard",
+        "h": "hard",
+    }
+
+    try:
+        intro_lines = [
+            "[bold]Rules:[/bold]",
+            "- Pick one category at a time.",
+            "- Choose your risk level: Easy ⭐, Normal ⭐⭐, Hard ⭐⭐⭐.",
+            "- Correct answer earns stars equal to chosen difficulty.",
+            "- Incorrect answer earns 0 stars.",
+            "- One attempt per category (category is then locked).",
+            "- Press [bold]Ctrl+C[/bold] to exit at any time.",
+            "",
+            "Press Enter to start your challenge board.",
+        ]
+        console.print(
+            Panel(
+                f"[bold {theme['primary']}]Challenge Quiz: {title}[/bold {theme['primary']}]\n\n"
+                + "\n".join(intro_lines),
+                border_style=theme["panel"],
+            )
+        )
+        prompt_input()
+
+        while len(challenge_results) < len(categories):
+            start_clean_screen(ui == "next")
+            console.print(LOGO)
+
+            total_stars_now = sum(item["stars_earned"] for item in challenge_results.values())
+            board = Table(show_header=True, header_style=f"bold {theme['primary']}")
+            board.add_column("#", style=theme["secondary"], justify="right", width=3)
+            board.add_column("Category", style=theme["primary"])
+            board.add_column("Status", style=theme["accent"])
+            board.add_column("Stars", style=theme["success"], justify="center")
+            selectable: dict[int, int] = {}
+            for idx, category in enumerate(categories):
+                category_name = category["category"]
+                display_number = idx + 1
+                result = challenge_results.get(idx)
+                if result is None:
+                    status = "Pending"
+                    stars_label = f"{_challenge_star_badge(0)} (0)"
+                    display_index = str(display_number)
+                    selectable[display_number] = idx
+                else:
+                    status = "Completed"
+                    stars_label = f"{_challenge_star_badge(result['stars_earned'])} ({result['stars_earned']})"
+                    display_index = str(display_number)
+                board.add_row(display_index, category_name, status, stars_label)
+
+            console.print(
+                Panel(
+                    board,
+                    title=f"[bold {theme['primary']}]Category Board[/bold {theme['primary']}]",
+                    subtitle=f"[{theme['accent']}]Current stars: {total_stars_now}/{len(categories) * 3}[/{theme['accent']}]",
+                    border_style=theme["panel"],
+                )
+            )
+
+            chosen_category_idx = None
+            while chosen_category_idx is None:
+                raw = prompt_input("Choose a pending category number: ").strip()
+                if not raw:
+                    console.print(
+                        f"[{theme['danger']}]Please enter a category number or name.[/{theme['danger']}]"
+                    )
+                    continue
+                pending_names = {idx: categories[idx]["category"] for idx in selectable.values()}
+                lowered = raw.casefold()
+                exact = [idx for idx, name in pending_names.items() if name.casefold() == lowered]
+                prefix = [idx for idx, name in pending_names.items() if name.casefold().startswith(lowered)]
+
+                # Numeric input primarily maps to the displayed pending index.
+                # If that misses, still allow exact/prefix name matching (e.g. category name "101").
+                if raw.isdigit():
+                    chosen_category_idx = selectable.get(int(raw))
+                    if chosen_category_idx is not None:
+                        continue
+                if len(exact) == 1:
+                    chosen_category_idx = exact[0]
+                elif len(prefix) == 1:
+                    chosen_category_idx = prefix[0]
+                elif len(prefix) > 1:
+                    console.print(
+                        f"[{theme['danger']}]That matches multiple categories. Type the full name or number.[/{theme['danger']}]"
+                    )
+                    continue
+                if chosen_category_idx is None:
+                    console.print(
+                        f"[{theme['danger']}]That category is not available. Use a pending number or name.[/{theme['danger']}]"
+                    )
+
+            category = categories[chosen_category_idx]
+            category_name = category["category"]
+
+            start_clean_screen(ui == "next")
+            console.print(LOGO)
+            difficulty_table = Table(show_header=True, header_style=f"bold {theme['primary']}")
+            difficulty_table.add_column("#", style=theme["secondary"], justify="right", width=3)
+            difficulty_table.add_column("Difficulty", style=theme["primary"])
+            difficulty_table.add_column("Risk/Reward", style=theme["accent"])
+            for idx, (_key, label, desc) in enumerate(difficulty_choices, start=1):
+                difficulty_table.add_row(str(idx), label, desc)
+            console.print(
+                Panel(
+                    difficulty_table,
+                    title=f"[bold {theme['primary']}]Category: {category_name}[/bold {theme['primary']}]",
+                    border_style=theme["panel"],
+                )
+            )
+
+            chosen_diff_key = None
+            while chosen_diff_key is None:
+                raw = prompt_input("Choose difficulty (1-3): ").strip()
+                mapped = difficulty_aliases.get(raw.casefold())
+                if mapped:
+                    chosen_diff_key = mapped
+                else:
+                    console.print(
+                        f"[{theme['danger']}]Please choose 1/2/3 or easy/normal/hard.[/{theme['danger']}]"
+                    )
+
+            question = dict(category["difficulties"][chosen_diff_key])
+            question["title"] = f"{category_name} ({_challenge_difficulty_text(chosen_diff_key)})"
+            raw_limit = question.get("time_limit")
+            try:
+                parsed_limit = int(raw_limit) if raw_limit is not None else 0
+            except (TypeError, ValueError):
+                parsed_limit = 0
+            if parsed_limit <= 0:
+                question["time_limit"] = CHALLENGE_DEFAULT_TIME_LIMIT_SECONDS
+
+            perfect, ans, _imposter_ans, grading = run_coroutine_sync(
+                ask_question(
+                    question,
+                    theme,
+                    question_index=len(challenge_results) + 1,
+                    total_questions=len(categories),
+                    no_color=no_color,
+                    compact=False,
+                    full_screen=full_screen,
+                    ui=ui,
+                    show_feedback=show_feedback,
+                )
+            )
+
+            stars_for_diff = CHALLENGE_STARS_BY_DIFFICULTY[chosen_diff_key]
+            stars_earned = stars_for_diff if grading["answer_correct"] else 0
+            expected_labels = format_labels(question["options"], question["correct"])
+            selected_labels = format_labels(question["options"], ans)
+            challenge_results[chosen_category_idx] = {
+                "category": category_name,
+                "difficulty": chosen_diff_key,
+                "stars_earned": stars_earned,
+                "is_correct": bool(grading["answer_correct"]),
+                "selected_indexes": ans or [],
+                "selected_labels": selected_labels,
+                "expected_indexes": question["correct"],
+                "expected_labels": expected_labels,
+                "question_text": question["question"],
+                "explanation": question.get("explanation", ""),
+                "result_label": "Correct" if grading["answer_correct"] else "Wrong",
+            }
+
+            status = "Correct" if grading["answer_correct"] else "Wrong"
+            status_style = question_status_style(theme, status)
+            if not full_screen:
+                console.print(f"[{status_style}]{status}[/{status_style}]")
+                console.print(
+                    f"[{theme['secondary']}]Question points:[/{theme['secondary']}] "
+                    f"{grading['question_points']}/{grading['question_max_points']}"
+                )
+                if show_feedback:
+                    console.print(
+                        f"[{theme['secondary']}]Answer:[/{theme['secondary']}] "
+                        f"{expected_labels}"
+                    )
+                if show_feedback and question.get("explanation"):
+                    console.print(
+                        Panel(
+                            Markdown(f"**Explanation**\n\n{question['explanation']}"),
+                            border_style=theme["panel"],
+                        )
+                    )
+
+            result_color = theme["success"] if stars_earned > 0 else theme["danger"]
+            console.print(
+                Panel(
+                    f"Category: [bold]{category_name}[/bold]\n"
+                    f"Difficulty: [bold]{_challenge_difficulty_text(chosen_diff_key)}[/bold]\n"
+                    f"Stars earned: [bold]{_challenge_star_badge(stars_earned)} ({stars_earned})[/bold]",
+                    border_style=result_color,
+                )
+            )
+
+            remaining = len(categories) - len(challenge_results)
+            if remaining > 0:
+                prompt_input("Press Enter to return to the category board...")
+
+        total_stars = sum(item["stars_earned"] for item in challenge_results.values())
+        correct_count = sum(1 for item in challenge_results.values() if item["is_correct"])
+        solved_levels = [item["difficulty"] for item in challenge_results.values() if item["is_correct"]]
+        if "hard" in solved_levels:
+            highest_solved = "⭐⭐⭐ Hard"
+        elif "normal" in solved_levels:
+            highest_solved = "⭐⭐ Normal"
+        elif "easy" in solved_levels:
+            highest_solved = "⭐ Easy"
+        else:
+            highest_solved = "None"
+
+        ordered_results = [challenge_results[idx] for idx in range(len(categories))]
+        stars_rows = "\n".join(
+            f"- {item['category']}: {_challenge_star_badge(item['stars_earned'])}"
+            for item in ordered_results
+        )
+        console.print(
+            Panel(
+                f"[bold {theme['primary']}]Challenge Summary[/bold {theme['primary']}]\n\n"
+                f"Total stars: [bold]{total_stars}/{len(categories) * 3}[/bold]\n"
+                f"Correct categories: [bold]{correct_count}/{len(categories)}[/bold]\n"
+                f"Highest difficulty solved: [bold]{highest_solved}[/bold]\n\n"
+                f"[bold]Stars by category[/bold]\n{stars_rows}",
+                border_style=theme["panel"],
+            )
+        )
+        perfect_total_stars = len(categories) * 3
+        if correct_count == len(categories) and total_stars == perfect_total_stars:
+            confetti = " *ੈ✩‧₊˚༘˚⋆𐙚｡⋆𖦹.✧˚ "
+            console.print(
+                Panel(
+                    f"[bold {theme['success']}]Perfect challenge run![/bold {theme['success']}]\n"
+                    f"{confetti}\n"
+                    f"[bold]{perfect_total_stars}/{perfect_total_stars} stars[/bold] — all categories solved at max difficulty!",
+                    border_style=theme["success"],
+                )
+            )
+
+        if ask_to_save_answers():
+            attempt_dir = save_challenge_attempt(
+                title,
+                total_stars,
+                categories,
+                ordered_results,
+            )
+            console.print(
+                Panel(
+                    f"[bold {theme['success']}]Answers saved successfully.[/bold {theme['success']}]\n{attempt_dir}",
+                    border_style=theme["success"],
+                )
+            )
+    except KeyboardInterrupt:
+        render_exit_message("Challenge quiz closed. Thanks for playing.", no_color=no_color)
+
+
 def run_essay(
     essay: dict,
     theme_name: str = "auto",
@@ -7471,6 +8405,8 @@ def main():
         hello_quiz = created_by_name.get("hello-quiz.md")
         hello_imposter = created_by_name.get("hello-imposter.md")
         hello_debug = created_by_name.get("hello-debug.md")
+        hello_challenge = created_by_name.get("hello-challenge.md")
+        hello_reverse = created_by_name.get("hello-reverse.md")
         hello_essay = created_by_name.get("hello-essay.md")
         if hello_quiz:
             print(f"quizmd --validate {hello_quiz}")
@@ -7481,6 +8417,12 @@ def main():
         if hello_debug:
             print(f"quizmd --validate {hello_debug}")
             print(f"quizmd {hello_debug}")
+        if hello_challenge:
+            print(f"quizmd --validate {hello_challenge}")
+            print(f"quizmd {hello_challenge}")
+        if hello_reverse:
+            print(f"quizmd --validate {hello_reverse}")
+            print(f"quizmd {hello_reverse}")
         if hello_essay:
             print(f"quizmd --validate {hello_essay}")
         print("Set one AI key for essay mode (MCQ quizzes do not need keys):")
@@ -7500,7 +8442,7 @@ def main():
     root_help_epilog = (
         "Other commands:\n"
         "  quizmd init [--ui next]\n"
-        "      Create starter files (hello-quiz.md, hello-imposter.md, hello-debug.md, hello-essay.md).\n"
+        "      Create starter files (hello-quiz.md, hello-imposter.md, hello-debug.md, hello-challenge.md, hello-reverse.md, hello-essay.md).\n"
         "  quizmd room --create [ROOM_NAME] [options]\n"
         "  quizmd room --join ROOM_NAME [--token ROOM_TOKEN] [options]\n"
         "      Multiplayer modes: compete, collaborate, boxing.\n"
@@ -7581,6 +8523,10 @@ def main():
         mode = detect_quiz_mode(args.file)
         if mode == "essay":
             title, essay = parse_essay_markdown(args.file)
+        elif mode == "reverse":
+            title, questions = parse_reverse_markdown(args.file)
+        elif mode == "challenge":
+            title, challenge_categories = parse_challenge_markdown(args.file)
         elif mode == "debug":
             title, debug_questions = parse_debug_markdown(args.file)
         else:
@@ -7601,6 +8547,20 @@ def main():
                 f"Validation passed: Essay Question: {title} ({essay['total_points']} points)",
                 sys.stdout,
             ))
+        elif mode == "reverse":
+            print(
+                safe_for_stream(
+                    f"Validation passed: Reverse Quiz: {title} ({len(questions)} questions)",
+                    sys.stdout,
+                )
+            )
+        elif mode == "challenge":
+            print(
+                safe_for_stream(
+                    f"Validation passed: Challenge Quiz: {title} ({len(challenge_categories)} categories)",
+                    sys.stdout,
+                )
+            )
         elif mode == "debug":
             print(safe_for_stream(f"Validation passed: {title} ({len(debug_questions)} debug questions)", sys.stdout))
         else:
@@ -7617,6 +8577,16 @@ def main():
                 ai_model=args.ai_model,
                 ai_timeout=args.ai_timeout,
                 ui=args.ui,
+            )
+        elif mode == "challenge":
+            run_challenge(
+                title,
+                challenge_categories,
+                theme_name=args.theme,
+                no_color=no_color,
+                full_screen=args.full_screen,
+                ui=args.ui,
+                show_feedback=not args.hide_feedback,
             )
         elif mode == "debug":
             run_debug(

@@ -83,6 +83,8 @@ from quizmd import (
     display_width,
     ensure_terminal_cursor_visible,
     parse_debug_markdown,
+    parse_challenge_markdown,
+    parse_reverse_markdown,
     parse_essay_markdown,
     parse_int_list,
     parse_int_value,
@@ -90,6 +92,7 @@ from quizmd import (
     main,
     prompt_input,
     run,
+    run_challenge,
     run_debug,
     run_room_command,
     run_essay,
@@ -354,6 +357,261 @@ class QuizMarkdownTests(unittest.TestCase):
         finally:
             Path(debug_path).unlink(missing_ok=True)
 
+    def test_detect_quiz_mode_challenge(self):
+        challenge_path = self.write_quiz("# Challenge Quiz: Risk Mode\n")
+        try:
+            self.assertEqual(detect_quiz_mode(challenge_path), "challenge")
+        finally:
+            Path(challenge_path).unlink(missing_ok=True)
+
+    def test_detect_quiz_mode_reverse(self):
+        reverse_path = self.write_quiz("# Reverse Quiz: Behavior to Code\n")
+        try:
+            self.assertEqual(detect_quiz_mode(reverse_path), "reverse")
+        finally:
+            Path(reverse_path).unlink(missing_ok=True)
+
+    def test_parse_reverse_markdown_valid(self):
+        reverse_path = self.write_quiz(
+            "# Reverse Quiz: Behavior to Code\n\n"
+            "## Question 1\n"
+            "Output:\\n1\\n2\\n3\\n\n"
+            "Which code does this?\n\n"
+            "```python\n"
+            "for i in range(1, 4):\n"
+            "    print(i)\n"
+            "```\n\n"
+            "Options:\n"
+            "- Uses range(1, 4)\n"
+            "- Uses range(4)\n"
+            "- Uses range(3, 0, -1)\n\n"
+            "Answer: 1\n"
+            "Type: single\n\n"
+            "## Question 2\n"
+            "Which statements are correct for output 2,4,6,8?\n\n"
+            "Options:\n"
+            "- First four positive even numbers\n"
+            "- Multiples of 2 from 2 through 8\n"
+            "- First four odd numbers\n\n"
+            "Answer: 1,2\n"
+            "Type: multiple\n"
+        )
+        try:
+            title, questions = parse_reverse_markdown(reverse_path)
+            self.assertEqual(title, "Behavior to Code")
+            self.assertEqual(len(questions), 2)
+            self.assertEqual(questions[1]["type"], "multiple")
+            self.assertEqual(questions[1]["correct"], [1, 2])
+            self.assertIn("```python", questions[0]["question"])
+            self.assertEqual(questions[0]["time_limit"], 45)
+            self.assertEqual(questions[1]["time_limit"], 45)
+        finally:
+            Path(reverse_path).unlink(missing_ok=True)
+
+    def test_parse_reverse_markdown_preserves_explicit_time(self):
+        reverse_path = self.write_quiz(
+            "# Reverse Quiz: Timed\n\n"
+            "## Question 1\n"
+            "Output: X\n\n"
+            "Options:\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1\n"
+            "Type: single\n"
+            "Time: 12\n"
+        )
+        try:
+            title, questions = parse_reverse_markdown(reverse_path)
+            self.assertEqual(title, "Timed")
+            self.assertEqual(questions[0]["time_limit"], 12)
+        finally:
+            Path(reverse_path).unlink(missing_ok=True)
+
+    def test_parse_reverse_markdown_requires_reverse_header(self):
+        reverse_path = self.write_quiz(
+            "# Hello Quiz\n\n"
+            "## Question 1\n"
+            "Pick one.\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1\n"
+            "Type: single\n"
+        )
+        try:
+            with self.assertRaisesRegex(ValueError, "reverse quiz must start with"):
+                parse_reverse_markdown(reverse_path)
+        finally:
+            Path(reverse_path).unlink(missing_ok=True)
+
+    def test_parse_reverse_markdown_rejects_imposters_field(self):
+        reverse_path = self.write_quiz(
+            "# Reverse Quiz: Behavior to Code\n\n"
+            "## Question 1\n"
+            "Pick one.\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1\n"
+            "Imposters: 2\n"
+            "Type: single\n"
+        )
+        try:
+            with self.assertRaisesRegex(ValueError, "does not support Imposters"):
+                parse_reverse_markdown(reverse_path)
+        finally:
+            Path(reverse_path).unlink(missing_ok=True)
+
+    def test_parse_reverse_markdown_supports_question_bullets_with_options_marker(self):
+        reverse_path = self.write_quiz(
+            "# Reverse Quiz: Behavior to Code\n\n"
+            "## Question 1\n"
+            "Choose the right behavior.\n"
+            "- This bullet is part of the prompt\n"
+            "- This one too\n\n"
+            "Options:\n"
+            "- Correct\n"
+            "- Wrong\n\n"
+            "Answer: 1\n"
+            "Type: single\n"
+        )
+        try:
+            title, questions = parse_reverse_markdown(reverse_path)
+            self.assertEqual(title, "Behavior to Code")
+            self.assertEqual(len(questions), 1)
+            self.assertIn("This bullet is part of the prompt", questions[0]["question"])
+            self.assertEqual(questions[0]["options"], ["Correct", "Wrong"])
+        finally:
+            Path(reverse_path).unlink(missing_ok=True)
+
+    def test_parse_challenge_markdown_valid(self):
+        challenge_path = self.write_quiz(
+            "# Challenge Quiz: Risk Mode\n\n"
+            "## Category: Complexity\n"
+            "What is complexity?\n\n"
+            "### Easy\n"
+            "- O(n)\n"
+            "- O(n^2)\n"
+            "Answer: 2\n"
+            "Type: single\n"
+            "Explanation: Nested loops.\n\n"
+            "### Normal\n"
+            "- O(n^2)\n"
+            "- O(n log n)\n"
+            "- O(n^3)\n"
+            "Answer: 1\n"
+            "Type: single\n\n"
+            "### Hard\n"
+            "- O(n^2)\n"
+            "- O(n^2 + n)\n"
+            "- O(n log n)\n"
+            "Answer: 1\n"
+            "Type: single\n"
+        )
+        try:
+            title, categories = parse_challenge_markdown(challenge_path)
+            self.assertEqual(title, "Risk Mode")
+            self.assertEqual(len(categories), 1)
+            cat = categories[0]
+            self.assertEqual(cat["category"], "Complexity")
+            self.assertIn("easy", cat["difficulties"])
+            self.assertIn("normal", cat["difficulties"])
+            self.assertIn("hard", cat["difficulties"])
+            self.assertEqual(cat["difficulties"]["easy"]["correct"], [2])
+            self.assertEqual(cat["difficulties"]["easy"]["time_limit"], 45)
+            self.assertEqual(cat["difficulties"]["normal"]["time_limit"], 45)
+            self.assertEqual(cat["difficulties"]["hard"]["time_limit"], 45)
+        finally:
+            Path(challenge_path).unlink(missing_ok=True)
+
+    def test_parse_challenge_markdown_missing_difficulty_fails(self):
+        challenge_path = self.write_quiz(
+            "# Challenge Quiz: Risk Mode\n\n"
+            "## Category: Complexity\n"
+            "What is complexity?\n\n"
+            "### Easy\n"
+            "- O(n)\n"
+            "- O(n^2)\n"
+            "Answer: 2\n\n"
+            "### Hard\n"
+            "- O(n^2)\n"
+            "- O(n^3)\n"
+            "Answer: 1\n"
+        )
+        try:
+            with self.assertRaisesRegex(ValueError, "missing required difficulty section\\(s\\): Normal"):
+                parse_challenge_markdown(challenge_path)
+        finally:
+            Path(challenge_path).unlink(missing_ok=True)
+
+    def test_parse_challenge_markdown_duplicate_category_fails(self):
+        challenge_path = self.write_quiz(
+            "# Challenge Quiz: Risk Mode\n\n"
+            "## Category: Complexity\n"
+            "Q1\n"
+            "### Easy\n- A\n- B\nAnswer: 1\n"
+            "### Normal\n- A\n- B\nAnswer: 1\n"
+            "### Hard\n- A\n- B\nAnswer: 1\n\n"
+            "## Category: Complexity\n"
+            "Q2\n"
+            "### Easy\n- A\n- B\nAnswer: 1\n"
+            "### Normal\n- A\n- B\nAnswer: 1\n"
+            "### Hard\n- A\n- B\nAnswer: 1\n"
+        )
+        try:
+            with self.assertRaisesRegex(ValueError, "duplicate category name"):
+                parse_challenge_markdown(challenge_path)
+        finally:
+            Path(challenge_path).unlink(missing_ok=True)
+
+    def test_parse_challenge_markdown_rejects_multiple_type(self):
+        challenge_path = self.write_quiz(
+            "# Challenge Quiz: Risk Mode\n\n"
+            "## Category: Complexity\n"
+            "Pick all valid statements.\n\n"
+            "### Easy\n"
+            "- A\n"
+            "- B\n"
+            "Answer: 1,2\n"
+            "Type: multiple\n\n"
+            "### Normal\n"
+            "- A\n"
+            "- B\n"
+            "Answer: 1\n\n"
+            "### Hard\n"
+            "- A\n"
+            "- B\n"
+            "Answer: 1\n"
+        )
+        try:
+            with self.assertRaisesRegex(ValueError, "supports only Type: single"):
+                parse_challenge_markdown(challenge_path)
+        finally:
+            Path(challenge_path).unlink(missing_ok=True)
+
+    def test_parse_challenge_markdown_rejects_multiple_answers(self):
+        challenge_path = self.write_quiz(
+            "# Challenge Quiz: Risk Mode\n\n"
+            "## Category: Complexity\n"
+            "Pick one.\n\n"
+            "### Easy\n"
+            "- A\n"
+            "- B\n"
+            "Answer: 1,2\n"
+            "Type: single\n\n"
+            "### Normal\n"
+            "- A\n"
+            "- B\n"
+            "Answer: 1\n\n"
+            "### Hard\n"
+            "- A\n"
+            "- B\n"
+            "Answer: 1\n"
+        )
+        try:
+            with self.assertRaisesRegex(ValueError, "requires exactly one correct answer"):
+                parse_challenge_markdown(challenge_path)
+        finally:
+            Path(challenge_path).unlink(missing_ok=True)
+
     def test_debug_scoring_tracks_changed_lines(self):
         broken = "def greet(name)\n    print(name\n"
         fixed = "def greet(name):\n    print(name)\n"
@@ -502,6 +760,314 @@ class QuizMarkdownTests(unittest.TestCase):
                             with contextlib.redirect_stdout(buf):
                                 run_debug("Debug Quiz", questions, no_color=True)
         mocked_save_debug_attempt.assert_called_once()
+
+    def test_run_challenge_scores_stars_and_locks_categories(self):
+        categories = [
+            {
+                "category": "Complexity",
+                "question": "What is O(n^2)?",
+                "difficulties": {
+                    "easy": {
+                        "title": "Complexity [Easy]",
+                        "question": "What is O(n^2)?",
+                        "options": ["A", "B", "C"],
+                        "correct": [2],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "Easy explanation",
+                        "imposters": [],
+                    },
+                    "normal": {
+                        "title": "Complexity [Normal]",
+                        "question": "What is O(n^2)?",
+                        "options": ["A", "B", "C"],
+                        "correct": [1],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "Normal explanation",
+                        "imposters": [],
+                    },
+                    "hard": {
+                        "title": "Complexity [Hard]",
+                        "question": "What is O(n^2)?",
+                        "options": ["A", "B", "C"],
+                        "correct": [1],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "Hard explanation",
+                        "imposters": [],
+                    },
+                },
+            },
+            {
+                "category": "Data Structures",
+                "question": "Which has O(1) lookup?",
+                "difficulties": {
+                    "easy": {
+                        "title": "Data Structures [Easy]",
+                        "question": "Which has O(1) lookup?",
+                        "options": ["list", "dict"],
+                        "correct": [2],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "Easy explanation",
+                        "imposters": [],
+                    },
+                    "normal": {
+                        "title": "Data Structures [Normal]",
+                        "question": "Which has O(1) lookup?",
+                        "options": ["dict", "list"],
+                        "correct": [1],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "Normal explanation",
+                        "imposters": [],
+                    },
+                    "hard": {
+                        "title": "Data Structures [Hard]",
+                        "question": "Which has O(1) lookup?",
+                        "options": ["dict", "tuple"],
+                        "correct": [1],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "Hard explanation",
+                        "imposters": [],
+                    },
+                },
+            },
+        ]
+
+        # Prompt sequence:
+        # Enter intro, choose category 1 + hard, return to board,
+        # choose remaining pending category 2 + normal (stable numbering).
+        prompt_sequence = ["", "1", "3", "", "2", "2"]
+        grading_sequence = [
+            (True, [1], [], {"answer_correct": True, "question_points": 1, "question_max_points": 1}),
+            (False, [2], [], {"answer_correct": False, "question_points": 0, "question_max_points": 1}),
+        ]
+        grading_iter = iter(grading_sequence)
+
+        def fake_run_coroutine(coro):
+            try:
+                coro.close()
+            except Exception:
+                pass
+            return next(grading_iter)
+
+        with patch("quizmd.prompt_input", side_effect=prompt_sequence):
+            with patch("quizmd.run_coroutine_sync", side_effect=fake_run_coroutine):
+                with patch("quizmd.ask_to_save_answers", return_value=False):
+                    buf = io.StringIO()
+                    with contextlib.redirect_stdout(buf):
+                        run_challenge("Risk Mode", categories, no_color=True, show_feedback=True)
+        out = buf.getvalue()
+        self.assertIn("Challenge Summary", out)
+        self.assertIn("Total stars:", out)
+        self.assertIn("3/6", out)
+        self.assertIn("Correct categories:", out)
+
+    def test_run_challenge_accepts_text_category_and_difficulty_choices(self):
+        categories = [
+            {
+                "category": "Complexity",
+                "question": "What is O(n^2)?",
+                "difficulties": {
+                    "easy": {
+                        "title": "Complexity [Easy]",
+                        "question": "What is O(n^2)?",
+                        "options": ["A", "B", "C"],
+                        "correct": [2],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "Easy explanation",
+                        "imposters": [],
+                    },
+                    "normal": {
+                        "title": "Complexity [Normal]",
+                        "question": "What is O(n^2)?",
+                        "options": ["A", "B", "C"],
+                        "correct": [1],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "Normal explanation",
+                        "imposters": [],
+                    },
+                    "hard": {
+                        "title": "Complexity [Hard]",
+                        "question": "What is O(n^2)?",
+                        "options": ["A", "B", "C"],
+                        "correct": [1],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "Hard explanation",
+                        "imposters": [],
+                    },
+                },
+            },
+            {
+                "category": "Data Structures",
+                "question": "Which has O(1) lookup?",
+                "difficulties": {
+                    "easy": {
+                        "title": "Data Structures [Easy]",
+                        "question": "Which has O(1) lookup?",
+                        "options": ["list", "dict"],
+                        "correct": [2],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "Easy explanation",
+                        "imposters": [],
+                    },
+                    "normal": {
+                        "title": "Data Structures [Normal]",
+                        "question": "Which has O(1) lookup?",
+                        "options": ["dict", "list"],
+                        "correct": [1],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "Normal explanation",
+                        "imposters": [],
+                    },
+                    "hard": {
+                        "title": "Data Structures [Hard]",
+                        "question": "Which has O(1) lookup?",
+                        "options": ["dict", "tuple"],
+                        "correct": [1],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "Hard explanation",
+                        "imposters": [],
+                    },
+                },
+            },
+        ]
+
+        # Use category name/prefix and difficulty text/alias instead of numeric input.
+        prompt_sequence = ["", "Complexity", "hard", "", "data", "n"]
+        grading_sequence = [
+            (True, [1], [], {"answer_correct": True, "question_points": 1, "question_max_points": 1}),
+            (True, [1], [], {"answer_correct": True, "question_points": 1, "question_max_points": 1}),
+        ]
+        grading_iter = iter(grading_sequence)
+
+        def fake_run_coroutine(coro):
+            try:
+                coro.close()
+            except Exception:
+                pass
+            return next(grading_iter)
+
+        with patch("quizmd.prompt_input", side_effect=prompt_sequence):
+            with patch("quizmd.run_coroutine_sync", side_effect=fake_run_coroutine):
+                with patch("quizmd.ask_to_save_answers", return_value=False):
+                    buf = io.StringIO()
+                    with contextlib.redirect_stdout(buf):
+                        run_challenge("Risk Mode", categories, no_color=True, show_feedback=True)
+        out = buf.getvalue()
+        self.assertIn("Challenge Summary", out)
+        self.assertIn("5/6", out)
+        self.assertIn("Highest difficulty solved:", out)
+
+    def test_run_challenge_allows_numeric_category_name_matching(self):
+        categories = [
+            {
+                "category": "101",
+                "question": "Pick one",
+                "difficulties": {
+                    "easy": {
+                        "title": "101 [Easy]",
+                        "question": "Pick one",
+                        "options": ["A", "B"],
+                        "correct": [1],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "",
+                        "imposters": [],
+                    },
+                    "normal": {
+                        "title": "101 [Normal]",
+                        "question": "Pick one",
+                        "options": ["A", "B"],
+                        "correct": [1],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "",
+                        "imposters": [],
+                    },
+                    "hard": {
+                        "title": "101 [Hard]",
+                        "question": "Pick one",
+                        "options": ["A", "B"],
+                        "correct": [1],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "",
+                        "imposters": [],
+                    },
+                },
+            },
+            {
+                "category": "Data",
+                "question": "Pick one",
+                "difficulties": {
+                    "easy": {
+                        "title": "Data [Easy]",
+                        "question": "Pick one",
+                        "options": ["A", "B"],
+                        "correct": [1],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "",
+                        "imposters": [],
+                    },
+                    "normal": {
+                        "title": "Data [Normal]",
+                        "question": "Pick one",
+                        "options": ["A", "B"],
+                        "correct": [1],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "",
+                        "imposters": [],
+                    },
+                    "hard": {
+                        "title": "Data [Hard]",
+                        "question": "Pick one",
+                        "options": ["A", "B"],
+                        "correct": [1],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "",
+                        "imposters": [],
+                    },
+                },
+            },
+        ]
+
+        # Pick displayed index 2 first, then pick remaining category by exact numeric name.
+        prompt_sequence = ["", "2", "1", "", "101", "1"]
+        grading_sequence = [
+            (True, [1], [], {"answer_correct": True, "question_points": 1, "question_max_points": 1}),
+            (True, [1], [], {"answer_correct": True, "question_points": 1, "question_max_points": 1}),
+        ]
+        grading_iter = iter(grading_sequence)
+
+        def fake_run_coroutine(coro):
+            try:
+                coro.close()
+            except Exception:
+                pass
+            return next(grading_iter)
+
+        with patch("quizmd.prompt_input", side_effect=prompt_sequence):
+            with patch("quizmd.run_coroutine_sync", side_effect=fake_run_coroutine):
+                with patch("quizmd.ask_to_save_answers", return_value=False):
+                    buf = io.StringIO()
+                    with contextlib.redirect_stdout(buf):
+                        run_challenge("Risk Mode", categories, no_color=True, show_feedback=True)
+        out = buf.getvalue()
+        self.assertIn("Challenge Summary", out)
+        self.assertIn("2/6", out)
 
     def test_debug_model_for_provider_auto_only_uses_custom_model_first(self):
         self.assertEqual(
@@ -3070,6 +3636,70 @@ class QuizMarkdownTests(unittest.TestCase):
         finally:
             Path(debug_path).unlink(missing_ok=True)
 
+    def test_main_routes_to_challenge_runner(self):
+        challenge_path = self.write_quiz(
+            "# Challenge Quiz: Risk Mode\n\n"
+            "## Category: Complexity\n"
+            "What is complexity?\n\n"
+            "### Easy\n"
+            "- O(n)\n"
+            "- O(n^2)\n"
+            "Answer: 2\n\n"
+            "### Normal\n"
+            "- O(n^2)\n"
+            "- O(n log n)\n"
+            "Answer: 1\n\n"
+            "### Hard\n"
+            "- O(n^2)\n"
+            "- O(n^3)\n"
+            "Answer: 1\n"
+        )
+        try:
+            with patch("sys.argv", ["quizmd.py", challenge_path]):
+                with patch("quizmd.run_challenge") as mocked_run_challenge:
+                    main()
+            mocked_run_challenge.assert_called_once()
+        finally:
+            Path(challenge_path).unlink(missing_ok=True)
+
+    def test_main_routes_to_reverse_runner(self):
+        reverse_path = self.write_quiz(
+            "# Reverse Quiz: Behavior to Code\n\n"
+            "## Question 1\n"
+            "Pick one.\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1\n"
+            "Type: single\n"
+        )
+        try:
+            with patch("sys.argv", ["quizmd.py", reverse_path]):
+                with patch("quizmd.run") as mocked_run:
+                    main()
+            mocked_run.assert_called_once()
+        finally:
+            Path(reverse_path).unlink(missing_ok=True)
+
+    def test_main_validate_reverse_prints_mode_specific_success(self):
+        reverse_path = self.write_quiz(
+            "# Reverse Quiz: Behavior to Code\n\n"
+            "## Question 1\n"
+            "Pick one.\n\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1\n"
+            "Type: single\n"
+        )
+        try:
+            with patch("sys.argv", ["quizmd.py", "--validate", reverse_path]):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    main()
+            out = buf.getvalue()
+            self.assertIn("Validation passed: Reverse Quiz: Behavior to Code (1 questions)", out)
+        finally:
+            Path(reverse_path).unlink(missing_ok=True)
+
     def test_init_starter_files_creates_expected_files(self):
         old_cwd = os.getcwd()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3079,17 +3709,27 @@ class QuizMarkdownTests(unittest.TestCase):
                 created_names = sorted(path.name for path in created)
                 self.assertEqual(
                     created_names,
-                    ["QUIZ_GUIDE.md", "hello-debug.md", "hello-essay.md", "hello-imposter.md", "hello-quiz.md"],
+                    ["QUIZ_GUIDE.md", "hello-challenge.md", "hello-debug.md", "hello-essay.md", "hello-imposter.md", "hello-quiz.md", "hello-reverse.md"],
                 )
                 self.assertTrue(Path("hello-quiz.md").exists())
                 self.assertTrue(Path("hello-imposter.md").exists())
                 self.assertTrue(Path("hello-debug.md").exists())
+                self.assertTrue(Path("hello-challenge.md").exists())
+                self.assertTrue(Path("hello-reverse.md").exists())
                 self.assertTrue(Path("hello-essay.md").exists())
                 self.assertTrue(Path("QUIZ_GUIDE.md").exists())
                 # Ensure starter templates are valid with current strict parsers.
                 parse_quiz_markdown("hello-quiz.md")
                 parse_quiz_markdown("hello-imposter.md")
                 parse_debug_markdown("hello-debug.md")
+                _challenge_title, challenge_categories = parse_challenge_markdown("hello-challenge.md")
+                _reverse_title, reverse_questions = parse_reverse_markdown("hello-reverse.md")
+                self.assertEqual(
+                    [item["category"] for item in challenge_categories],
+                    ["Geography", "Literature", "Science", "Athletics", "History", "Lifestyle"],
+                )
+                self.assertEqual(_reverse_title, "Python Reverse Engineering")
+                self.assertEqual(len(reverse_questions), 5)
                 parse_essay_markdown("hello-essay.md")
             finally:
                 os.chdir(old_cwd)
@@ -3115,7 +3755,26 @@ class QuizMarkdownTests(unittest.TestCase):
                 self.assertTrue(Path("hello-quiz.md").exists())
                 self.assertTrue(Path("hello-imposter.md").exists())
                 self.assertTrue(Path("hello-debug.md").exists())
+                self.assertTrue(Path("hello-challenge.md").exists())
+                self.assertTrue(Path("hello-reverse.md").exists())
                 self.assertTrue(Path("hello-essay.md").exists())
+            finally:
+                os.chdir(old_cwd)
+
+    def test_main_init_subcommand_prints_challenge_next_steps(self):
+        old_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                with patch("sys.argv", ["quizmd.py", "init", "--ui", "classic"]):
+                    buf = io.StringIO()
+                    with contextlib.redirect_stdout(buf):
+                        main()
+                out = buf.getvalue()
+                self.assertIn("quizmd --validate hello-challenge.md", out)
+                self.assertIn("quizmd hello-challenge.md", out)
+                self.assertIn("quizmd --validate hello-reverse.md", out)
+                self.assertIn("quizmd hello-reverse.md", out)
             finally:
                 os.chdir(old_cwd)
 
@@ -3132,6 +3791,8 @@ class QuizMarkdownTests(unittest.TestCase):
                 self.assertTrue(Path("hello-quiz.md").exists())
                 self.assertTrue(Path("hello-imposter.md").exists())
                 self.assertTrue(Path("hello-debug.md").exists())
+                self.assertTrue(Path("hello-challenge.md").exists())
+                self.assertTrue(Path("hello-reverse.md").exists())
                 self.assertTrue(Path("hello-essay.md").exists())
                 self.assertTrue(Path("QUIZ_GUIDE.md").exists())
                 self.assertIn("Try it out", out)
@@ -3150,6 +3811,10 @@ class QuizMarkdownTests(unittest.TestCase):
                 self.assertIn("Imposter distractor spotting", out)
                 self.assertIn("hello-debug.md", out)
                 self.assertIn("Fix broken code with line hints", out)
+                self.assertIn("hello-challenge.md", out)
+                self.assertIn("Category mode with star scoring", out)
+                self.assertIn("hello-reverse.md", out)
+                self.assertIn("Reverse engineering MCQ mode", out)
                 self.assertLessEqual(max(len(line) for line in out.splitlines()), 120)
                 self.assertNotIn("Next steps:", out)
                 self.assertNotIn("Room modes (online):", out)
