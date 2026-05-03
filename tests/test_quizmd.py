@@ -6927,6 +6927,82 @@ class QuizMarkdownTests(unittest.TestCase):
         finally:
             Path(path).unlink(missing_ok=True)
 
+    def test_room_markdown_payload_preserves_question_points(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as handle:
+            handle.write(
+                "# Points Demo\n\n"
+                "## Five Point Question\n"
+                "Pick A.\n\n"
+                "- A\n"
+                "- B\n\n"
+                "Answer: 1\n"
+                "Type: single\n"
+                "Time: 20\n"
+                "Points: 5\n\n"
+                "## Hundred Point Question\n"
+                "Pick B.\n\n"
+                "- A\n"
+                "- B\n\n"
+                "Answer: 2\n"
+                "Type: single\n"
+                "Time: 25\n"
+                "Points: 100\n"
+            )
+            path = handle.name
+        try:
+            title, questions = _room_quiz_payload_from_markdown(path)
+            self.assertEqual(title, "Points Demo")
+            self.assertEqual([row["points"] for row in questions], [5.0, 100.0])
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+    def test_room_json_payload_preserves_question_points(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "quiz_title": "Room Quiz",
+                        "questions": [
+                            {
+                                "title": "Q1",
+                                "question": "Pick one",
+                                "options": ["A", "B"],
+                                "correct": [1],
+                                "type": "single",
+                                "time_limit": 20,
+                                "points": 100,
+                            }
+                        ],
+                    }
+                )
+            )
+            path = handle.name
+        try:
+            _title, questions = _room_quiz_payload_from_json(path)
+            self.assertEqual(questions[0]["points"], 100.0)
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+    def test_room_markdown_payload_rejects_invalid_question_points(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as handle:
+            handle.write(
+                "# Demo\n\n"
+                "## Q1\n"
+                "Pick A.\n\n"
+                "- A\n"
+                "- B\n\n"
+                "Answer: 1\n"
+                "Type: single\n"
+                "Time: 20\n"
+                "Points: 0\n"
+            )
+            path = handle.name
+        try:
+            with self.assertRaisesRegex(ValueError, "points must be greater than zero"):
+                _room_quiz_payload_from_markdown(path)
+        finally:
+            Path(path).unlink(missing_ok=True)
+
     def test_room_load_quiz_payload_rejects_non_mcq_modes(self):
         with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as handle:
             handle.write(

@@ -1310,7 +1310,7 @@ def parse_quiz_markdown(path: str, text_override: str | None = None):
                         "Use '# Challenge Quiz: <title>' at the top for category difficulty quizzes."
                     )
 
-        field_pattern = re.compile(r"(?i)^(answer|type|time|hint|explanation|imposters)\s*:\s*(.*)$")
+        field_pattern = re.compile(r"(?i)^(answer|type|time|points|score|hint|explanation|imposters)\s*:\s*(.*)$")
         option_pattern = re.compile(r"^\s*-\s*(.*)$")
         option_with_content_pattern = re.compile(r"^\s*-\s+\S.*$")
 
@@ -1412,6 +1412,7 @@ def parse_quiz_markdown(path: str, text_override: str | None = None):
         explanation = ""
         hint = ""
         imposters = []
+        points = 1.0
         seen_field = False
 
         for l in metadata_lines:
@@ -1443,6 +1444,17 @@ def parse_quiz_markdown(path: str, text_override: str | None = None):
                     qtype = value.strip().lower()
                 elif key == "time":
                     time_limit = parse_int_value(value, "time", title, source)
+                elif key in {"points", "score"}:
+                    try:
+                        points = float(value.strip())
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"{source}: points must be a number in question {title!r}"
+                        ) from exc
+                    if points <= 0:
+                        raise ValueError(
+                            f"{source}: points must be greater than zero in question {title!r}"
+                        )
                 elif key == "imposters":
                     imposters = parse_int_list(value, "imposters", title, source)
                 elif key == "hint":
@@ -1458,7 +1470,7 @@ def parse_quiz_markdown(path: str, text_override: str | None = None):
                     )
                 raise ValueError(
                     f"{source}: unrecognized line {l!r} in question {title!r}. "
-                    "Expected options ('- ...') or fields: Answer, Type, Time, Hint, Explanation, Imposters."
+                    "Expected options ('- ...') or fields: Answer, Type, Time, Points, Hint, Explanation, Imposters."
                 )
 
         if not options or not answer or qtype is None:
@@ -1486,6 +1498,7 @@ def parse_quiz_markdown(path: str, text_override: str | None = None):
             "correct": sorted(answer),
             "type": qtype,
             "time_limit": time_limit,
+            "points": points,
             "hint": hint,
             "explanation": explanation,
             "imposters": sorted(imposters),
@@ -3766,6 +3779,7 @@ def _room_validate_json_question(question: dict, source: Path, index: int) -> di
     correct_raw = question.get("correct")
     qtype = str(question.get("type") or "single").strip().lower()
     time_raw = question.get("time_limit", 30)
+    points_raw = question.get("points", question.get("score", 1))
     discussion_raw = question.get("discussion_time", None)
 
     if not text:
@@ -3794,6 +3808,16 @@ def _room_validate_json_question(question: dict, source: Path, index: int) -> di
             f"Room mode requires Time/time_limit >= {ROOM_MIN_TIME_LIMIT_SECONDS} seconds."
         )
 
+    try:
+        points = float(points_raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{source}: question {index} has invalid 'points' value {points_raw!r}") from exc
+    if points <= 0:
+        raise ValueError(
+            f"{source}: question {index} has invalid 'points' value {points}. "
+            "Question points must be greater than zero."
+        )
+
     discussion_time = None
     if discussion_raw not in (None, ""):
         try:
@@ -3815,6 +3839,7 @@ def _room_validate_json_question(question: dict, source: Path, index: int) -> di
         "correct": correct,
         "type": qtype,
         "time_limit": time_limit,
+        "points": points,
         "discussion_time": discussion_time,
         "explanation": str(question.get("explanation") or "").strip(),
     }
@@ -3854,6 +3879,7 @@ def _room_quiz_payload_from_markdown(path: str) -> tuple[str, list[dict]]:
                 "correct": [int(x) for x in list(q.get("correct") or [])],
                 "type": str(q.get("type") or "single"),
                 "time_limit": int(q.get("time_limit") or 30),
+                "points": float(q.get("points") or 1),
                 "explanation": str(q.get("explanation") or "").strip(),
             }
         )
