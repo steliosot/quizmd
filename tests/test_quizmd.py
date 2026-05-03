@@ -35,6 +35,7 @@ from quizmd import (
     _room_player_label,
     _room_final_results_countdown,
     _room_prompt_advance_mode,
+    _room_prompt_quiz_file,
     _room_prompt_token_required,
     _room_quiz_payload_from_markdown,
     _room_quiz_payload_from_json,
@@ -73,6 +74,7 @@ from quizmd import (
     _resolve_ai_provider,
     _score_encouragement,
     THEMES,
+    QUIZMD_TERMINAL_PALETTES,
     ask_yes_no,
     build_question_markup,
     clear_terminal_screen,
@@ -3452,6 +3454,20 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(dark_palette["body"], "default")
         self.assertEqual(dark_palette["muted"], "default")
 
+    def test_prompt_ui_palette_comes_from_central_terminal_palette(self):
+        self.assertEqual(
+            _prompt_ui_palette(THEMES["light"]),
+            QUIZMD_TERMINAL_PALETTES["light"]["prompt"],
+        )
+        self.assertEqual(
+            _prompt_ui_palette(THEMES["dark"]),
+            QUIZMD_TERMINAL_PALETTES["dark"]["prompt"],
+        )
+
+    def test_quiz_theme_uses_soft_marked_answer_green(self):
+        self.assertEqual(THEMES["dark"]["pt_marked_bg"], "#4f7f68")
+        self.assertEqual(THEMES["light"]["pt_marked_bg"], "#4f7f68")
+
     def test_no_color_detection_from_cli_or_env(self):
         self.assertTrue(is_no_color_requested(True))
         with patch.dict("os.environ", {"NO_COLOR": "1"}, clear=False):
@@ -3831,7 +3847,7 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertNotIn("( ) (x)", markup)
         self.assertIn("2. (x) B", markup)
         self.assertIn("[x]", markup)
-        self.assertIn("bg='ansigreen'", markup)
+        self.assertIn("bg='#4f7f68'", markup)
         self.assertIn("bg='ansired'", markup)
 
     def test_build_question_markup_next_ui_imposter_marker_wins_when_both_sets(self):
@@ -5361,7 +5377,7 @@ class QuizMarkdownTests(unittest.TestCase):
                 self.assertFalse(_room_prompt_token_required())
         self.assertEqual(
             mocked_prompt.call_args.args[0],
-            "Require room token for joiners? [y/N] default no: ",
+            "Require room token for joiners? [y/N]: ",
         )
 
     def test_room_prompt_token_required_accepts_yes(self):
@@ -5375,13 +5391,30 @@ class QuizMarkdownTests(unittest.TestCase):
                 self.assertEqual(_room_prompt_advance_mode(), "auto")
         self.assertEqual(
             mocked_prompt.call_args.args[0],
-            "Auto-advance questions? [Y/n] default yes: ",
+            "Auto-advance questions? [Y/n]: ",
         )
 
     def test_room_prompt_advance_mode_accepts_no_for_manual(self):
         with patch("sys.stdin.isatty", return_value=True):
             with patch("quizmd.prompt_input", return_value="n"):
                 self.assertEqual(_room_prompt_advance_mode(), "manual")
+
+    def test_room_prompt_quiz_file_shows_hello_quiz_default(self):
+        with patch("sys.stdin.isatty", return_value=True):
+            with patch("quizmd.prompt_input", return_value="") as mocked_prompt:
+                self.assertEqual(_room_prompt_quiz_file(), "hello-quiz.md")
+        self.assertEqual(mocked_prompt.call_args.args[0], "Enter quiz file [hello-quiz.md]: ")
+
+    def test_room_load_hello_quiz_default_falls_back_to_sample_when_file_absent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = os.getcwd()
+            try:
+                os.chdir(tmp)
+                title, questions = _room_load_quiz_payload("hello-quiz.md")
+            finally:
+                os.chdir(cwd)
+        self.assertEqual(title, "Python Basics Beta (5Q)")
+        self.assertEqual(len(questions), 5)
 
     def test_room_connected_players_keeps_roles(self):
         payload = {

@@ -27,7 +27,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.3rc14"
+__version__ = "2.4.3rc15"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -994,56 +994,97 @@ Room quiz requirement:
 - For online room modes, each question `Time`/`time_limit` must be 5 seconds or higher.
 """
 
-THEMES = {
+QUIZMD_TERMINAL_PALETTES = {
     "dark": {
-        "primary": "cyan",
-        "secondary": "magenta",
-        "accent": "yellow",
-        "success": "green",
-        "danger": "red",
-        "panel": "cyan",
-        "pt_primary": "ansicyan",
-        "pt_title": "ansiwhite",
-        "pt_timer": "ansiyellow",
-        "pt_timer_warning": "ansimagenta",
-        "pt_timer_danger": "ansired",
-        "pt_instruction": "ansigray",
-        "pt_selected_fg": "ansiwhite",
-        "pt_selected_bg": "ansiblue",
-        "pt_selected_fg_pulse": "ansiblue",
-        "pt_selected_bg_pulse": "ansiwhite",
-        "pt_marked_fg": "ansiwhite",
-        "pt_marked_bg": "ansigreen",
-        "pt_imposter_fg": "ansiwhite",
-        "pt_imposter_bg": "ansired",
-        "pt_code": "ansiwhite",
-        "pt_code_bg": "#1d2630",
+        "theme": {
+            "primary": "cyan",
+            "secondary": "magenta",
+            "accent": "yellow",
+            "success": "green",
+            "danger": "red",
+            "panel": "cyan",
+            "pt_primary": "ansicyan",
+            "pt_title": "ansiwhite",
+            "pt_timer": "ansiyellow",
+            "pt_timer_warning": "ansimagenta",
+            "pt_timer_danger": "ansired",
+            "pt_instruction": "ansigray",
+            "pt_selected_fg": "ansiwhite",
+            "pt_selected_bg": "ansiblue",
+            "pt_selected_fg_pulse": "ansiblue",
+            "pt_selected_bg_pulse": "ansiwhite",
+            "pt_marked_fg": "ansiwhite",
+            "pt_marked_bg": "#4f7f68",
+            "pt_imposter_fg": "ansiwhite",
+            "pt_imposter_bg": "ansired",
+            "pt_code": "ansiwhite",
+            "pt_code_bg": "#1d2630",
+        },
+        "prompt": {
+            "logo": "ansicyan",
+            "title": "default",
+            "body": "default",
+            "muted": "default",
+            "accent": "ansiyellow",
+            "secondary": "ansimagenta",
+            "warning": "ansiyellow",
+            "danger": "ansired",
+            "success": "ansigreen",
+            "border": "ansiblue",
+            "label": "ansicyan bold",
+            "selected_fg": "ansiblack",
+            "selected_bg": "ansicyan",
+            "changed_fg": "ansiwhite",
+            "changed_bg": "#6b3a3a",
+        },
     },
     "light": {
-        "primary": "blue",
-        "secondary": "magenta",
-        "accent": "blue",
-        "success": "green",
-        "danger": "red",
-        "panel": "blue",
-        "pt_primary": "black",
-        "pt_title": "black",
-        "pt_code": "ansiblue",
-        "pt_timer": "black",
-        "pt_timer_warning": "ansired",
-        "pt_timer_danger": "ansired",
-        "pt_instruction": "black",
-        "pt_selected_fg": "ansiwhite",
-        "pt_selected_bg": "ansiblue",
-        "pt_selected_fg_pulse": "ansiblue",
-        "pt_selected_bg_pulse": "ansiwhite",
-        "pt_marked_fg": "ansiwhite",
-        "pt_marked_bg": "ansigreen",
-        "pt_imposter_fg": "ansiwhite",
-        "pt_imposter_bg": "ansired",
-        "pt_code_bg": "#eaf2ff",
+        "theme": {
+            "primary": "blue",
+            "secondary": "magenta",
+            "accent": "blue",
+            "success": "green",
+            "danger": "red",
+            "panel": "blue",
+            "pt_primary": "black",
+            "pt_title": "black",
+            "pt_code": "ansiblue",
+            "pt_timer": "black",
+            "pt_timer_warning": "ansired",
+            "pt_timer_danger": "ansired",
+            "pt_instruction": "black",
+            "pt_selected_fg": "ansiwhite",
+            "pt_selected_bg": "ansiblue",
+            "pt_selected_fg_pulse": "ansiblue",
+            "pt_selected_bg_pulse": "ansiwhite",
+            "pt_marked_fg": "ansiwhite",
+            "pt_marked_bg": "#4f7f68",
+            "pt_imposter_fg": "ansiwhite",
+            "pt_imposter_bg": "ansired",
+            "pt_code_bg": "#eaf2ff",
+        },
+        "prompt": {
+            "logo": "ansiblue",
+            "title": "default",
+            "body": "default",
+            "muted": "default",
+            "accent": "ansiblue",
+            "secondary": "ansimagenta",
+            "warning": "ansimagenta",
+            "danger": "ansired",
+            "success": "ansigreen",
+            "border": "ansiblue",
+            "label": "ansiblue bold",
+            "selected_fg": "ansiwhite",
+            "selected_bg": "ansiblue",
+            "changed_fg": "ansiblack",
+            "changed_bg": "#ffdede",
+        },
     },
 }
+
+
+THEMES = {name: dict(palette["theme"]) for name, palette in QUIZMD_TERMINAL_PALETTES.items()}
 
 
 def _is_light_terminal() -> bool:
@@ -1104,40 +1145,8 @@ def _prompt_ui_palette(theme: dict) -> dict[str, str]:
     views stay readable even when auto theme detection picks the wrong background.
     """
     if _is_light_theme(theme):
-        return {
-            "logo": "ansiblue",
-            "title": "default",
-            "body": "default",
-            "muted": "default",
-            "accent": "ansiblue",
-            "secondary": "ansimagenta",
-            "warning": "ansimagenta",
-            "danger": "ansired",
-            "success": "ansigreen",
-            "border": "ansiblue",
-            "label": "ansiblue bold",
-            "selected_fg": "ansiwhite",
-            "selected_bg": "ansiblue",
-            "changed_fg": "ansiblack",
-            "changed_bg": "#ffdede",
-        }
-    return {
-        "logo": "ansicyan",
-        "title": "default",
-        "body": "default",
-        "muted": "default",
-        "accent": "ansiyellow",
-        "secondary": "ansimagenta",
-        "warning": "ansiyellow",
-        "danger": "ansired",
-        "success": "ansigreen",
-        "border": "ansiblue",
-        "label": "ansicyan bold",
-        "selected_fg": "ansiblack",
-        "selected_bg": "ansicyan",
-        "changed_fg": "ansiwhite",
-        "changed_bg": "#6b3a3a",
-    }
+        return dict(QUIZMD_TERMINAL_PALETTES["light"]["prompt"])
+    return dict(QUIZMD_TERMINAL_PALETTES["dark"]["prompt"])
 
 
 def should_use_compact_layout(min_width: int = 100, columns: int | None = None) -> bool:
@@ -3796,9 +3805,8 @@ def _room_prompt_yes_no(question: str, *, default: bool) -> bool:
     if not sys.stdin.isatty():
         return default
     choices = "[Y/n]" if default else "[y/N]"
-    default_label = "yes" if default else "no"
     while True:
-        raw = prompt_input(f"{question} {choices} default {default_label}: ").strip().lower()
+        raw = prompt_input(f"{question} {choices}: ").strip().lower()
         if not raw:
             return default
         if raw in {"y", "yes"}:
@@ -3948,6 +3956,8 @@ def _room_load_quiz_payload(path: str | None) -> tuple[str, list[dict]]:
 
     quiz_path = Path(path).expanduser()
     if not quiz_path.exists():
+        if str(path).strip() == "hello-quiz.md":
+            return ROOM_SAMPLE_QUIZ_TITLE, json.loads(json.dumps(ROOM_SAMPLE_QUESTIONS))
         raise RuntimeError(f"Quiz file not found: {quiz_path}")
 
     if quiz_path.suffix.lower() == ".json":
@@ -3971,8 +3981,8 @@ def _room_load_quiz_payload(path: str | None) -> tuple[str, list[dict]]:
 def _room_prompt_quiz_file() -> str:
     if not sys.stdin.isatty():
         return ""
-    default = "hello-quiz.md" if Path("hello-quiz.md").exists() else ""
-    prompt = f"Enter quiz file [{default}]: " if default else "Enter quiz file [sample]: "
+    default = "hello-quiz.md"
+    prompt = f"Enter quiz file [{default}]: "
     value = prompt_input(prompt).strip()
     return value or default
 
