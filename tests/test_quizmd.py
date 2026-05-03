@@ -5492,6 +5492,7 @@ class QuizMarkdownTests(unittest.TestCase):
                                 result = run_room_command(args)
         self.assertEqual(result, 0)
         self.assertTrue(mocked_create.call_args.kwargs["token_required"])
+        self.assertEqual(mocked_create.call_args.kwargs["advance_mode"], "auto")
 
     def test_run_room_command_create_prompt_token_yes_sets_required(self):
         args = argparse.Namespace(
@@ -5615,6 +5616,53 @@ class QuizMarkdownTests(unittest.TestCase):
                 )
 
         self.assertEqual(mocked_post.call_count, 1)
+
+    def test_room_create_request_retries_without_auto_advance_for_legacy_server(self):
+        created_response = {
+            "room_code": "ABCDEFGH",
+            "room_name": "berlin-elephant",
+            "mode": "compete",
+            "room_token": "",
+        }
+        with patch(
+            "quizmd._room_post_json",
+            side_effect=[
+                RuntimeError("Request failed: 422 body.advance_mode: Extra inputs are not permitted"),
+                created_response,
+            ],
+        ) as mocked_post:
+            created = _room_create_request(
+                server="https://quizmd-server.example",
+                mode="compete",
+                advance_mode="auto",
+                room_name="berlin-elephant",
+                host_name="Mary",
+                token_required=False,
+                quiz_title="Sample",
+                questions=[{"question": "Ready?", "options": ["No", "Yes"], "correct": [2]}],
+            )
+
+        self.assertEqual(created, created_response)
+        self.assertEqual(mocked_post.call_count, 2)
+        self.assertIn("advance_mode", mocked_post.call_args_list[0].args[1])
+        self.assertNotIn("advance_mode", mocked_post.call_args_list[1].args[1])
+
+    def test_room_create_request_rejects_manual_advance_on_legacy_server(self):
+        with patch(
+            "quizmd._room_post_json",
+            side_effect=RuntimeError("Request failed: 422 body.advance_mode: Extra inputs are not permitted"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "too old to support manual advance mode"):
+                _room_create_request(
+                    server="https://quizmd-server.example",
+                    mode="compete",
+                    advance_mode="manual",
+                    room_name="berlin-elephant",
+                    host_name="Mary",
+                    token_required=False,
+                    quiz_title="Sample",
+                    questions=[{"question": "Ready?", "options": ["No", "Yes"], "correct": [2]}],
+                )
 
     def test_run_room_command_create_without_quiz_prints_tip(self):
         args = argparse.Namespace(
@@ -6590,7 +6638,7 @@ class QuizMarkdownTests(unittest.TestCase):
         out = buf.getvalue()
         self.assertEqual(rc, 0)
         self.assertIn("next_question", fake_ws.sent_types)
-        self.assertIn("Continuing...", out)
+        self.assertNotIn("Continuing...", out)
 
     def test_room_waiting_loop_prefixed_start_is_command_not_chat(self):
         class _FakeWS:
@@ -6908,8 +6956,8 @@ class QuizMarkdownTests(unittest.TestCase):
 
         out = buf.getvalue()
         self.assertEqual(rc, 0)
-        self.assertIn("\rNext question in 1...", out)
-        self.assertIn("\rNext question now.", out)
+        self.assertIn("\rContinuing in 1...", out)
+        self.assertIn("\rContinuing now.", out)
 
     def test_room_waiting_loop_invalid_question_payload_is_skipped(self):
         class _FakeWS:

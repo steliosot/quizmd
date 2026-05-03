@@ -27,7 +27,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.3rc12"
+__version__ = "2.4.3rc13"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -3604,6 +3604,20 @@ def _room_create_token_required_unsupported(error_text: str) -> bool:
     return any(token in lowered for token in indicators)
 
 
+def _room_create_advance_mode_unsupported(error_text: str) -> bool:
+    lowered = (error_text or "").lower()
+    if "advance_mode" not in lowered:
+        return False
+    indicators = (
+        "extra inputs are not permitted",
+        "extra_forbidden",
+        "unexpected field",
+        "unexpected keyword",
+        "not permitted",
+    )
+    return any(token in lowered for token in indicators)
+
+
 def _room_join_missing_token(error_text: str) -> bool:
     lowered = (error_text or "").lower()
     if "room_token" not in lowered and "room token" not in lowered:
@@ -3676,6 +3690,7 @@ def _room_create_request(
     *,
     server: str,
     mode: str,
+    advance_mode: str = "auto",
     room_name: str,
     host_name: str,
     host_role: str = "",
@@ -3685,6 +3700,7 @@ def _room_create_request(
 ) -> dict:
     payload = {
         "mode": mode,
+        "advance_mode": advance_mode,
         "room_name": room_name,
         "quiz_title": quiz_title,
         "host_name": host_name,
@@ -3697,6 +3713,18 @@ def _room_create_request(
     try:
         return _room_post_json(url, payload)
     except RuntimeError as exc:
+        if _room_create_advance_mode_unsupported(str(exc)):
+            if advance_mode != "auto":
+                raise RuntimeError(
+                    "This room server is too old to support manual advance mode. "
+                    "Deploy/update quizmd-server, or create the room with --advance auto."
+                ) from exc
+            legacy_payload = dict(payload)
+            legacy_payload.pop("advance_mode", None)
+            try:
+                return _room_post_json(url, legacy_payload)
+            except RuntimeError as legacy_exc:
+                exc = legacy_exc
         if not _room_create_token_required_unsupported(str(exc)):
             raise
         if not token_required:
@@ -3706,6 +3734,7 @@ def _room_create_request(
             ) from exc
         legacy_payload = dict(payload)
         legacy_payload.pop("token_required", None)
+        legacy_payload.pop("advance_mode", None)
         created = _room_post_json(url, legacy_payload)
         if "token_required" not in created and created.get("room_token"):
             created["token_required"] = True
@@ -3775,6 +3804,18 @@ def _room_prompt_token_required() -> bool:
         if raw in {"n", "no"}:
             return False
         print("Please answer y or n.")
+
+
+def _room_prompt_advance_mode() -> str:
+    if not sys.stdin.isatty():
+        return "auto"
+    while True:
+        raw = prompt_input("Auto-advance questions? [Y/n]: ").strip().lower()
+        if not raw or raw in {"y", "yes", "auto", "a"}:
+            return "auto"
+        if raw in {"n", "no", "manual", "m"}:
+            return "manual"
+        print("Please answer y for auto or n for manual.")
 
 
 def _room_validate_json_question(question: dict, source: Path, index: int) -> dict:
@@ -4629,11 +4670,11 @@ async def _run_room_waiting_loop(
                     try:
                         if seconds:
                             for remaining in range(seconds, 0, -1):
-                                print(f"\rNext question in {remaining}...", end="", flush=True)
+                                print(f"\rContinuing in {remaining}...", end="", flush=True)
                                 await asyncio.sleep(1)
-                            print("\rNext question now.        ")
+                            print("\rContinuing now.        ")
                         else:
-                            print("Next question now.")
+                            print("Continuing now.")
                     finally:
                         in_quiz = False
                     _record("next_question_starting", {"seconds": seconds, "payload": payload})
@@ -4878,7 +4919,6 @@ async def _run_room_waiting_loop(
                         continue
                     if not await _send_room_event("next_question", {}):
                         break
-                    print("Continuing...")
                     continue
                 local_chat_echoes.append(text)
                 _clear_typed_input_line()
@@ -4951,6 +4991,9 @@ def run_room_command(args: argparse.Namespace) -> int:
                 f"Supported modes: {supported_text}. "
                 "Please deploy/update quizmd-server or choose another mode."
             )
+        advance_mode = str(getattr(args, "advance", "") or "").strip().lower()
+        if not advance_mode:
+            advance_mode = _room_prompt_advance_mode()
         host_role = ""
         if getattr(args, "require_token", False):
             token_required = True
@@ -4975,6 +5018,7 @@ def run_room_command(args: argparse.Namespace) -> int:
                 created = _room_create_request(
                     server=server,
                     mode=mode,
+                    advance_mode=advance_mode,
                     room_name=room_name,
                     host_name=host_name,
                     host_role=host_role,
@@ -10904,6 +10948,12 @@ def main():
             choices=["compete", "collaborate"],
             default="",
             help="Room mode for create. If omitted, choose interactively.",
+        )
+        room_parser.add_argument(
+            "--advance",
+            choices=["auto", "manual"],
+            default="",
+            help="Question advance mode for create. Auto is the default.",
         )
         room_parser.add_argument(
             "--quiz",
