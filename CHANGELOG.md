@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+## v2.4.3rc7 - 2026-05-03
+
+- RC refresh after `v2.4.3rc6` failed before publication because the release workflow version check was over-escaped.
+- Keeps the same room CLI behavior as `v2.4.3rc6`.
+
 ## v2.4.3rc6 - 2026-05-03
 
 - Room CLI RC refresh:

@@ -41,7 +41,7 @@ jobs:
               raise SystemExit(f"Release tags must start with v. Got: {ref}")
           tag_version = ref[1:]
           text = Path("pyproject.toml").read_text(encoding="utf-8")
-          m = re.search(r'^version\\s*=\\s*"([^"]+)"', text, re.MULTILINE)
+          m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
           if not m:
               raise SystemExit("Could not read version from pyproject.toml")
           pkg_version = m.group(1)
