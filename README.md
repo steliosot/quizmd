@@ -3,8 +3,10 @@
 `quizmd` is a terminal quiz app for:
 - Markdown MCQs (single/multiple)
 - Imposter quizzes (spot misleading options)
+- Chaos quizzes (branch + recovery scenarios)
 - Essay quizzes (AI rubric scoring)
-- Online room modes (compete/collaborate/boxing)
+- Online room modes (compete/collaborate)
+- Terminal game modes (Alien Attack)
 
 ## Install
 
@@ -43,6 +45,7 @@ quizmd init
 This creates:
 - `hello-quiz.md` (single + multiple MCQ)
 - `hello-imposter.md` (imposter mode)
+- `hello-chaos.md` (branching scenario mode)
 - `hello-essay.md` (essay mode)
 - `QUIZ_GUIDE.md` (quick commands)
 
@@ -55,6 +58,9 @@ quizmd hello-quiz.md
 quizmd --validate hello-imposter.md
 quizmd hello-imposter.md
 
+quizmd --validate hello-chaos.md
+quizmd hello-chaos.md
+
 quizmd --validate hello-essay.md
 export GEMINI_API_KEY="your_key_here"  # or OPENAI_API_KEY / ANTHROPIC_API_KEY
 quizmd hello-essay.md
@@ -62,54 +68,49 @@ quizmd hello-essay.md
 
 ## Modes (What + How to Start)
 
-### 1) Single / Multiple (Local MCQ)
-- What: classic MCQ practice with timers.
-- Start:
+### 1) Classic MCQ (Local)
+- What: single/multiple-choice timed quiz.
+- Start: `quizmd hello-quiz.md`
 
-```bash
-quizmd hello-quiz.md
-```
+### 2) Imposter (Local)
+- What: select correct answers and flag misleading options.
+- Start: `quizmd hello-imposter.md`
 
-### 2) Imposter (Local MCQ + Distractors)
-- What: answer normally and flag misleading options.
-- Start:
+### 3) Debug (Local)
+- What: fix broken Python code with line-aware scoring.
+- Start: `quizmd hello-debug.md`
 
-```bash
-quizmd hello-imposter.md
-```
+### 4) Challenge (Local)
+- What: category board + risk levels (stars scoring).
+- Start: `quizmd hello-challenge.md`
 
-### 3) Essay (AI Rubric Grading)
-- What: write in editor, get rubric-based score + feedback.
-- Start:
+### 5) Reverse (Local)
+- What: infer code behavior/output in reverse-engineering style MCQs.
+- Start: `quizmd hello-reverse.md`
 
-```bash
-quizmd hello-essay.md
-```
+### 6) Millionaire (Local)
+- What: 15-question ladder with lifelines and safety nets.
+- Start: `quizmd hello-millionaire.md`
 
-### 4) Room: Compete (Online)
+### 7) Chaos (Local)
+- What: branch + recovery scenario that rejoins at final decision.
+- Start: `quizmd hello-chaos.md`
+
+### 8) Essay (Local + AI)
+- What: write a short response and get rubric feedback.
+- Start: `quizmd hello-essay.md`
+
+### 9) Room: Compete (Online)
 - What: fastest correct answers win points.
-- Start room:
+- Start room: `quizmd room --create --mode compete --quiz hello-quiz.md`
 
-```bash
-quizmd room --create --mode compete --quiz hello-quiz.md
-```
+### 10) Room: Collaborate (Online)
+- What: discussion + voting phase, team consensus scoring.
+- Start room: `quizmd room --create --mode collaborate --quiz hello-quiz.md`
 
-### 5) Room: Collaborate (Online)
-- What: each question has a discussion phase (chat) then a voting phase.
-- Team must still reach full consensus to score.
-- Start room:
-
-```bash
-quizmd room --create --mode collaborate --quiz hello-quiz.md
-```
-
-### 6) Room: Boxing (Online Teacher/Student)
-- What: live chat Q&A, teacher can score with `/score <0-100>`.
-- Start room:
-
-```bash
-quizmd room --create --mode boxing --quiz hello-quiz.md
-```
+### 11) Game: Alien Attack (Terminal)
+- What: arcade shooter mini-game.
+- Start: `quizmd alien-attack`
 
 Join any room:
 
@@ -126,8 +127,9 @@ Room quiz requirement:
 Yes, `quizmd init` covers all mode types:
 - MCQ single/multiple via `hello-quiz.md`
 - Imposter via `hello-imposter.md`
+- Chaos via `hello-chaos.md`
 - Essay via `hello-essay.md`
-- Room modes by using `hello-quiz.md` with `--mode compete|collaborate|boxing`
+- Room modes by using `hello-quiz.md` with `--mode compete|collaborate`
 
 ## Essay Keys (Essay Mode Only)
 
@@ -171,8 +173,7 @@ quizmd --theme dark quizzes/harry-potter-quiz.md
 
 ## Notes
 
-- Boxing mode requires a boxing-capable room server revision.
-- If cloud server is older, quizmd shows a friendly unsupported-mode message.
+- Local question modes support `Q` for graceful quit with summary.
 - Press `Ctrl+C` at any time to exit.
 - Each multiple-choice question must have at least 2 non-empty options.
 - If your question text includes markdown bullet lines, add an `Options:` line before answer choices to disambiguate parsing.

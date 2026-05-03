@@ -26,7 +26,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.3rc2"
+__version__ = "2.4.3rc6"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -628,6 +628,325 @@ Type: single
 Explanation: Only A iterates downward from 3 to 1.
 """
 
+HELLO_MILLIONAIRE_TEMPLATE = """# Millionaire Quiz: Fun Trivia Ladder
+Friend Name: Stelios
+
+## Question 1
+What is the capital of France?
+
+- Berlin
+- Madrid
+- Paris
+- Rome
+
+Answer: 3
+Type: single
+Hint: It is often called the City of Light.
+Explanation: Paris is the capital city of France.
+
+## Question 2
+Which planet is known as the Red Planet?
+
+- Earth
+- Mars
+- Venus
+- Jupiter
+
+Answer: 2
+Type: single
+Hint: This planet is named after the Roman god of war.
+Explanation: Mars is often called the Red Planet.
+
+## Question 3
+How many continents are there on Earth?
+
+- 5
+- 6
+- 7
+- 8
+
+Answer: 3
+Type: single
+Hint: Think of the Olympic rings plus two more.
+Explanation: There are 7 continents.
+
+## Question 4
+Which ocean is the largest?
+
+- Atlantic
+- Indian
+- Arctic
+- Pacific
+
+Answer: 4
+Type: single
+Hint: It is the ocean that touches Asia, Oceania, and the Americas.
+Explanation: The Pacific Ocean is the largest.
+
+## Question 5
+What is 12 x 12?
+
+- 124
+- 144
+- 132
+- 112
+
+Answer: 2
+Type: single
+Hint: A dozen multiplied by a dozen.
+Explanation: 12 multiplied by 12 equals 144.
+
+## Question 6
+Which language is primarily spoken in Brazil?
+
+- Spanish
+- Portuguese
+- French
+- Italian
+
+Answer: 2
+Type: single
+Hint: It is not Spanish and comes from Europe's west coast.
+Explanation: Portuguese is the main language of Brazil.
+
+## Question 7
+What gas do humans need to breathe?
+
+- Carbon dioxide
+- Nitrogen
+- Oxygen
+- Helium
+
+Answer: 3
+Type: single
+Hint: It makes up about 21% of Earth's atmosphere.
+Explanation: Humans rely on oxygen for respiration.
+
+## Question 8
+Which number is prime?
+
+- 21
+- 29
+- 39
+- 49
+
+Answer: 2
+Type: single
+Hint: Pick the only option with exactly two positive divisors.
+Explanation: 29 is a prime number.
+
+## Question 9
+Which country hosted the 2016 Summer Olympics?
+
+- China
+- Greece
+- Brazil
+- Japan
+
+Answer: 3
+Type: single
+Hint: The host city was Rio de Janeiro.
+Explanation: Rio de Janeiro, Brazil hosted the 2016 Summer Olympics.
+
+## Question 10
+What is the square root of 256?
+
+- 12
+- 14
+- 16
+- 18
+
+Answer: 3
+Type: single
+Hint: It is 2 raised to the power of 4.
+Explanation: 16 x 16 = 256.
+
+## Question 11
+Which scientist proposed the theory of relativity?
+
+- Isaac Newton
+- Albert Einstein
+- Nikola Tesla
+- Galileo Galilei
+
+Answer: 2
+Type: single
+Hint: Think of the scientist behind E=mc².
+Explanation: Einstein proposed relativity.
+
+## Question 12
+What is the chemical symbol for gold?
+
+- Ag
+- Gd
+- Au
+- Go
+
+Answer: 3
+Type: single
+Hint: The symbol comes from the Latin word “aurum”.
+Explanation: The symbol for gold is Au.
+
+## Question 13
+In computing, what does CPU stand for?
+
+- Central Process Unit
+- Central Processing Unit
+- Computer Processing Utility
+- Core Processor Unit
+
+Answer: 2
+Type: single
+Hint: The middle word is “Processing”.
+Explanation: CPU means Central Processing Unit.
+
+## Question 14
+Which year did the first iPhone launch?
+
+- 2005
+- 2007
+- 2009
+- 2010
+
+Answer: 2
+Type: single
+Time: 180
+Hint: It launched one year before the App Store.
+Explanation: The first iPhone launched in 2007.
+
+## Question 15
+Which city is known as the City of Canals and Gondolas?
+
+- Lisbon
+- Amsterdam
+- Venice
+- Vienna
+
+Answer: 3
+Type: single
+Hint: It is the Italian city famous for gondolas.
+Explanation: Venice is famous for canals and gondolas.
+"""
+
+HELLO_CHAOS_TEMPLATE = """# Chaos: Cleaning a CSV Dataset
+Type: chaos
+Title: Missing values in studio_ghibli_movies.csv
+Skills: csv, DictReader, missing-values, data-cleaning
+Difficulty: medium
+
+## Scenario
+You are cleaning `studio_ghibli_movies.csv` using Python.
+Your script loads the file with `csv.DictReader` and must fix missing values in `year` and `music_by`.
+
+## Decision 1
+What is your first action?
+
+- A. Loop through rows and check whether `year` or `music_by` is missing
+- B. Convert every column to integer immediately
+- C. Delete every row that has a missing value
+- D. Use `csv.reader` and hard-coded column indexes
+
+Answer: A
+Score: 3
+
+### Feedback
+Good first step. You are checking the target fields directly.
+
+### Chaos if A
+Some missing values are whitespace-only (for example `"   "`), so a raw `== ""` check misses them.
+
+### Chaos if B
+Your script crashes with `ValueError` because some fields are text and some `year` values are missing.
+
+### Chaos if C
+You risk losing useful rows that only have one missing field.
+
+### Chaos if D
+Index-based access becomes fragile if column order changes.
+
+## Path A
+### Recovery A
+What should you do now?
+
+- A. Use `value.strip() == ""` for missing checks
+- B. Ignore whitespace-only values
+- C. Replace all spaces in the file globally
+- D. Convert values to `int` first
+
+Answer: A
+Score: 3
+
+### Feedback
+Correct. `strip()` turns whitespace-only strings into empty strings.
+
+## Path B
+### Recovery B
+What should you do before converting values?
+
+- A. Validate missing values first, then convert only cleaned numeric fields
+- B. Delete the file and download it again
+- C. Convert the header row to integer
+- D. Run `int(row["title"])`
+
+Answer: A
+Score: 2
+
+### Feedback
+Recovered. Clean and validate before type conversion.
+
+## Path C
+### Recovery C
+What is a better cleaning strategy?
+
+- A. Keep the row and fill only missing target fields
+- B. Delete every row with any empty value
+- C. Delete the entire `music_by` column
+- D. Ignore missing values
+
+Answer: A
+Score: 2
+
+### Feedback
+Recovered. Targeted cleaning is safer than deleting records.
+
+## Path D
+### Recovery D
+Why is `csv.DictReader` better here?
+
+- A. It lets you use named fields like `row["music_by"]`
+- B. It automatically fixes missing values
+- C. It automatically converts all numbers
+- D. It removes duplicates
+
+Answer: A
+Score: 2
+
+### Feedback
+Correct. Named-column access is clearer and less error-prone.
+
+## Final Decision
+After cleaning, what should you do?
+
+- A. Save cleaned rows to `studio_ghibli_movies_clean.csv` and run checks again
+- B. Print cleaned rows only
+- C. Overwrite original file without a cleaned copy
+- D. Save as plain `.txt` without headers
+
+Answer: A
+Score: 4
+
+### Final feedback
+Good decision. Save, then verify the cleaned dataset.
+
+## Result
+Maximum score: 10
+
+- 9-10: Excellent. Strong cleaning workflow.
+- 6-8: Good. Some recovery needed.
+- 3-5: Partial understanding. Review missing-value handling and `DictReader`.
+- 0-2: Needs practice. Review CSV loading and safe cleaning.
+"""
+
 QUIZ_GUIDE_TEMPLATE = """# QuizMD Quick Start
 
 ## Local modes
@@ -643,7 +962,16 @@ quizmd --validate hello-challenge.md
 quizmd hello-challenge.md
 quizmd --validate hello-reverse.md
 quizmd hello-reverse.md
+quizmd --validate hello-millionaire.md
+quizmd hello-millionaire.md
+quizmd --validate hello-chaos.md
+quizmd hello-chaos.md
 ```
+
+Millionaire timing:
+- Default is 120 seconds per question.
+- If `Time:` is provided, it is capped at 120 seconds.
+- `Ask AI` lifeline is optional (available only when an AI key is configured).
 
 ## Essay mode
 
@@ -658,7 +986,6 @@ quizmd hello-essay.md
 ```bash
 quizmd room --create --mode compete --quiz hello-quiz.md
 quizmd room --create --mode collaborate --quiz hello-quiz.md
-quizmd room --create --mode boxing --quiz hello-quiz.md
 quizmd room --join <room-name> [--token <room-token>]
 ```
 
@@ -937,9 +1264,9 @@ def validate_question(question: dict, source: Path) -> None:
         )
 
 
-def parse_quiz_markdown(path: str):
+def parse_quiz_markdown(path: str, text_override: str | None = None):
     source = Path(path)
-    text = source.read_text(encoding="utf-8")
+    text = text_override if text_override is not None else source.read_text(encoding="utf-8")
 
     blocks = re.split(r"(?m)^##\s+", text)
     preamble_lines = [line.strip() for line in blocks[0].splitlines() if line.strip()]
@@ -983,7 +1310,7 @@ def parse_quiz_markdown(path: str):
                         "Use '# Challenge Quiz: <title>' at the top for category difficulty quizzes."
                     )
 
-        field_pattern = re.compile(r"(?i)^(answer|type|time|explanation|imposters)\s*:\s*(.*)$")
+        field_pattern = re.compile(r"(?i)^(answer|type|time|hint|explanation|imposters)\s*:\s*(.*)$")
         option_pattern = re.compile(r"^\s*-\s*(.*)$")
         option_with_content_pattern = re.compile(r"^\s*-\s+\S.*$")
 
@@ -1083,6 +1410,7 @@ def parse_quiz_markdown(path: str):
         qtype = None
         time_limit = None
         explanation = ""
+        hint = ""
         imposters = []
         seen_field = False
 
@@ -1117,6 +1445,8 @@ def parse_quiz_markdown(path: str):
                     time_limit = parse_int_value(value, "time", title, source)
                 elif key == "imposters":
                     imposters = parse_int_list(value, "imposters", title, source)
+                elif key == "hint":
+                    hint = value.strip()
                 else:
                     explanation = value.strip()
             else:
@@ -1128,7 +1458,7 @@ def parse_quiz_markdown(path: str):
                     )
                 raise ValueError(
                     f"{source}: unrecognized line {l!r} in question {title!r}. "
-                    "Expected options ('- ...') or fields: Answer, Type, Time, Explanation, Imposters."
+                    "Expected options ('- ...') or fields: Answer, Type, Time, Hint, Explanation, Imposters."
                 )
 
         if not options or not answer or qtype is None:
@@ -1156,6 +1486,7 @@ def parse_quiz_markdown(path: str):
             "correct": sorted(answer),
             "type": qtype,
             "time_limit": time_limit,
+            "hint": hint,
             "explanation": explanation,
             "imposters": sorted(imposters),
         }
@@ -1172,6 +1503,28 @@ CHALLENGE_DIFFICULTY_ORDER = ("easy", "normal", "hard")
 CHALLENGE_STARS_BY_DIFFICULTY = {"easy": 1, "normal": 2, "hard": 3}
 CHALLENGE_DEFAULT_TIME_LIMIT_SECONDS = 45
 REVERSE_DEFAULT_TIME_LIMIT_SECONDS = 45
+MILLIONAIRE_TOTAL_QUESTIONS = 15
+MILLIONAIRE_DEFAULT_TIME_LIMIT_SECONDS = 120
+MILLIONAIRE_MAX_TIME_LIMIT_SECONDS = 120
+MILLIONAIRE_LIFELINES = ("50-50", "Ask the People", "Call a Friend")
+MILLIONAIRE_SAFETY_NET_QUESTIONS = (2, 5, 10, 15)
+MILLIONAIRE_POINTS_LADDER = (
+    100,
+    200,
+    300,
+    500,
+    1_000,
+    2_000,
+    4_000,
+    8_000,
+    16_000,
+    32_000,
+    64_000,
+    125_000,
+    250_000,
+    500_000,
+    1_000_000,
+)
 
 
 def parse_challenge_markdown(path: str) -> tuple[str, list[dict]]:
@@ -1188,7 +1541,7 @@ def parse_challenge_markdown(path: str) -> tuple[str, list[dict]]:
         if stripped:
             first_nonempty = stripped
             break
-    if not first_nonempty.startswith("# Challenge Quiz:"):
+    if not first_nonempty.lower().startswith("# challenge quiz:"):
         raise ValueError(f"{source}: challenge quiz must start with '# Challenge Quiz: <title>'")
     quiz_title = first_nonempty.split(":", 1)[1].strip()
     if not quiz_title:
@@ -1196,7 +1549,7 @@ def parse_challenge_markdown(path: str) -> tuple[str, list[dict]]:
 
     category_pattern = re.compile(r"^##\s+Category:\s*(.+?)\s*$", flags=re.IGNORECASE)
     difficulty_pattern = re.compile(r"^###\s*(Easy|Normal|Hard)\s*$", flags=re.IGNORECASE)
-    field_pattern = re.compile(r"(?i)^(answer|type|explanation)\s*:\s*(.*)$")
+    field_pattern = re.compile(r"(?i)^(answer|type|time|explanation)\s*:\s*(.*)$")
     option_pattern = re.compile(r"^\s*-\s*(.*)$")
 
     category_blocks: list[tuple[str, list[str]]] = []
@@ -1207,7 +1560,7 @@ def parse_challenge_markdown(path: str) -> tuple[str, list[dict]]:
 
     for raw_line in lines:
         stripped = raw_line.strip()
-        if stripped.startswith("# Challenge Quiz:") and not saw_header:
+        if stripped.lower().startswith("# challenge quiz:") and not saw_header:
             saw_header = True
             continue
         if stripped.startswith("```"):
@@ -1272,9 +1625,7 @@ def parse_challenge_markdown(path: str) -> tuple[str, list[dict]]:
             )
 
         question_lines = block_lines[: difficulty_indexes[0][0]]
-        question_text = "\n".join(question_lines).strip()
-        if not question_text:
-            raise ValueError(f"{source}: category {category_name!r} is missing question text before '### Easy'")
+        shared_question_text = "\n".join(question_lines).strip()
 
         difficulties: dict[str, dict] = {}
         for i, (start_idx, diff_name) in enumerate(difficulty_indexes):
@@ -1288,12 +1639,26 @@ def parse_challenge_markdown(path: str) -> tuple[str, list[dict]]:
             answer: list[int] = []
             qtype = "single"
             explanation = ""
+            time_limit = CHALLENGE_DEFAULT_TIME_LIMIT_SECONDS
             seen_field = False
+            question_override_lines: list[str] = []
+            parsing_question_override = True
 
             for raw_line in body_lines:
                 stripped = raw_line.strip()
                 if not stripped:
+                    if parsing_question_override and question_override_lines:
+                        question_override_lines.append(raw_line)
                     continue
+
+                if parsing_question_override:
+                    starts_option = option_pattern.match(raw_line) is not None
+                    starts_field = field_pattern.match(stripped) is not None
+                    if not starts_option and not starts_field:
+                        question_override_lines.append(raw_line)
+                        continue
+                    parsing_question_override = False
+
                 option_match = option_pattern.match(raw_line)
                 if option_match:
                     if seen_field:
@@ -1313,7 +1678,7 @@ def parse_challenge_markdown(path: str) -> tuple[str, list[dict]]:
                 if field_match is None:
                     raise ValueError(
                         f"{source}: unrecognized line {raw_line!r} in category {category_name!r}, difficulty {diff_name!r}. "
-                        "Expected options ('- ...') or fields: Answer, Type, Explanation."
+                        "Expected options ('- ...') or fields: Answer, Type, Time, Explanation."
                     )
 
                 seen_field = True
@@ -1324,8 +1689,18 @@ def parse_challenge_markdown(path: str) -> tuple[str, list[dict]]:
                     answer = parse_int_list(field_value, "answer", title, source)
                 elif field_name == "type":
                     qtype = field_value.strip().lower() or "single"
+                elif field_name == "time":
+                    time_limit = parse_int_value(field_value, "time", title, source)
                 else:
                     explanation = field_value.strip()
+
+            question_override_text = "\n".join(question_override_lines).strip()
+            question_text = question_override_text or shared_question_text
+            if not question_text:
+                raise ValueError(
+                    f"{source}: category {category_name!r}, difficulty {diff_name!r} is missing question text. "
+                    "Add shared text under '## Category: ...' or add question text directly under this difficulty heading."
+                )
 
             if not options:
                 raise ValueError(
@@ -1352,7 +1727,7 @@ def parse_challenge_markdown(path: str) -> tuple[str, list[dict]]:
                 "options": options,
                 "correct": sorted(answer),
                 "type": qtype,
-                "time_limit": CHALLENGE_DEFAULT_TIME_LIMIT_SECONDS,
+                "time_limit": time_limit,
                 "explanation": explanation,
                 "imposters": [],
             }
@@ -1369,7 +1744,7 @@ def parse_challenge_markdown(path: str) -> tuple[str, list[dict]]:
         categories.append(
             {
                 "category": category_name,
-                "question": question_text,
+                "question": shared_question_text,
                 "difficulties": difficulties,
             }
         )
@@ -1386,7 +1761,7 @@ def parse_reverse_markdown(path: str) -> tuple[str, list[dict]]:
         if stripped:
             first_nonempty = stripped
             break
-    if not first_nonempty.startswith("# Reverse Quiz:"):
+    if not first_nonempty.lower().startswith("# reverse quiz:"):
         raise ValueError(f"{source}: reverse quiz must start with '# Reverse Quiz: <title>'")
 
     title, questions = parse_quiz_markdown(path)
@@ -1410,6 +1785,503 @@ def parse_reverse_markdown(path: str) -> tuple[str, list[dict]]:
         if cleaned:
             title = cleaned
     return title, questions
+
+
+def parse_millionaire_markdown(path: str) -> tuple[str, list[dict]]:
+    source = Path(path)
+    text = source.read_text(encoding="utf-8")
+    first_nonempty = ""
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if stripped:
+            first_nonempty = stripped
+            break
+    if not first_nonempty.lower().startswith("# millionaire quiz:"):
+        raise ValueError(f"{source}: millionaire quiz must start with '# Millionaire Quiz: <title>'")
+
+    friend_name = "Friend"
+    blocks = re.split(r"(?m)^##\s+", text)
+    preamble_raw = blocks[0].splitlines()
+    preamble_nonempty = [line.strip() for line in preamble_raw if line.strip()]
+    if preamble_nonempty and preamble_nonempty[0].startswith("# "):
+        preamble_nonempty = preamble_nonempty[1:]
+    friend_match_re = re.compile(r"(?i)^friend\s+name\s*:\s*(.+)$")
+    seen_friend = False
+    cleaned_preamble_lines: list[str] = []
+    for raw_line in preamble_raw:
+        stripped = raw_line.strip()
+        if not stripped:
+            cleaned_preamble_lines.append(raw_line)
+            continue
+        if stripped.startswith("# "):
+            cleaned_preamble_lines.append(raw_line)
+            continue
+        friend_match = friend_match_re.match(stripped)
+        if friend_match:
+            if seen_friend:
+                raise ValueError(f"{source}: duplicate 'Friend Name:' in millionaire preamble.")
+            friend_name = friend_match.group(1).strip() or "Friend"
+            seen_friend = True
+            continue
+        raise ValueError(
+            f"{source}: unexpected preamble line {stripped!r}. "
+            "Allowed lines: '# Millionaire Quiz: <title>' and optional 'Friend Name: <name>'."
+        )
+
+    sanitized_text = "\n".join(cleaned_preamble_lines)
+    if len(blocks) > 1:
+        sanitized_text = sanitized_text + "\n## " + "\n## ".join(blocks[1:])
+
+    try:
+        title, questions = parse_quiz_markdown(path, text_override=sanitized_text)
+    except ValueError as exc:
+        message = str(exc)
+        if "time limit must be greater than zero" in message:
+            raise ValueError(
+                f"{message}. In millionaire mode, omit 'Time:' to use the default "
+                f"{MILLIONAIRE_DEFAULT_TIME_LIMIT_SECONDS}s, or set a positive value up to "
+                f"{MILLIONAIRE_MAX_TIME_LIMIT_SECONDS}s."
+            ) from exc
+        raise
+    if len(questions) != MILLIONAIRE_TOTAL_QUESTIONS:
+        raise ValueError(
+            f"{source}: millionaire mode requires exactly {MILLIONAIRE_TOTAL_QUESTIONS} questions "
+            f"(found {len(questions)})"
+        )
+
+    for question in questions:
+        if question.get("imposters"):
+            raise ValueError(
+                f"{source}: millionaire quiz does not support Imposters in question {question['title']!r}"
+            )
+
+        qtype = str(question.get("type") or "single").strip().lower()
+        if qtype != "single":
+            raise ValueError(
+                f"{source}: millionaire mode supports only Type: single "
+                f"(question {question['title']!r} has Type: {qtype})"
+            )
+
+        raw_limit = question.get("time_limit")
+        try:
+            parsed_limit = int(raw_limit) if raw_limit is not None else 0
+        except (TypeError, ValueError):
+            parsed_limit = 0
+
+        if parsed_limit <= 0:
+            question["time_limit"] = MILLIONAIRE_DEFAULT_TIME_LIMIT_SECONDS
+        else:
+            question["time_limit"] = min(parsed_limit, MILLIONAIRE_MAX_TIME_LIMIT_SECONDS)
+        question["friend_name"] = friend_name
+
+    if title.lower().startswith("millionaire quiz:"):
+        cleaned = title.split(":", 1)[1].strip()
+        if cleaned:
+            title = cleaned
+    return title, questions
+
+
+def _parse_chaos_score(value: str, source: Path, context: str) -> int:
+    raw = (value or "").strip()
+    if not raw:
+        raise ValueError(f"{source}: missing Score value in {context}")
+    try:
+        parsed = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{source}: invalid Score value {raw!r} in {context}") from exc
+    if parsed <= 0:
+        raise ValueError(f"{source}: Score must be a positive integer in {context}")
+    return parsed
+
+
+def _parse_chaos_question_block(lines: list[str], source: Path, context: str) -> dict:
+    option_pattern = re.compile(r"^\s*-\s*([A-Da-d])\.\s*(.+?)\s*$")
+    answer_pattern = re.compile(r"(?i)^answer\s*:\s*([A-Za-z])\s*$")
+    score_pattern = re.compile(r"(?i)^score\s*:\s*(.+?)\s*$")
+
+    question_lines: list[str] = []
+    options: list[dict] = []
+    seen_labels: set[str] = set()
+    answer_label: str | None = None
+    score_value: int | None = None
+    saw_option = False
+    saw_answer = False
+
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+
+        option_match = option_pattern.match(raw_line)
+        if option_match:
+            if saw_answer:
+                raise ValueError(f"{source}: options must appear before Answer/Score in {context}")
+            label = option_match.group(1).upper()
+            text = option_match.group(2).strip()
+            if label in seen_labels:
+                raise ValueError(f"{source}: duplicate option label {label!r} in {context}")
+            if not text:
+                raise ValueError(f"{source}: blank option text for {label!r} in {context}")
+            seen_labels.add(label)
+            options.append({"label": label, "text": text})
+            saw_option = True
+            continue
+
+        answer_match = answer_pattern.match(stripped)
+        if answer_match:
+            answer_label = answer_match.group(1).upper()
+            saw_answer = True
+            continue
+
+        score_match = score_pattern.match(stripped)
+        if score_match:
+            score_value = _parse_chaos_score(score_match.group(1), source, context)
+            saw_answer = True
+            continue
+
+        if saw_option:
+            raise ValueError(
+                f"{source}: unrecognized line {raw_line!r} in {context}. "
+                "Expected Answer:/Score: after option list."
+            )
+        question_lines.append(stripped)
+
+    question_text = "\n".join(question_lines).strip()
+    if not question_text:
+        raise ValueError(f"{source}: missing question text in {context}")
+    if len(options) < 2:
+        raise ValueError(f"{source}: {context} must define at least 2 options")
+    if answer_label is None:
+        raise ValueError(f"{source}: missing Answer in {context}")
+    if score_value is None:
+        raise ValueError(f"{source}: missing Score in {context}")
+
+    option_labels = [item["label"] for item in options]
+    if answer_label not in option_labels:
+        raise ValueError(
+            f"{source}: Answer {answer_label!r} is not present in options for {context}"
+        )
+
+    return {
+        "question": question_text,
+        "options": options,
+        "answer": answer_label,
+        "score": score_value,
+    }
+
+
+def _parse_chaos_tiers(lines: list[str], source: Path) -> tuple[int, list[dict]]:
+    max_pattern = re.compile(r"(?i)^maximum\s+score\s*:\s*(\d+)\s*$")
+    tier_pattern = re.compile(r"^\s*[-*]?\s*(\d+)\s*[–-]\s*(\d+)\s*:\s*(.+?)\s*$")
+
+    max_score: int | None = None
+    tiers: list[dict] = []
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        max_match = max_pattern.match(stripped)
+        if max_match:
+            if max_score is not None:
+                raise ValueError(f"{source}: duplicate 'Maximum score:' line in Result")
+            max_score = int(max_match.group(1))
+            continue
+        tier_match = tier_pattern.match(stripped)
+        if tier_match:
+            low = int(tier_match.group(1))
+            high = int(tier_match.group(2))
+            text = tier_match.group(3).strip()
+            if low > high:
+                raise ValueError(
+                    f"{source}: invalid Result range {low}-{high}; minimum cannot exceed maximum"
+                )
+            if not text:
+                raise ValueError(f"{source}: empty tier message in Result for range {low}-{high}")
+            tiers.append({"min": low, "max": high, "text": text})
+            continue
+        raise ValueError(
+            f"{source}: unrecognized Result line {raw_line!r}. "
+            "Expected 'Maximum score: N' or range tiers like '- 6-8: ...'."
+        )
+
+    if max_score is None:
+        raise ValueError(f"{source}: missing 'Maximum score: N' in Result")
+    if not tiers:
+        raise ValueError(f"{source}: Result must include at least one score tier line")
+    return max_score, tiers
+
+
+def parse_chaos_markdown(path: str) -> tuple[str, dict]:
+    source = Path(path)
+    text = source.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    if not lines:
+        raise ValueError(f"{source}: empty chaos markdown file")
+
+    first_nonempty = ""
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if stripped:
+            first_nonempty = stripped
+            break
+    if not first_nonempty.lower().startswith("# chaos:"):
+        raise ValueError(f"{source}: chaos quiz must start with '# Chaos: <title>'")
+
+    title = first_nonempty.split(":", 1)[1].strip()
+    if not title:
+        raise ValueError(f"{source}: chaos title cannot be empty")
+
+    sections: list[tuple[str, list[str]]] = []
+    current_name: str | None = None
+    current_lines: list[str] = []
+    preamble_lines: list[str] = []
+    saw_header = False
+
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if stripped.lower().startswith("# chaos:") and not saw_header:
+            saw_header = True
+            continue
+        if stripped.startswith("## "):
+            if current_name is not None:
+                sections.append((current_name, current_lines))
+            current_name = stripped[3:].strip()
+            current_lines = []
+            continue
+        if current_name is None:
+            preamble_lines.append(raw_line)
+        else:
+            current_lines.append(raw_line)
+
+    if current_name is not None:
+        sections.append((current_name, current_lines))
+
+    allowed_meta = {"type", "title", "skills", "difficulty"}
+    metadata: dict[str, str] = {}
+    for raw_line in preamble_lines:
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        match = re.match(r"(?i)^([a-z][a-z0-9_\-\s]*)\s*:\s*(.+?)\s*$", stripped)
+        if match is None:
+            raise ValueError(
+                f"{source}: unrecognized preamble line {raw_line!r}. "
+                "Allowed metadata keys: Type, Title, Skills, Difficulty."
+            )
+        key = match.group(1).strip().lower()
+        value = match.group(2).strip()
+        if key not in allowed_meta:
+            raise ValueError(
+                f"{source}: unsupported metadata key {match.group(1)!r}. "
+                "Allowed keys: Type, Title, Skills, Difficulty."
+            )
+        if key in metadata:
+            raise ValueError(f"{source}: duplicate metadata key {match.group(1)!r}")
+        metadata[key] = value
+
+    if "type" in metadata and metadata["type"].strip().lower() != "chaos":
+        raise ValueError(f"{source}: preamble 'Type:' must be 'chaos' for chaos quizzes")
+
+    section_map: dict[str, list[str]] = {}
+    section_display: dict[str, str] = {}
+    section_order: list[str] = []
+    for name, body in sections:
+        normalized = name.strip().casefold()
+        if normalized in section_map:
+            raise ValueError(f"{source}: duplicate section header '## {name}'")
+        section_map[normalized] = body
+        section_display[normalized] = name.strip()
+        section_order.append(normalized)
+
+    if "scenario" not in section_map:
+        raise ValueError(f"{source}: missing required section '## Scenario'")
+    if "decision 1" not in section_map:
+        raise ValueError(f"{source}: missing required section '## Decision 1'")
+    if "final decision" not in section_map:
+        raise ValueError(f"{source}: missing required section '## Final Decision'")
+    if "result" not in section_map:
+        raise ValueError(f"{source}: missing required section '## Result'")
+
+    scenario_text = "\n".join(line for line in section_map["scenario"]).strip()
+    if not scenario_text:
+        raise ValueError(f"{source}: Scenario section cannot be empty")
+
+    def split_h3_subsections(lines_block: list[str], context: str) -> tuple[list[str], dict[str, list[str]]]:
+        main_lines: list[str] = []
+        sub_sections: dict[str, list[str]] = {}
+        current_sub: str | None = None
+        current_sub_lines: list[str] = []
+        for raw_line in lines_block:
+            stripped = raw_line.strip()
+            if stripped.startswith("### "):
+                if current_sub is not None:
+                    key = current_sub.casefold()
+                    if key in sub_sections:
+                        raise ValueError(f"{source}: duplicate subsection '### {current_sub}' in {context}")
+                    sub_sections[key] = current_sub_lines
+                current_sub = stripped[4:].strip()
+                current_sub_lines = []
+                continue
+            if current_sub is None:
+                main_lines.append(raw_line)
+            else:
+                current_sub_lines.append(raw_line)
+        if current_sub is not None:
+            key = current_sub.casefold()
+            if key in sub_sections:
+                raise ValueError(f"{source}: duplicate subsection '### {current_sub}' in {context}")
+            sub_sections[key] = current_sub_lines
+        return main_lines, sub_sections
+
+    decision_main, decision_sub = split_h3_subsections(section_map["decision 1"], "Decision 1")
+    decision = _parse_chaos_question_block(decision_main, source, "Decision 1")
+
+    feedback_lines = decision_sub.get("feedback")
+    if feedback_lines is None:
+        raise ValueError(f"{source}: Decision 1 must include '### Feedback'")
+    decision_feedback = "\n".join(feedback_lines).strip()
+    if not decision_feedback:
+        raise ValueError(f"{source}: Decision 1 Feedback cannot be empty")
+
+    chaos_events: dict[str, str] = {}
+    for key, value in decision_sub.items():
+        if key == "feedback":
+            continue
+        match = re.match(r"^chaos if ([a-d])$", key)
+        if match is None:
+            raise ValueError(
+                f"{source}: unsupported subsection under Decision 1: '### {key}'. "
+                "Expected '### Feedback' or '### Chaos if <A-D>'."
+            )
+        label = match.group(1).upper()
+        if label in chaos_events:
+            raise ValueError(f"{source}: duplicate chaos event block for option {label}")
+        event_text = "\n".join(value).strip()
+        if not event_text:
+            raise ValueError(f"{source}: Chaos event text cannot be empty for option {label}")
+        chaos_events[label] = event_text
+
+    option_labels = [item["label"] for item in decision["options"]]
+    for label in option_labels:
+        if label not in chaos_events:
+            raise ValueError(f"{source}: missing '### Chaos if {label}' in Decision 1")
+    for label in list(chaos_events.keys()):
+        if label not in option_labels:
+            raise ValueError(f"{source}: chaos event exists for unknown option {label}")
+
+    expected_order = (
+        ["scenario", "decision 1"]
+        + [f"path {label.lower()}" for label in option_labels]
+        + ["final decision", "result"]
+    )
+    for label in option_labels:
+        key = f"path {label.lower()}"
+        if key not in section_map:
+            raise ValueError(
+                f"{source}: missing required section '## Path {label}'.\n"
+                f"Add a matching branch for option {label} with:\n"
+                f"## Path {label}\n"
+                f"### Recovery {label}\n"
+                "...\n"
+                "### Feedback\n"
+                "...\n"
+                "Tip: run `quizmd init` and use `hello-chaos.md` as the reference template."
+            )
+
+    expected_sections = set(expected_order)
+    extras = [name for name in section_order if name not in expected_sections]
+    if extras:
+        human = ", ".join(f"## {section_display.get(name, name)}" for name in extras)
+        raise ValueError(
+            f"{source}: unsupported chaos section(s): {human}. "
+            "Only Scenario, Decision 1, Path <A-D>, Final Decision, and Result are allowed."
+        )
+
+    paths: dict[str, dict] = {}
+
+    if section_order != expected_order:
+        raise ValueError(
+            f"{source}: chaos sections must follow strict order: "
+            + " -> ".join([f"## {name.title()}" for name in expected_order])
+        )
+
+    for label in option_labels:
+        key = f"path {label.lower()}"
+        path_main, path_sub = split_h3_subsections(section_map[key], f"Path {label}")
+        if any(line.strip() for line in path_main):
+            raise ValueError(
+                f"{source}: Path {label} must use subsection blocks only. "
+                "Move content under '### Recovery <letter>' or '### Feedback'."
+            )
+        recovery_key = f"recovery {label.lower()}"
+        recovery_lines = path_sub.get(recovery_key)
+        if recovery_lines is None:
+            raise ValueError(f"{source}: Path {label} must include '### Recovery {label}'")
+        recovery = _parse_chaos_question_block(recovery_lines, source, f"Path {label} Recovery")
+        feedback_lines = path_sub.get("feedback")
+        if feedback_lines is None:
+            raise ValueError(f"{source}: Path {label} must include '### Feedback'")
+        path_feedback = "\n".join(feedback_lines).strip()
+        if not path_feedback:
+            raise ValueError(f"{source}: Path {label} Feedback cannot be empty")
+        for key in path_sub:
+            if key not in {recovery_key, "feedback"}:
+                raise ValueError(
+                    f"{source}: unsupported subsection '### {key}' in Path {label}. "
+                    f"Expected only '### Recovery {label}' and '### Feedback'."
+                )
+        paths[label] = {
+            "recovery": recovery,
+            "feedback": path_feedback,
+        }
+
+    final_main, final_sub = split_h3_subsections(section_map["final decision"], "Final Decision")
+    final_decision = _parse_chaos_question_block(final_main, source, "Final Decision")
+    final_feedback_lines = final_sub.get("final feedback")
+    if final_feedback_lines is None:
+        raise ValueError(f"{source}: Final Decision must include '### Final feedback'")
+    final_feedback = "\n".join(final_feedback_lines).strip()
+    if not final_feedback:
+        raise ValueError(f"{source}: Final Decision feedback cannot be empty")
+    for key in final_sub:
+        if key != "final feedback":
+            raise ValueError(
+                f"{source}: unsupported subsection '### {key}' in Final Decision. "
+                "Expected only '### Final feedback'."
+            )
+
+    maximum_score, tiers = _parse_chaos_tiers(section_map["result"], source)
+    canonical_maximum = (
+        int(decision["score"])
+        + max(int(paths[label]["recovery"]["score"]) for label in paths)
+        + int(final_decision["score"])
+    )
+    if maximum_score != canonical_maximum:
+        raise ValueError(
+            f"{source}: Maximum score mismatch. Result declares {maximum_score}, "
+            f"but canonical max is {canonical_maximum} (Decision 1 + best Recovery + Final Decision)."
+        )
+
+    payload = {
+        "title": title,
+        "metadata": metadata,
+        "scenario": scenario_text,
+        "decision1": {
+            **decision,
+            "feedback": decision_feedback,
+            "chaos_events": chaos_events,
+        },
+        "paths": paths,
+        "final_decision": {
+            **final_decision,
+            "feedback": final_feedback,
+        },
+        "result": {
+            "maximum_score": maximum_score,
+            "tiers": tiers,
+        },
+    }
+    return title, payload
 
 
 def _normalize_code_lines(text: str) -> list[str]:
@@ -1893,15 +2765,20 @@ def detect_quiz_mode(path: str) -> str:
     text = source.read_text(encoding="utf-8")
     for raw_line in text.splitlines():
         line = raw_line.strip()
+        lowered = line.lower()
         if not line:
             continue
-        if line.startswith("# Essay Question:"):
+        if lowered.startswith("# essay question:"):
             return "essay"
-        if line.startswith("# Reverse Quiz:"):
+        if lowered.startswith("# chaos:"):
+            return "chaos"
+        if lowered.startswith("# reverse quiz:"):
             return "reverse"
-        if line.startswith("# Challenge Quiz:"):
+        if lowered.startswith("# millionaire quiz:"):
+            return "millionaire"
+        if lowered.startswith("# challenge quiz:"):
             return "challenge"
-        if line.lower().startswith("# debug quiz"):
+        if lowered.startswith("# debug quiz"):
             return "debug"
         if line.startswith("# "):
             if re.search(r"(?im)^type\s*:\s*debug\s*$", text):
@@ -1909,7 +2786,8 @@ def detect_quiz_mode(path: str) -> str:
             return "mcq"
         break
     raise ValueError(
-        f"{source}: expected '# ...', '# Essay Question: ...', '# Reverse Quiz: ...', or '# Challenge Quiz: ...' header"
+        f"{source}: expected '# ...', '# Essay Question: ...', '# Chaos: ...', '# Reverse Quiz: ...', "
+        "'# Millionaire Quiz: ...', or '# Challenge Quiz: ...' header"
     )
 
 
@@ -1926,7 +2804,7 @@ def parse_essay_markdown(path: str) -> tuple[str, dict]:
         if stripped:
             first_nonempty = stripped
             break
-    if not first_nonempty.startswith("# Essay Question:"):
+    if not first_nonempty.lower().startswith("# essay question:"):
         raise ValueError(
             f"{source}: essay quiz must start with '# Essay Question: <title>'"
         )
@@ -1941,7 +2819,7 @@ def parse_essay_markdown(path: str) -> tuple[str, dict]:
 
     for raw_line in lines:
         stripped = raw_line.strip()
-        if stripped.startswith("# Essay Question:") and not started_sections:
+        if stripped.lower().startswith("# essay question:") and not started_sections:
             continue
         if stripped.startswith("## "):
             started_sections = True
@@ -2216,15 +3094,31 @@ def init_starter_files(target_dir: str = ".", force: bool = False) -> list[Path]
         ("hello-debug.md", HELLO_DEBUG_TEMPLATE),
         ("hello-challenge.md", HELLO_CHALLENGE_TEMPLATE),
         ("hello-reverse.md", HELLO_REVERSE_TEMPLATE),
+        ("hello-millionaire.md", HELLO_MILLIONAIRE_TEMPLATE),
+        ("hello-chaos.md", HELLO_CHAOS_TEMPLATE),
         ("hello-essay.md", HELLO_ESSAY_TEMPLATE),
         ("QUIZ_GUIDE.md", QUIZ_GUIDE_TEMPLATE),
     ]
 
-    existing = [str(base / name) for name, _ in files_to_create if (base / name).exists()]
+    existing_paths = [base / name for name, _ in files_to_create if (base / name).exists()]
+    existing = [str(path) for path in existing_paths]
     if existing and not force:
+        preview_limit = 6
+        shown = existing_paths[:preview_limit]
+        shown_lines = [f"- {path.name}" for path in shown]
+        hidden_count = max(0, len(existing_paths) - len(shown))
+        if hidden_count:
+            shown_lines.append(f"- ... and {hidden_count} more")
+        location = str(base.resolve())
         raise RuntimeError(
-            "Refusing to overwrite existing file(s). Re-run with --force.\n"
-            + "\n".join(existing)
+            "Some starter files already exist. No files were changed.\n"
+            f"Location: {location}\n\n"
+            "Existing files:\n"
+            + "\n".join(shown_lines)
+            + "\n\n"
+            "Choose one:\n"
+            "- Re-run with --force to overwrite existing starter files.\n"
+            "- Use --dir <new-folder> to create files in a new location."
         )
 
     created: list[Path] = []
@@ -2308,12 +3202,14 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
     )
 
     mode_cards = (
-        "[bold]1 Classic[/bold]\n[dim]Fast MCQ practice[/dim]\n[green]No AI key[/green]",
+        "[bold]1 Classic[/bold]\n[dim]Multiple-choice quiz[/dim]\n[green]No AI key[/green]",
         "[bold]2 Imposter[/bold]\n[dim]Spot misleading answers[/dim]\n[green]No AI key[/green]",
         "[bold]3 Debug[/bold]\n[dim]Fix broken code[/dim]\n[yellow]Optional AI key[/yellow]",
         "[bold]4 Challenge[/bold]\n[dim]Category + risk stars[/dim]\n[green]No AI key[/green]",
         "[bold]5 Reverse[/bold]\n[dim]Output/behavior to code[/dim]\n[green]No AI key[/green]",
-        "[bold]6 Essay[/bold]\n[dim]Rubric + AI feedback[/dim]\n[yellow]Needs AI key[/yellow]",
+        "[bold]6 Millionaire[/bold]\n[dim]15-question ladder mode[/dim]\n[yellow]Optional AI key[/yellow]",
+        "[bold]7 Chaos[/bold]\n[dim]Decision tree + recovery[/dim]\n[green]No AI key[/green]",
+        "[bold]8 Essay[/bold]\n[dim]Rubric + AI feedback[/dim]\n[yellow]Needs AI key[/yellow]",
     )
     if wide_layout:
         modes = Table.grid(expand=True)
@@ -2321,9 +3217,8 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
         modes.add_column(ratio=1)
         modes.add_column(ratio=1)
         modes.add_column(ratio=1)
-        modes.add_column(ratio=1)
-        modes.add_column(ratio=1)
-        modes.add_row(*mode_cards)
+        modes.add_row(*mode_cards[:4])
+        modes.add_row(*mode_cards[4:8])
     else:
         modes = "\n\n".join(mode_cards)
     console.print(
@@ -2339,11 +3234,9 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
     room_cards = (
         "[bold]Compete[/bold]\n[dim]Fast live quiz race[/dim]",
         "[bold]Collaborate[/bold]\n[dim]Team consensus quiz[/dim]",
-        "[bold]Boxing[/bold]\n[dim]One-to-one teacher check[/dim]",
     )
     if wide_layout:
         rooms = Table.grid(expand=True)
-        rooms.add_column(ratio=1)
         rooms.add_column(ratio=1)
         rooms.add_column(ratio=1)
         rooms.add_row(*room_cards)
@@ -2359,6 +3252,23 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
         )
     )
 
+    game_cards = ("[bold]Alien Attack[/bold]\n[dim]Arcade typing mini-game[/dim]\n[green]No AI key[/green]",)
+    if wide_layout:
+        games = Table.grid(expand=True)
+        games.add_column(ratio=1)
+        games.add_row(*game_cards)
+    else:
+        games = "\n\n".join(game_cards)
+    console.print(
+        Panel(
+            games,
+            title="[bold]Game modes[/bold]",
+            border_style=theme["accent"],
+            expand=True,
+            width=panel_width,
+        )
+    )
+
     if created is not None:
         labels = {
             "hello-quiz.md": "Single + multiple choice",
@@ -2366,6 +3276,8 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
             "hello-debug.md": "Fix broken code with line hints",
             "hello-challenge.md": "Category mode with star scoring",
             "hello-reverse.md": "Reverse engineering MCQ mode",
+            "hello-millionaire.md": "15-step points ladder (max 120s/question, optional Ask AI)",
+            "hello-chaos.md": "Branching decision tree with recovery paths",
             "hello-essay.md": "Short answer with AI feedback",
             "QUIZ_GUIDE.md": "Starter commands and notes",
         }
@@ -2660,6 +3572,20 @@ def _room_join_token_unsupported(error_text: str) -> bool:
     return any(token in lowered for token in indicators)
 
 
+def _room_create_token_required_unsupported(error_text: str) -> bool:
+    lowered = (error_text or "").lower()
+    if "token_required" not in lowered:
+        return False
+    indicators = (
+        "extra inputs are not permitted",
+        "extra_forbidden",
+        "unexpected field",
+        "unexpected keyword",
+        "not permitted",
+    )
+    return any(token in lowered for token in indicators)
+
+
 def _room_join_missing_token(error_text: str) -> bool:
     lowered = (error_text or "").lower()
     if "room_token" not in lowered and "room token" not in lowered:
@@ -2749,10 +3675,23 @@ def _room_create_request(
     if host_role:
         payload["host_role"] = host_role
     payload["token_required"] = token_required
-    return _room_post_json(
-        f"{_room_http_base(server)}/rooms",
-        payload,
-    )
+    url = f"{_room_http_base(server)}/rooms"
+    try:
+        return _room_post_json(url, payload)
+    except RuntimeError as exc:
+        if not _room_create_token_required_unsupported(str(exc)):
+            raise
+        if not token_required:
+            raise RuntimeError(
+                "This room server is too old to create open rooms without a token. "
+                "Redeploy/update quizmd-server, or create a token-protected room with --require-token."
+            ) from exc
+        legacy_payload = dict(payload)
+        legacy_payload.pop("token_required", None)
+        created = _room_post_json(url, legacy_payload)
+        if "token_required" not in created and created.get("room_token"):
+            created["token_required"] = True
+        return created
 
 
 def _room_join_by_name_request(
@@ -2943,14 +3882,125 @@ def _room_load_quiz_payload(path: str | None) -> tuple[str, list[dict]]:
             raise RuntimeError(f"Invalid JSON quiz file: {exc}") from exc
 
     mode = detect_quiz_mode(str(quiz_path))
-    if mode == "essay":
-        raise RuntimeError("Essay files are not supported for room mode. Use a multiple-choice quiz file.")
-    if mode == "debug":
-        raise RuntimeError("Debug files are not supported for room mode. Use a multiple-choice quiz file.")
+    if mode != "mcq":
+        raise RuntimeError(
+            f"{mode.title()} files are not supported for room mode. "
+            "Use a standard multiple-choice quiz file."
+        )
     try:
         return _room_quiz_payload_from_markdown(str(quiz_path))
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"Invalid markdown quiz file: {exc}") from exc
+
+
+def _room_prompt_quiz_file() -> str:
+    if not sys.stdin.isatty():
+        return ""
+    default = "hello-quiz.md" if Path("hello-quiz.md").exists() else ""
+    prompt = f"Enter quiz file [{default}]: " if default else "Enter quiz file [sample]: "
+    value = prompt_input(prompt).strip()
+    return value or default
+
+
+def _room_mode_label(mode: str) -> str:
+    labels = {
+        "compete": "Compete",
+        "collaborate": "Collaborate",
+    }
+    return labels.get(str(mode or "").lower(), str(mode or "Room").title())
+
+
+def render_room_created_screen(
+    *,
+    room_name: str,
+    host_name: str,
+    mode: str,
+    quiz_title: str,
+    question_count: int,
+    join_command: str,
+    token_required: bool,
+    room_token: str = "",
+    host_role: str = "",
+    theme_name: str = "auto",
+    no_color: bool = False,
+) -> None:
+    try:
+        from rich import box
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.table import Table
+    except ModuleNotFoundError:
+        print("-----------------------------------")
+        print("")
+        print(f"Room created by: {host_name}")
+        print(f"Room: {room_name}")
+        if host_role:
+            print(f"Role: {host_role}")
+        if token_required and room_token:
+            print(f"Room token: {room_token}")
+        print(f"Quiz: {quiz_title}")
+        print(f"Join command: {join_command}")
+        return
+
+    theme = select_theme(theme_name)
+    probe_console = Console(no_color=no_color)
+    terminal_width = max(probe_console.size.width, 40)
+    panel_width = min(terminal_width, 120)
+    console = Console(no_color=no_color, width=panel_width)
+    access = "Token required" if token_required else "Open room"
+
+    summary = Table.grid(expand=True)
+    summary.add_column(ratio=1)
+    summary.add_column(ratio=1)
+    summary.add_row(
+        f"[dim]Host[/dim]\n[bold]{host_name}[/bold]",
+        f"[dim]Room[/dim]\n[bold {theme['primary']}]{room_name}[/bold {theme['primary']}]",
+    )
+    summary.add_row(
+        f"[dim]Mode[/dim]\n[bold]{_room_mode_label(mode)}[/bold]",
+        f"[dim]Access[/dim]\n[bold]{access}[/bold]",
+    )
+    role = str(host_role or "").strip()
+    if role:
+        summary.add_row(
+            f"[dim]Role[/dim]\n[bold]{role}[/bold]",
+            f"[dim]Questions[/dim]\n[bold]{question_count}[/bold]",
+        )
+    else:
+        summary.add_row(
+            f"[dim]Questions[/dim]\n[bold]{question_count}[/bold]",
+            "",
+        )
+
+    console.print("")
+    console.print(
+        Panel(
+            summary,
+            title=f"[bold {theme['success']}]Room ready[/bold {theme['success']}]",
+            subtitle=f"[dim]{quiz_title}[/dim]",
+            border_style=theme["panel"],
+            box=box.ROUNDED,
+            expand=True,
+            width=panel_width,
+        )
+    )
+
+    command_body = (
+        f"[bold]Quiz:[/bold] {quiz_title}\n\n"
+        f"[bold]Join command:[/bold]\n"
+        f"[{theme['primary']}]{join_command}[/{theme['primary']}]"
+    )
+    if token_required and room_token:
+        command_body += f"\n\n[dim]Token is included in the command.[/dim]"
+    console.print(
+        Panel(
+            command_body,
+            border_style=theme["accent"],
+            box=box.ROUNDED,
+            expand=True,
+            width=panel_width,
+        )
+    )
 
 
 def _room_connected_players(payload: dict) -> list[dict[str, str]]:
@@ -3134,14 +4184,50 @@ def _read_lobby_line_nonblocking(timeout: float = 0.15) -> str | None:
     return line.rstrip("\r\n")
 
 
-def _parse_boxing_score_value(text: str) -> tuple[int | None, str | None]:
-    match = re.match(r"^/score\s+(-?\d+)\s*$", text.strip())
-    if not match:
-        return None, "Usage: /score <0-100>"
-    score_value = int(match.group(1))
-    if score_value < 0 or score_value > 100:
-        return None, "Score must be between 0 and 100."
-    return score_value, None
+class _RoomNoEchoInput:
+    def __init__(self, stream=None) -> None:
+        self.stream = stream or sys.stdin
+        self._termios = None
+        self._fd: int | None = None
+        self._original_attrs = None
+        self.enabled = False
+
+    def enable(self) -> None:
+        if self.enabled or os.name == "nt":
+            return
+        stream = self.stream
+        if not stream or not hasattr(stream, "fileno") or not hasattr(stream, "isatty"):
+            return
+        try:
+            if not stream.isatty():
+                return
+            import termios
+
+            fd = stream.fileno()
+            attrs = termios.tcgetattr(fd)
+            new_attrs = list(attrs)
+            new_attrs[3] = new_attrs[3] & ~termios.ECHO
+            termios.tcsetattr(fd, termios.TCSADRAIN, new_attrs)
+        except Exception:
+            return
+        self._termios = termios
+        self._fd = fd
+        self._original_attrs = attrs
+        self.enabled = True
+
+    def disable(self) -> None:
+        if not self.enabled:
+            return
+        try:
+            if self._termios is not None and self._fd is not None and self._original_attrs is not None:
+                self._termios.tcsetattr(self._fd, self._termios.TCSADRAIN, self._original_attrs)
+        except Exception:
+            pass
+        finally:
+            self._termios = None
+            self._fd = None
+            self._original_attrs = None
+            self.enabled = False
 
 
 def _room_runtime_question_payload(q_payload: object, question_index: int) -> dict[str, object] | None:
@@ -3196,23 +4282,20 @@ async def _run_room_waiting_loop(
 
     ws_url = _room_ws_url_with_auth(ws_base, room_code, player_id, token)
     theme = select_theme(theme_name)
-    boxing_mode = room_mode == "boxing"
     connected_players: list[dict[str, str]] = []
     known_connected: set[tuple[str, str]] = set()
     resolved_player_role = (player_role or "participant").lower()
     in_quiz = False
-    session_started = False
-    final_score: int | None = None
-    scored_by = ""
-    ended_by = ""
-    ended_by_role = ""
     stop = asyncio.Event()
     current_question_index: int | None = None
     current_total_questions = 0
     current_mode = room_mode
     current_phase = ""
     pending_question_payload: dict[str, object] | None = None
-    prompted_rounds: set[tuple[int, int]] = set()
+    prompted_rounds: set[tuple[int, int, int]] = set()
+    current_progress_round: tuple[int, int, int] | None = None
+    seen_progress: set[tuple[tuple[int, int, int], int, int, bool]] = set()
+    input_echo = _RoomNoEchoInput()
     transcript: list[dict[str, object]] = []
 
     def _record(event_type: str, payload: dict[str, object]) -> None:
@@ -3240,9 +4323,10 @@ async def _run_room_waiting_loop(
         question_index: int,
         total_questions: int,
         deadline_epoch: float | None,
+        retry_count: int = 0,
     ) -> None:
         nonlocal in_quiz
-        round_key = (question_index, int(deadline_epoch or 0))
+        round_key = (question_index, int(deadline_epoch or 0), retry_count)
         if round_key in prompted_rounds:
             return
         prompted_rounds.add(round_key)
@@ -3256,6 +4340,8 @@ async def _run_room_waiting_loop(
             )
             return
         in_quiz = True
+        input_echo.disable()
+        print(f"Question {question_index + 1}/{max(1, total_questions)} is live.")
         try:
             _perfect, answers, _imposters, _grading = await ask_question(
                 q,
@@ -3265,6 +4351,7 @@ async def _run_room_waiting_loop(
                 no_color=no_color,
                 compact=False,
                 full_screen=full_screen,
+                show_feedback=False,
             )
         except KeyboardInterrupt:
             await _send_room_event("leave_room", {}, silent=True)
@@ -3280,6 +4367,15 @@ async def _run_room_waiting_loop(
             return
         finally:
             in_quiz = False
+            if not stop.is_set():
+                input_echo.enable()
+
+        if _grading.get("quit_requested"):
+            print("Leaving room...")
+            await _send_room_event("leave_room", {}, silent=True)
+            render_exit_message("Left room. See you next time.", no_color=no_color)
+            stop.set()
+            return
 
         if answers:
             sent = await _send_room_event(
@@ -3288,8 +4384,9 @@ async def _run_room_waiting_loop(
             )
             if not sent:
                 return
+            print("Answer sent. Waiting for others...")
         else:
-            print("No answer submitted. Waiting for round result...")
+            print("Time is up. Waiting for result...")
         _record(
             "answer_submitted",
             {
@@ -3311,14 +4408,10 @@ async def _run_room_waiting_loop(
     try:
         print("")
         print(f"Connected as {display_name}.")
-        print(f'Share "{room_name}" with your friends.')
         if is_host:
             print("Type /start when you are ready.")
         print("Chat enabled. Type message and press Enter.")
-        if boxing_mode:
-            print("Commands: /start (host), /players, /score <0-100> (teacher), /end, /help, /quit")
-        else:
-            print("Commands: /start (host), /players, /help, /quit")
+        print("Commands: /start (host), /players, /help, /quit")
         if not await _send_room_event("ready_toggle", {"ready": True}):
             return 1
 
@@ -3327,16 +4420,13 @@ async def _run_room_waiting_loop(
             nonlocal known_connected
             nonlocal resolved_player_role
             nonlocal in_quiz
-            nonlocal session_started
             nonlocal current_question_index
             nonlocal current_total_questions
             nonlocal current_mode
             nonlocal current_phase
             nonlocal pending_question_payload
-            nonlocal final_score
-            nonlocal scored_by
-            nonlocal ended_by
-            nonlocal ended_by_role
+            nonlocal current_progress_round
+            nonlocal seen_progress
             while not stop.is_set():
                 try:
                     raw = await ws.recv()
@@ -3386,19 +4476,38 @@ async def _run_room_waiting_loop(
                     continue
 
                 if etype == "game_started":
-                    if boxing_mode:
-                        session_started = True
-                        print("Ready to start!")
-                        print("Session is live. Teacher can ask the first question.")
-                    else:
-                        in_quiz = False
-                        print("Game is starting now.")
+                    in_quiz = False
+                    print("Game is starting now.")
                     _record("game_started", {"mode": room_mode})
                     continue
 
-                if etype == "question":
-                    if boxing_mode:
+                if etype == "answer_progress":
+                    qidx = int(payload.get("question_index", current_question_index or 0))
+                    submitted = int(payload.get("submitted") or 0)
+                    total = int(payload.get("total") or 0)
+                    all_submitted = bool(payload.get("all_submitted", False))
+                    round_key = current_progress_round if current_progress_round and current_progress_round[0] == qidx else (qidx, 0, 0)
+                    progress_key = (round_key, submitted, total, all_submitted)
+                    if progress_key in seen_progress:
                         continue
+                    seen_progress.add(progress_key)
+                    if all_submitted:
+                        print("All answers submitted. Showing result...")
+                    elif total > 0:
+                        remaining = int(payload.get("remaining") or max(0, total - submitted))
+                        print(f"Submitted {submitted}/{total}. Waiting for {remaining} more...")
+                    _record(
+                        "answer_progress",
+                        {
+                            "question_index": qidx,
+                            "submitted": submitted,
+                            "total": total,
+                            "all_submitted": all_submitted,
+                        },
+                    )
+                    continue
+
+                if etype == "question":
                     current_mode = str(payload.get("mode") or current_mode or "compete")
                     q_payload = payload.get("question", {})
                     current_question_index = int(payload.get("question_index", 0))
@@ -3410,6 +4519,9 @@ async def _run_room_waiting_loop(
                     }
                     phase = str(payload.get("phase") or "voting").lower()
                     deadline_epoch = payload.get("deadline_epoch")
+                    retry_count = int(payload.get("retry_count") or 0)
+                    current_progress_round = (current_question_index, int(float(deadline_epoch or 0)), retry_count)
+                    seen_progress.clear()
                     if current_mode == "collaborate" and phase == "discussion":
                         current_phase = "discussion"
                         continue
@@ -3420,12 +4532,11 @@ async def _run_room_waiting_loop(
                         question_index=current_question_index,
                         total_questions=max(1, current_total_questions),
                         deadline_epoch=float(deadline_epoch or 0),
+                        retry_count=retry_count,
                     )
                     continue
 
                 if etype == "phase_changed":
-                    if boxing_mode:
-                        continue
                     phase = str(payload.get("phase") or "").lower()
                     qidx = int(payload.get("question_index", current_question_index or 0))
                     if current_mode != "collaborate":
@@ -3447,6 +4558,9 @@ async def _run_room_waiting_loop(
                         continue
                     if phase == "voting":
                         current_phase = "voting"
+                        retry_count = int(payload.get("retry_count") or 0)
+                        current_progress_round = (qidx, int(float(payload.get("deadline_epoch") or 0)), retry_count)
+                        seen_progress.clear()
                         print("Voting phase started. Submit your answer now.")
                         _record(
                             "phase_changed",
@@ -3461,12 +4575,11 @@ async def _run_room_waiting_loop(
                                 question_index=qidx,
                                 total_questions=max(1, int(pending_question_payload.get("total_questions", 0))),
                                 deadline_epoch=float(payload.get("deadline_epoch") or 0),
+                                retry_count=retry_count,
                             )
                         continue
 
                 if etype == "round_result":
-                    if boxing_mode:
-                        continue
                     in_quiz = False
                     qidx = int(payload.get("question_index", -1))
                     print("")
@@ -3486,8 +4599,6 @@ async def _run_room_waiting_loop(
                     continue
 
                 if etype == "consensus_retry":
-                    if boxing_mode:
-                        continue
                     in_quiz = False
                     print("")
                     print(payload.get("message", "Not consensus, try again"))
@@ -3501,8 +4612,6 @@ async def _run_room_waiting_loop(
                     continue
 
                 if etype == "scoreboard":
-                    if boxing_mode:
-                        continue
                     print("")
                     print("Scoreboard:")
                     players = payload.get("players", [])
@@ -3512,47 +4621,24 @@ async def _run_room_waiting_loop(
                     _record("scoreboard", {"payload": payload})
                     continue
 
-                if etype == "boxing_score":
-                    score_value = payload.get("score")
-                    score_by = str(payload.get("by") or "Teacher")
-                    if score_value is not None:
-                        print(f"Score updated: {score_value}% (by {score_by}).")
-                    else:
-                        print(f"Score updated by {score_by}.")
-                    _record(
-                        "boxing_score",
-                        {
-                            "score": score_value,
-                            "by": score_by,
-                            "by_role": str(payload.get("by_role") or ""),
-                        },
-                    )
-                    continue
-
                 if etype == "game_finished":
                     print("")
-                    if boxing_mode:
-                        print("Session ended.")
-                    else:
-                        print("Game finished.")
+                    print("Game finished.")
                     reason = payload.get("reason")
                     if reason:
                         print(f"Reason: {reason}")
                     score_payload = payload.get("final_score")
                     if isinstance(score_payload, int):
-                        final_score = score_payload
-                        print(f"Final score: {final_score}%")
-                    scored_by = str(payload.get("scored_by") or "")
-                    ended_by = str(payload.get("ended_by") or "")
-                    ended_by_role = str(payload.get("ended_by_role") or "")
+                        print(f"Final score: {score_payload}%")
                     _record("game_finished", {"payload": payload})
                     stop.set()
                     return
 
         recv_task = asyncio.create_task(recv_loop())
         try:
+            input_echo.enable()
             while not stop.is_set():
-                if in_quiz and not boxing_mode:
+                if in_quiz:
                     await asyncio.sleep(0.1)
                     continue
                 if os.name == "nt":
@@ -3591,10 +4677,7 @@ async def _run_room_waiting_loop(
                         print("No connected players shown yet.")
                     continue
                 if text == "/help":
-                    if boxing_mode:
-                        print("Commands: /start (host), /players, /score <0-100> (teacher), /end, /help, /quit")
-                    else:
-                        print("Commands: /start (host), /players, /help, /quit")
+                    print("Commands: /start (host), /players, /help, /quit")
                     continue
                 if text == "/start":
                     if not is_host:
@@ -3607,25 +4690,6 @@ async def _run_room_waiting_loop(
                         break
                     print("Start requested...")
                     continue
-                if boxing_mode and text.startswith("/score"):
-                    if resolved_player_role != "teacher":
-                        print("Only the teacher can use /score.")
-                        continue
-                    score_value, score_error = _parse_boxing_score_value(text)
-                    if score_error:
-                        print(score_error)
-                        continue
-                    if not await _send_room_event("set_score", {"score": score_value}):
-                        break
-                    continue
-                if boxing_mode and text == "/end":
-                    if not await _send_room_event(
-                        "end_session",
-                        {"reason": "Session ended by participant."},
-                    ):
-                        break
-                    continue
-
                 if not await _send_room_event("chat_message", {"text": text}):
                     break
         except KeyboardInterrupt:
@@ -3634,6 +4698,7 @@ async def _run_room_waiting_loop(
             stop.set()
         finally:
             stop.set()
+            input_echo.disable()
             recv_task.cancel()
             try:
                 await recv_task
@@ -3644,28 +4709,15 @@ async def _run_room_waiting_loop(
             await ws_context.__aexit__(None, None, None)
         except Exception:
             pass
-    if boxing_mode:
-        transcript_path = _save_room_session_transcript(
-            room_name=room_name,
-            mode=room_mode,
-            display_name=display_name,
-            role=resolved_player_role,
-            transcript=transcript,
-            final_score=final_score,
-            scored_by=scored_by,
-            ended_by=ended_by,
-            ended_by_role=ended_by_role,
-        )
-        print(f"Session transcript saved: {transcript_path}")
     return 0
 
 
 def run_room_command(args: argparse.Namespace) -> int:
     no_color = is_no_color_requested(args.no_color)
     theme_name = args.theme
-    requested_role = str(args.role or "").strip().lower()
+    requested_role = str(getattr(args, "role", "") or "").strip().lower()
     if requested_role and requested_role not in {"teacher", "student"}:
-        raise RuntimeError("Invalid role. Use --role teacher or --role student.")
+        raise RuntimeError("Invalid room role. Use teacher or student.")
     start_clean_screen()
     print(LOGO)
 
@@ -3684,7 +4736,6 @@ def run_room_command(args: argparse.Namespace) -> int:
         mode_choices = [
             ("Compete", "compete"),
             ("Collaborate", "collaborate"),
-            ("Boxing (Teacher/Student Chat)", "boxing"),
         ]
         if supported_modes:
             mode_choices = [choice for choice in mode_choices if choice[1] in supported_modes]
@@ -3707,16 +4758,7 @@ def run_room_command(args: argparse.Namespace) -> int:
                 f"Supported modes: {supported_text}. "
                 "Please deploy/update quizmd-server or choose another mode."
             )
-        host_role = requested_role
-        if mode == "boxing" and not host_role:
-            host_role = _select_with_space(
-                "Your role in this boxing room:",
-                [("Teacher", "teacher"), ("Student", "student")],
-                theme_name=theme_name,
-                no_color=no_color,
-            )
-        if mode != "boxing":
-            host_role = ""
+        host_role = ""
         if getattr(args, "require_token", False):
             token_required = True
         elif getattr(args, "no_token", False):
@@ -3727,9 +4769,12 @@ def run_room_command(args: argparse.Namespace) -> int:
         if not host_name:
             suggested = _room_random_player_name()
             host_name = prompt_input(f"Enter name [{suggested}]: ").strip() or suggested
+        quiz_path = str(args.quiz or "").strip()
+        if not quiz_path:
+            quiz_path = _room_prompt_quiz_file()
         auto_room_name = not requested_name.strip()
         room_name = _room_validate_name(requested_name) if requested_name.strip() else _room_generate_name()
-        quiz_title, questions = _room_load_quiz_payload(args.quiz)
+        quiz_title, questions = _room_load_quiz_payload(quiz_path)
         created = None
         for _attempt in range(6):
             print(f"Room name: {room_name}")
@@ -3755,32 +4800,34 @@ def run_room_command(args: argparse.Namespace) -> int:
                 raise
         if created is None:
             raise RuntimeError("Could not create a unique room name. Please retry.")
-        print("")
-        print(f"Room created by: {created.get('host_display_name', host_name)}")
-        print(f"Room name: {created.get('room_name', room_name)}")
         token_required = bool(created.get("token_required", token_required))
         room_token = str(created.get("room_token") or "").strip()
-        if token_required and room_token:
-            print(f"Room token: {room_token}")
-        if mode == "boxing":
-            role_label = str(created.get("host_role") or host_role or "teacher")
-            print(f"Role: {role_label}")
-        print(f"Quiz: {quiz_title} ({len(questions)} questions)")
-        if not args.quiz:
-            print("Tip: use --quiz filename to load your quiz.")
-        print(f'Share "{created.get("room_name", room_name)}" with your friends.')
+        role_label = str(created.get("host_role") or host_role or "").strip()
         if token_required and room_token:
             share_command = (
                 f'quizmd room --join "{created.get("room_name", room_name)}" '
-                f'--token "{room_token}" --name "FriendName"'
+                f'--token "{room_token}" --name "tom"'
             )
         else:
             share_command = (
                 f'quizmd room --join "{created.get("room_name", room_name)}" '
-                f'--name "FriendName"'
+                f'--name "tom"'
             )
-        print(f"Join command: {share_command}")
-        print("Ready and waiting. Share the room name with your friends.")
+        render_room_created_screen(
+            room_name=str(created.get("room_name") or room_name),
+            host_name=str(created.get("host_display_name") or host_name),
+            mode=str(created.get("mode") or mode),
+            quiz_title=quiz_title,
+            question_count=len(questions),
+            join_command=share_command,
+            token_required=token_required,
+            room_token=room_token,
+            host_role="",
+            theme_name=theme_name,
+            no_color=no_color,
+        )
+        if not quiz_path:
+            print("Tip: use --quiz filename to load your quiz.")
         return asyncio.run(
             _run_room_waiting_loop(
                 ws_base=str(created.get("ws_url") or _room_ws_base(server)),
@@ -3818,17 +4865,9 @@ def run_room_command(args: argparse.Namespace) -> int:
         raise RuntimeError("Room token is required to join this room.")
 
     detected_mode = str(room_info.get("mode") or "").lower()
-    if detected_mode == "boxing":
-        if not join_role:
-            join_role = _select_with_space(
-                "Your role in this boxing room:",
-                [("Teacher", "teacher"), ("Student", "student")],
-                theme_name=theme_name,
-                no_color=no_color,
-            )
-    elif detected_mode and join_role:
-        # Keep compatibility with users passing --role on non-boxing rooms.
-        print("Role flag ignored: this room is not in boxing mode.")
+    if detected_mode and join_role:
+        # Keep compatibility with legacy callers passing a room role.
+        print("Role flag ignored: rooms use participant role.")
         join_role = ""
 
     attempt_plan: list[tuple[str, str]] = [(room_token, join_role)]
@@ -3892,10 +4931,6 @@ def run_room_command(args: argparse.Namespace) -> int:
         if last_error is not None:
             raise last_error
         raise RuntimeError("Could not join room due to an unexpected error.")
-    print(f'Joined room "{joined.get("room_name", room_name)}" as {joined.get("display_name", player_name)}.')
-    if str(joined.get("mode") or room_info.get("mode") or "").lower() == "boxing":
-        joined_role = str(joined.get("player_role") or join_role or "participant")
-        print(f"Role: {joined_role}")
     return asyncio.run(
         _run_room_waiting_loop(
             ws_base=str(joined.get("ws_url") or _room_ws_base(server)),
@@ -3916,6 +4951,7 @@ def run_room_command(args: argparse.Namespace) -> int:
 
 def _alien_ship_sprite(mode: str) -> str:
     return _alien_ship_art(mode)[-1]
+
 
 
 def _alien_ship_art(mode: str) -> tuple[str, ...]:
@@ -5737,6 +6773,14 @@ def _platform_setup_hint_for_any_ai_key() -> str:
     return f"macOS/Linux:\n{mac_linux}\nWindows (PowerShell):\n{windows}"
 
 
+def _essay_key_setup_help_text() -> str:
+    return (
+        "Tips:\n"
+        "- Use `quizmd --validate your-essay.md` to validate essay format without any key.\n"
+        "- Use MCQ modes (`hello-quiz.md`, `hello-imposter.md`, etc.) if you want to run without AI."
+    )
+
+
 def _resolve_ai_provider(ai_provider: str) -> str:
     if ai_provider != "auto":
         return ai_provider
@@ -5754,6 +6798,161 @@ def _available_ai_providers_by_priority() -> list[str]:
         if os.environ.get(env_key, "").strip():
             providers.append(provider)
     return providers
+
+
+def _resolve_millionaire_ai_settings(ai_provider: str, ai_model: str) -> dict:
+    requested = str(ai_provider or DEFAULT_AI_PROVIDER)
+    model_text = (ai_model or "").strip()
+
+    if requested == "auto":
+        providers = _available_ai_providers_by_priority()
+        if not providers:
+            return {"enabled": False, "provider": "", "model": "", "env_key": ""}
+        provider = providers[0]
+    else:
+        provider = requested
+        env_key = _env_key_for_provider(provider)
+        if not os.environ.get(env_key, "").strip():
+            return {"enabled": False, "provider": provider, "model": "", "env_key": env_key}
+
+    env_key = _env_key_for_provider(provider)
+    model = model_text or _default_model_for_provider(provider)
+    return {
+        "enabled": bool(os.environ.get(env_key, "").strip()),
+        "provider": provider,
+        "provider_name": _provider_display_name(provider),
+        "model": model,
+        "env_key": env_key,
+    }
+
+
+def _millionaire_build_ai_prompt(question: dict) -> str:
+    options = question.get("options", [])
+    options_lines = "\n".join(f"{idx+1}. {opt}" for idx, opt in enumerate(options))
+    return (
+        "You are helping a student in a quiz game.\n"
+        "Give a short hint (max 2 sentences) and a likely option number.\n"
+        "Do not claim certainty. Keep it concise.\n\n"
+        f"Question:\n{question.get('question', '').strip()}\n\n"
+        f"Options:\n{options_lines}\n\n"
+        "Return plain text only."
+    )
+
+
+def _millionaire_ask_ai_hint(
+    question: dict,
+    provider: str,
+    model: str,
+    api_key: str,
+    timeout: int,
+    max_retries: int = 2,
+) -> str:
+    prompt = _millionaire_build_ai_prompt(question)
+    last_error: Exception | None = None
+    reason_code = "unknown_error"
+
+    for attempt in range(max_retries + 1):
+        try:
+            if provider == "gemini":
+                payload = {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.2},
+                }
+                body = json.dumps(payload).encode("utf-8")
+                request = urllib.request.Request(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                    data=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-goog-api-key": api_key,
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    parsed = json.loads(response.read().decode("utf-8"))
+                    candidates = parsed.get("candidates", [])
+                    parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
+                    text = "".join(part.get("text", "") for part in parts if isinstance(part, dict)).strip()
+                    if text:
+                        return text[:500]
+                    raise ValueError("Empty Gemini hint response")
+
+            if provider == "openai":
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": "Be concise and practical."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0.2,
+                }
+                body = json.dumps(payload).encode("utf-8")
+                request = urllib.request.Request(
+                    "https://api.openai.com/v1/chat/completions",
+                    data=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {api_key}",
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    parsed = json.loads(response.read().decode("utf-8"))
+                    choices = parsed.get("choices", [])
+                    message = choices[0].get("message", {}) if choices else {}
+                    text = message.get("content", "")
+                    if isinstance(text, list):
+                        text = "".join(
+                            item.get("text", "")
+                            for item in text
+                            if isinstance(item, dict)
+                        )
+                    text = str(text).strip()
+                    if text:
+                        return text[:500]
+                    raise ValueError("Empty OpenAI hint response")
+
+            if provider == "anthropic":
+                payload = {
+                    "model": model,
+                    "max_tokens": 250,
+                    "temperature": 0.2,
+                    "messages": [{"role": "user", "content": prompt}],
+                }
+                body = json.dumps(payload).encode("utf-8")
+                request = urllib.request.Request(
+                    "https://api.anthropic.com/v1/messages",
+                    data=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01",
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    parsed = json.loads(response.read().decode("utf-8"))
+                    blocks = parsed.get("content", [])
+                    text = "".join(
+                        block.get("text", "")
+                        for block in blocks
+                        if isinstance(block, dict) and block.get("type") == "text"
+                    ).strip()
+                    if text:
+                        return text[:500]
+                    raise ValueError("Empty Anthropic hint response")
+
+            raise RuntimeError(f"Unsupported AI provider: {provider}")
+        except Exception as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            last_error = exc
+            retryable, reason_code = _classify_provider_error(exc)
+            if attempt >= max_retries or not retryable:
+                break
+            time.sleep((2 ** attempt) + random.uniform(0.1, 0.3))
+
+    raise RuntimeError(f"[{reason_code}] AI hint failed: {last_error}")
 
 
 def _select_debug_ai_candidates(ai_provider: str) -> tuple[list[str], bool]:
@@ -6101,6 +7300,198 @@ def evaluate_essay_with_loading(console, theme: dict, evaluator, *args, **kwargs
     )
 
 
+def _play_win_confetti(console, theme: dict, no_color: bool = False, duration_seconds: float = 1.2) -> None:
+    if no_color:
+        return
+    try:
+        from rich.live import Live
+        from rich.panel import Panel
+    except ModuleNotFoundError:
+        return
+
+    frames = [
+        "✦  ✧  ✦  ✧  ✦",
+        "  ✦  ✧  ✦  ✧ ",
+        "✧  ✦  ✧  ✦  ✧",
+        "  ✧  ✦  ✧  ✦ ",
+    ]
+    delay = 0.12
+    total_frames = max(1, int(duration_seconds / delay))
+    with Live(console=console, transient=True, refresh_per_second=12) as live:
+        for i in range(total_frames):
+            frame = frames[i % len(frames)]
+            live.update(
+                Panel(
+                    f"[bold {theme['success']}]{frame}[/bold {theme['success']}]\n"
+                    f"[bold {theme['success']}]Congrats, you won![/bold {theme['success']}]\n"
+                    f"[bold {theme['success']}]{frame}[/bold {theme['success']}]",
+                    border_style=theme["success"],
+                )
+            )
+            time.sleep(delay)
+
+
+def _millionaire_available_options(option_count: int, hidden_options: set[int] | None) -> list[int]:
+    hidden = hidden_options or set()
+    return [idx for idx in range(1, option_count + 1) if idx not in hidden]
+
+
+def _millionaire_points_for_question(question_index: int, total_questions: int) -> int:
+    if total_questions <= 0:
+        return 0
+    if total_questions == MILLIONAIRE_TOTAL_QUESTIONS:
+        idx = max(1, min(question_index, len(MILLIONAIRE_POINTS_LADDER)))
+        return MILLIONAIRE_POINTS_LADDER[idx - 1]
+    # Fallback for short custom millionaire quizzes in tests/dev.
+    base = 1_000_000 / total_questions
+    return max(100, int(round(base * question_index)))
+
+
+def _format_points(value: int) -> str:
+    return f"{max(0, int(value)):,}"
+
+
+def _millionaire_5050_hidden_indexes(
+    correct_indexes: list[int],
+    option_count: int,
+    seed: int,
+) -> set[int]:
+    if not correct_indexes:
+        return set()
+    correct = int(correct_indexes[0])
+    wrong = [idx for idx in range(1, option_count + 1) if idx != correct]
+    if len(wrong) <= 1:
+        return set()
+    rng = random.Random(seed)
+    remove_count = min(2, len(wrong) - 1)
+    hidden = set(rng.sample(wrong, remove_count))
+    return hidden
+
+
+def _millionaire_audience_percentages(
+    correct_indexes: list[int],
+    option_count: int,
+    seed: int,
+    question_index: int = 1,
+    total_questions: int = MILLIONAIRE_TOTAL_QUESTIONS,
+) -> tuple[int, dict[int, int]]:
+    if option_count <= 0:
+        return 1, {}
+    correct = int(correct_indexes[0]) if correct_indexes else 1
+    correct = max(1, min(option_count, correct))
+    rng = random.Random(seed)
+
+    def split_total(total: int, parts_count: int) -> list[int]:
+        if parts_count <= 0:
+            return []
+        if total <= 0:
+            return [0] * parts_count
+        weights = [rng.random() for _ in range(parts_count)]
+        weight_sum = sum(weights)
+        if weight_sum <= 0:
+            base = [0] * parts_count
+            base[0] = total
+            return base
+        parts = [int(total * w / weight_sum) for w in weights]
+        used = sum(parts)
+        remainder = total - used
+        for i in range(remainder):
+            parts[i % parts_count] += 1
+        return parts
+
+    if option_count == 1:
+        return correct, {1: 100}
+
+    qi = max(1, int(question_index))
+    tq = max(1, int(total_questions))
+    if qi <= max(2, int(round(tq * 0.27))):  # Q1-Q4 on a 15-question ladder
+        correct_range = (88, 98)
+        winner_correct_prob = 0.97
+        wrong_lead_range = (45, 62)
+    elif qi <= max(5, int(round(tq * 0.47))):  # Q5-Q7
+        correct_range = (68, 82)
+        winner_correct_prob = 0.84
+        wrong_lead_range = (42, 56)
+    elif qi <= max(8, int(round(tq * 0.67))):  # Q8-Q10
+        correct_range = (48, 64)
+        winner_correct_prob = 0.62
+        wrong_lead_range = (38, 52)
+    elif qi <= max(11, int(round(tq * 0.80))):  # Q11-Q12
+        correct_range = (38, 56)
+        winner_correct_prob = 0.52
+        wrong_lead_range = (35, 50)
+    else:  # Q13+
+        correct_range = (24, 50)
+        winner_correct_prob = 0.36
+        wrong_lead_range = (32, 48)
+
+    correct_pct = rng.randint(*correct_range)
+    winner_is_correct = rng.random() < winner_correct_prob
+    wrong_options = [i for i in range(1, option_count + 1) if i != correct]
+    winner = correct if winner_is_correct else rng.choice(wrong_options)
+
+    if winner_is_correct:
+        winner_pct = correct_pct
+        remaining = 100 - winner_pct
+        others = wrong_options
+        votes = {winner: winner_pct}
+        if len(others) == 1:
+            votes[others[0]] = remaining
+            return winner, votes
+        if remaining <= 0:
+            for idx in others:
+                votes[idx] = 0
+            return winner, votes
+        parts = split_total(remaining, len(others))
+        for idx, pct in zip(others, parts):
+            votes[idx] = pct
+        return winner, votes
+    else:
+        wrong_lead = rng.randint(*wrong_lead_range)
+        # Keep percentages sane when ranges collide on smaller/denser cases.
+        winner_pct = min(max(wrong_lead, correct_pct + 1), 99 - correct_pct)
+        remaining = 100 - winner_pct - correct_pct
+        if remaining < 0:
+            remaining = 0
+            if winner_pct + correct_pct != 100:
+                winner_pct = max(1, 100 - correct_pct)
+        others = [i for i in range(1, option_count + 1) if i not in {winner, correct}]
+        votes = {winner: winner_pct, correct: correct_pct}
+        if not others:
+            return winner, votes
+        if len(others) == 1:
+            votes[others[0]] = max(0, remaining)
+            return winner, votes
+        if remaining <= 0:
+            for idx in others:
+                votes[idx] = 0
+            return winner, votes
+        parts = split_total(remaining, len(others))
+        for idx, pct in zip(others, parts):
+            votes[idx] = pct
+        return winner, votes
+
+
+def _millionaire_friend_hint(question: dict, audience_winner: int | None = None) -> str:
+    hint = str(question.get("hint") or "").strip()
+    if hint:
+        return hint
+    explanation = str(question.get("explanation") or "").strip()
+    if explanation:
+        return explanation
+    if audience_winner is not None:
+        return f"Your friend leans toward option {audience_winner}."
+    return "Your friend says: focus on the most precise option."
+
+
+def _millionaire_ai_loading_message(provider_name: str, tick: int, width: int = 10) -> str:
+    safe_provider = (provider_name or "AI").strip() or "AI"
+    bar_width = max(3, int(width))
+    filled = int(tick) % (bar_width + 1)
+    bar = ("█" * filled) + ("░" * (bar_width - filled))
+    return f"Asking {safe_provider}... [{bar}]"
+
+
 def build_question_markup(
     q: dict,
     theme: dict,
@@ -6118,6 +7509,13 @@ def build_question_markup(
     compact: bool = False,
     terminal_width: int | None = None,
     ui: str = "classic",
+    millionaire_mode: bool = False,
+    millionaire_lifelines_text: str = "",
+    millionaire_message: str = "",
+    hidden_options: set[int] | None = None,
+    millionaire_points_text: str = "",
+    millionaire_safety_text: str = "",
+    millionaire_instruction: str = "",
 ) -> str:
     if imposter_marked is None:
         imposter_marked = set()
@@ -6127,15 +7525,21 @@ def build_question_markup(
     separator = " | " if ascii_compact else " • "
     if imposter_mode:
         instruction = (
-            "Sp/X/En"
+            "Sp/X/En/Q"
             if ultra_compact
-            else "Space/X/Enter"
+            else "[Space] Select • [X] Imposter • [Enter] Confirm • [Q] Quit"
+        )
+    elif millionaire_mode:
+        instruction = (
+            (millionaire_instruction or "Sp/En/F/A/C/Q")
+            if ultra_compact
+            else (millionaire_instruction or "[Space] Select • [Enter] Confirm • [Q] Quit with points")
         )
     else:
         instruction = (
-            "Sp/En"
+            "Sp/En/Q"
             if ultra_compact
-            else ("Space select | Enter" if ascii_compact else "Space select • Enter")
+            else ("[Space] Select | [Enter] Confirm | [Q] Quit" if ascii_compact else "[Space] Select • [Enter] Confirm • [Q] Quit")
         )
     imposter_count = len(q.get("imposters", [])) if imposter_mode else 0
     imposter_badge = ""
@@ -6219,7 +7623,19 @@ def build_question_markup(
 
     for i, opt in enumerate(q["options"]):
         idx = i + 1
+        option_hidden = bool(hidden_options and idx in hidden_options)
         pointer = "&gt;" if i == selected else " "
+        if option_hidden:
+            marker = "-"
+            hidden_label = "(removed by 50-50)"
+            style = f"fg='{theme['pt_instruction']}'"
+            if no_color:
+                lines.append(
+                    f"{'>' if i == selected else ' '} {idx}. {marker} {hidden_label}"
+                )
+            else:
+                lines.append(f"<style {style}>{pointer} {idx}. {marker} {hidden_label}</style>")
+            continue
         if ui == "next":
             if is_multiple:
                 marker = "[x]" if idx in marked else "[ ]"
@@ -6299,6 +7715,50 @@ def build_question_markup(
     lines.append("")
     lines.append("")
 
+    if millionaire_mode:
+        sep_width = max(30, min(74, (terminal_width or 76) - 2))
+        label = " Lifelines "
+        line_char = "-" if (no_color and _is_windows()) else "─"
+        if sep_width <= len(label) + 2:
+            separator_line = label.strip()
+        else:
+            side = (sep_width - len(label)) // 2
+            remainder = sep_width - len(label) - side
+            separator_line = (line_char * side) + label + (line_char * remainder)
+        if no_color:
+            lines.append(separator_line)
+        else:
+            lines.append(f"<style fg='{theme['pt_instruction']}'>{separator_line}</style>")
+        lines.append("")
+
+    if millionaire_mode and millionaire_lifelines_text:
+        if no_color:
+            lines.append(millionaire_lifelines_text)
+        else:
+            lines.append(f"<style fg='{theme['pt_instruction']}'>{html.escape(millionaire_lifelines_text)}</style>")
+        lines.append("")
+
+    if millionaire_mode and millionaire_points_text:
+        if no_color:
+            lines.append(millionaire_points_text)
+        else:
+            lines.append(f"<style fg='{theme['pt_title']}'>{html.escape(millionaire_points_text)}</style>")
+        lines.append("")
+
+    if millionaire_mode and millionaire_safety_text:
+        if no_color:
+            lines.append(millionaire_safety_text)
+        else:
+            lines.append(f"<style fg='{theme['pt_timer_warning']}'>{html.escape(millionaire_safety_text)}</style>")
+        lines.append("")
+
+    if millionaire_mode and millionaire_message:
+        if no_color:
+            lines.append(millionaire_message)
+        else:
+            lines.append(f"<style fg='{theme['pt_timer_warning']}'>{html.escape(millionaire_message)}</style>")
+        lines.append("")
+
     return "\n".join(lines)
 
 
@@ -6312,12 +7772,20 @@ async def ask_question(
     full_screen: bool = False,
     ui: str = "classic",
     show_feedback: bool = True,
+    quiz_mode: str = "mcq",
+    millionaire_state: dict | None = None,
+    ai_provider: str = DEFAULT_AI_PROVIDER,
+    ai_model: str = "",
+    ai_timeout: int = 30,
+    untimed: bool = False,
+    status_sidebar_renderer=None,
+    status_sidebar_width: int = 34,
 ):
     try:
         from prompt_toolkit import Application
         from prompt_toolkit.formatted_text import HTML as PromptHTML
         from prompt_toolkit.key_binding import KeyBindings
-        from prompt_toolkit.layout import HSplit, Layout, Window
+        from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
         from prompt_toolkit.layout.controls import FormattedTextControl
     except ModuleNotFoundError as exc:
         raise RuntimeError(
@@ -6328,15 +7796,96 @@ async def ask_question(
     marked = set()
     imposter_marked = set()
     pulse = False
-    remaining = q["time_limit"]
+    remaining = None if untimed else q["time_limit"]
     force_compact = compact
     current_columns = get_terminal_columns()
     current_compact = force_compact or should_use_compact_layout(columns=current_columns)
-    result = {"answer": None, "imposters": []}
+    result = {"answer": None, "imposters": [], "cash_out": False, "quit_requested": False}
     submitted = False
+    auto_advance_task = None
     is_multiple = q.get("type", "single") == "multiple"
     expected_imposters = sorted(q.get("imposters", []))
     imposter_mode = bool(expected_imposters)
+    millionaire_mode = quiz_mode == "millionaire"
+    hidden_options: set[int] = set()
+    millionaire_message = ""
+    ai_lifeline_in_progress = False
+    used_lifelines_this_question: list[str] = []
+    audience_winner: int | None = None
+    friend_name = str(q.get("friend_name") or "Friend").strip() or "Friend"
+    ai_settings = _resolve_millionaire_ai_settings(ai_provider, ai_model) if millionaire_mode else {"enabled": False}
+    ai_lifeline_enabled = bool(ai_settings.get("enabled"))
+
+    if millionaire_mode:
+        is_multiple = False
+        imposter_mode = False
+        if millionaire_state is None:
+            millionaire_state = {}
+        millionaire_state.setdefault("fifty_fifty_used", False)
+        millionaire_state.setdefault("ask_people_used", False)
+        millionaire_state.setdefault("call_friend_used", False)
+        millionaire_state.setdefault("usage_by_question", {})
+        millionaire_state.setdefault("messages_by_question", {})
+        millionaire_state.setdefault("current_points", 0)
+        millionaire_state.setdefault("guaranteed_points", 0)
+        millionaire_state.setdefault("current_question_points", 0)
+        millionaire_state.setdefault("is_safety_net_question", False)
+        millionaire_state.setdefault("ask_ai_used", False)
+
+    def millionaire_lifelines_text() -> str:
+        if not millionaire_mode or millionaire_state is None:
+            return ""
+        ff = "✓" if millionaire_state.get("fifty_fifty_used") else "F"
+        ap = "✓" if millionaire_state.get("ask_people_used") else "A"
+        cf = "✓" if millionaire_state.get("call_friend_used") else "C"
+        ai = "✓" if millionaire_state.get("ask_ai_used") else "D"
+        if no_color:
+            base = f"Lifelines: [{ff}]50-50  [{ap}]Ask  [{cf}]Ask {friend_name}"
+            if ai_lifeline_enabled:
+                base += f"  [{ai}]Ask AI"
+            return base
+        base = f"Lifelines: [{ff}] 50-50  [{ap}] Ask the People  [{cf}] Ask {friend_name}"
+        if ai_lifeline_enabled:
+            provider_name = str(ai_settings.get("provider_name") or "AI")
+            base += f"  [{ai}] Ask AI ({provider_name})"
+        return base
+
+    def millionaire_instruction_text() -> str:
+        if not millionaire_mode:
+            return ""
+        if no_color or current_compact:
+            return "Sp/En/Q"
+        return "[Space] Select • [Enter] Confirm • [Q] Quit with points"
+
+    def visible_options() -> list[int]:
+        if not millionaire_mode:
+            return list(range(1, len(q["options"]) + 1))
+        return _millionaire_available_options(len(q["options"]), hidden_options)
+
+    def ensure_selected_visible() -> None:
+        nonlocal selected
+        vis = visible_options()
+        if not vis:
+            selected = 0
+            return
+        if (selected + 1) in vis:
+            return
+        selected = vis[0] - 1
+
+    def move_selected(step: int) -> None:
+        nonlocal selected
+        if step == 0:
+            return
+        vis = visible_options()
+        if not vis:
+            return
+        current = selected + 1
+        if current not in vis:
+            selected = vis[0] - 1
+            return
+        pos = vis.index(current)
+        pos = (pos + step) % len(vis)
+        selected = vis[pos] - 1
 
     def evaluate_submission(answer_indexes, imposter_indexes) -> dict:
         selected_answer = sorted(answer_indexes) if answer_indexes else []
@@ -6392,12 +7941,30 @@ async def ask_question(
             compact=current_compact,
             terminal_width=current_columns,
             ui=ui,
+            millionaire_mode=millionaire_mode,
+            millionaire_lifelines_text=millionaire_lifelines_text(),
+            millionaire_message=millionaire_message,
+            hidden_options=hidden_options,
+            millionaire_points_text=(
+                f"Points: {_format_points(int(millionaire_state.get('current_points', 0)))} | "
+                f"Guaranteed: {_format_points(int(millionaire_state.get('guaranteed_points', 0)))} | "
+                f"This question: {_format_points(int(millionaire_state.get('current_question_points', 0)))}"
+                if millionaire_mode and millionaire_state is not None
+                else ""
+            ),
+            millionaire_safety_text=(
+                "🛟 Safety Net question! Get this right to lock your guaranteed points."
+                if millionaire_mode and millionaire_state is not None and bool(millionaire_state.get("is_safety_net_question"))
+                else ""
+            ),
+            millionaire_instruction=millionaire_instruction_text(),
         )
         if full_screen and submitted:
             grading = evaluate_submission(result["answer"], result["imposters"])
             status = question_status_label(grading)
             explanation = (q.get("explanation") or "").strip()
             answer_labels = format_labels(q["options"], q["correct"]) or "None"
+            is_last_question = question_index >= total_questions
             if no_color:
                 markup += "\n" + status + "\n"
                 markup += f"\nQuestion points: {grading['question_points']}/{grading['question_max_points']}\n"
@@ -6412,7 +7979,8 @@ async def ask_question(
                         markup += f"Imposter: {imposter_labels}\n"
                     if explanation:
                         markup += f"\nExplanation\n{explanation}\n"
-                markup += "\nPress Enter for the next question..."
+                if not is_last_question:
+                    markup += "\nPress Enter for the next question..."
                 return markup
 
             status_style = question_status_style(theme, status)
@@ -6443,32 +8011,57 @@ async def ask_question(
                     explanation_lines = [render_inline_markdown_for_prompt_toolkit(line) for line in explanation.splitlines()]
                     markup += "\n<style fg='{0}'><b>Explanation</b></style>\n".format(theme["pt_title"])
                     markup += "\n".join(explanation_lines) + "\n"
-            markup += f"\n<style fg='{theme['pt_instruction']}'>Press Enter for the next question...</style>"
+            if not is_last_question:
+                markup += f"\n<style fg='{theme['pt_instruction']}'>Press Enter for the next question...</style>"
         if no_color:
             return markup
         return PromptHTML(markup)
 
+    def render_sidebar():
+        if status_sidebar_renderer is None:
+            return ""
+        raw = str(status_sidebar_renderer() or "")
+        if no_color:
+            return raw
+        escaped = html.escape(raw)
+        return PromptHTML(f"<style fg='{theme['pt_instruction']}'>{escaped}</style>")
+
     control = FormattedTextControl(text=render)
     window = Window(content=control, wrap_lines=True, always_hide_cursor=True)
+    sidebar_control = None
+    sidebar_window = None
+    if status_sidebar_renderer is not None:
+        sidebar_control = FormattedTextControl(text=render_sidebar)
+        sidebar_window = Window(
+            content=sidebar_control,
+            wrap_lines=True,
+            always_hide_cursor=True,
+            width=max(24, int(status_sidebar_width)),
+        )
     kb = KeyBindings()
 
     @kb.add("up")
     def _(_):
-        nonlocal selected, pulse
-        selected = (selected - 1) % len(q["options"])
+        nonlocal pulse
+        move_selected(-1)
         pulse = not pulse
         control.text = render()
 
     @kb.add("down")
     def _(_):
-        nonlocal selected, pulse
-        selected = (selected + 1) % len(q["options"])
+        nonlocal pulse
+        move_selected(1)
         pulse = not pulse
         control.text = render()
 
     @kb.add("space")
     def _(_):
+        nonlocal millionaire_message
         idx = selected + 1
+        if millionaire_mode and idx in hidden_options:
+            millionaire_message = "That option was removed by 50-50."
+            control.text = render()
+            return
         if idx in marked:
             marked.remove(idx)
         else:
@@ -6476,6 +8069,7 @@ async def ask_question(
                 marked.clear()
             marked.add(idx)
             imposter_marked.discard(idx)
+        millionaire_message = ""
         control.text = render()
 
     @kb.add("x")
@@ -6502,17 +8096,178 @@ async def ask_question(
             marked.discard(idx)
         control.text = render()
 
+    @kb.add("F")
+    @kb.add("f")
+    def _(_):
+        nonlocal millionaire_message
+        if not millionaire_mode or millionaire_state is None:
+            return
+        if millionaire_state.get("fifty_fifty_used"):
+            millionaire_message = "50-50 already used."
+            control.text = render()
+            return
+        hidden_options.clear()
+        hidden_options.update(
+            _millionaire_5050_hidden_indexes(
+                q.get("correct", []),
+                len(q.get("options", [])),
+                seed=(question_index * 131) + 7,
+            )
+        )
+        if not hidden_options:
+            millionaire_message = "50-50 unavailable for this question."
+            control.text = render()
+            return
+        millionaire_state["fifty_fifty_used"] = True
+        used_lifelines_this_question.append("50-50")
+        millionaire_message = "50-50 used: two wrong options removed."
+        ensure_selected_visible()
+        control.text = render()
+
+    @kb.add("A")
+    @kb.add("a")
+    def _(_):
+        nonlocal millionaire_message, audience_winner
+        if not millionaire_mode or millionaire_state is None:
+            return
+        if millionaire_state.get("ask_people_used"):
+            millionaire_message = "Ask the People already used."
+            control.text = render()
+            return
+        winner, votes = _millionaire_audience_percentages(
+            q.get("correct", []),
+            len(q.get("options", [])),
+            seed=(question_index * 173) + 11,
+            question_index=question_index,
+            total_questions=total_questions,
+        )
+        audience_winner = winner
+        ordered = " | ".join(f"{idx}:{votes.get(idx, 0)}%" for idx in range(1, len(q.get("options", [])) + 1))
+        millionaire_state["ask_people_used"] = True
+        used_lifelines_this_question.append("Ask the People")
+        millionaire_message = f"Audience vote -> {ordered}. Most votes: option {winner}."
+        control.text = render()
+
+    @kb.add("C")
+    @kb.add("c")
+    def _(_):
+        nonlocal millionaire_message
+        if not millionaire_mode or millionaire_state is None:
+            return
+        if millionaire_state.get("call_friend_used"):
+            millionaire_message = "Call a Friend already used."
+            control.text = render()
+            return
+        hint = _millionaire_friend_hint(q, audience_winner=audience_winner)
+        millionaire_state["call_friend_used"] = True
+        used_lifelines_this_question.append("Call a Friend")
+        millionaire_message = f"{friend_name} says: {hint}"
+        control.text = render()
+
+    @kb.add("D")
+    @kb.add("d")
+    async def _(event):
+        nonlocal millionaire_message, ai_lifeline_in_progress
+        if not millionaire_mode or millionaire_state is None or not ai_lifeline_enabled:
+            return
+        if ai_lifeline_in_progress:
+            millionaire_message = "Ask AI already in progress..."
+            control.text = render()
+            event.app.invalidate()
+            return
+        if millionaire_state.get("ask_ai_used"):
+            millionaire_message = "Ask AI already used."
+            control.text = render()
+            return
+
+        api_key = os.environ.get(str(ai_settings.get("env_key") or ""), "").strip()
+        if not api_key:
+            millionaire_message = "Ask AI unavailable (missing API key)."
+            control.text = render()
+            return
+        provider = str(ai_settings.get("provider") or "")
+        model = str(ai_settings.get("model") or "")
+        provider_name = str(ai_settings.get("provider_name") or "AI")
+        ai_lifeline_in_progress = True
+        try:
+            loop = asyncio.get_running_loop()
+            task = loop.run_in_executor(
+                None,
+                lambda: _millionaire_ask_ai_hint(
+                    q,
+                    provider=provider,
+                    model=model,
+                    api_key=api_key,
+                    timeout=max(1, int(ai_timeout)),
+                ),
+            )
+            tick = 0
+            while not task.done():
+                millionaire_message = _millionaire_ai_loading_message(provider_name, tick)
+                control.text = render()
+                event.app.invalidate()
+                tick += 1
+                await asyncio.sleep(0.1)
+            hint = await task
+            millionaire_state["ask_ai_used"] = True
+            used_lifelines_this_question.append("Ask AI")
+            millionaire_message = f"{provider_name} says: {hint}"
+        except Exception as exc:
+            reason = _reason_code_from_provider_exception(exc)
+            millionaire_message = f"{provider_name} is unavailable now ({reason})."
+        finally:
+            ai_lifeline_in_progress = False
+        control.text = render()
+        event.app.invalidate()
+
     @kb.add("enter")
     def _(event):
-        nonlocal submitted
+        nonlocal submitted, millionaire_message, auto_advance_task
+        if ai_lifeline_in_progress:
+            millionaire_message = "Please wait, Ask AI is still fetching..."
+            control.text = render()
+            event.app.invalidate()
+            return
         if not submitted:
             result["answer"] = sorted(marked) if marked else None
             result["imposters"] = sorted(imposter_marked)
+            if millionaire_mode and millionaire_state is not None:
+                millionaire_state["usage_by_question"][str(question_index)] = list(dict.fromkeys(used_lifelines_this_question))
+                millionaire_state["messages_by_question"][str(question_index)] = millionaire_message
             if full_screen:
                 submitted = True
                 control.text = render()
                 app.invalidate()
+                if question_index >= total_questions:
+                    async def _auto_advance_to_results():
+                        await asyncio.sleep(1.1)
+                        if event.app.is_running:
+                            event.app.exit()
+                    auto_advance_task = event.app.create_background_task(_auto_advance_to_results())
                 return
+        event.app.exit()
+
+    @kb.add("q")
+    @kb.add("Q")
+    def _(event):
+        nonlocal millionaire_message
+        if not millionaire_mode:
+            result["quit_requested"] = True
+            result["answer"] = None
+            result["imposters"] = []
+            event.app.exit()
+            return
+        if ai_lifeline_in_progress:
+            millionaire_message = "Please wait, Ask AI is still fetching..."
+            control.text = render()
+            event.app.invalidate()
+            return
+        if millionaire_state is not None:
+            millionaire_state["usage_by_question"][str(question_index)] = list(dict.fromkeys(used_lifelines_this_question))
+            millionaire_state["messages_by_question"][str(question_index)] = millionaire_message
+        result["cash_out"] = True
+        result["answer"] = None
+        result["imposters"] = []
         event.app.exit()
 
     @kb.add("c-c")
@@ -6520,7 +8275,11 @@ async def ask_question(
         event.app.exit(exception=KeyboardInterrupt())
 
     app = Application(
-        layout=Layout(HSplit([window])),
+        layout=Layout(
+            VSplit([window, sidebar_window], padding=1)
+            if sidebar_window is not None
+            else HSplit([window])
+        ),
         key_bindings=kb,
         full_screen=full_screen,
         erase_when_done=full_screen,
@@ -6536,6 +8295,8 @@ async def ask_question(
     if not force_compact:
         current_compact = should_use_compact_layout(columns=current_columns)
     control.text = render()
+    if sidebar_control is not None:
+        sidebar_control.text = render_sidebar()
 
     async def timer():
         nonlocal remaining, submitted
@@ -6551,10 +8312,19 @@ async def ask_question(
         if remaining == 0 and not submitted:
             result["answer"] = None
             result["imposters"] = sorted(imposter_marked)
+            if millionaire_mode and millionaire_state is not None:
+                millionaire_state["usage_by_question"][str(question_index)] = list(dict.fromkeys(used_lifelines_this_question))
+                millionaire_state["messages_by_question"][str(question_index)] = millionaire_message
             if full_screen:
                 submitted = True
                 control.text = render()
                 app.invalidate()
+                if question_index >= total_questions:
+                    async def _auto_advance_to_results():
+                        await asyncio.sleep(1.1)
+                        if app.is_running:
+                            app.exit()
+                    auto_advance_task = app.create_background_task(_auto_advance_to_results())
             else:
                 app.exit()
 
@@ -6570,16 +8340,28 @@ async def ask_question(
                 current_compact = should_use_compact_layout(columns=columns)
             pulse = not pulse
             control.text = render()
+            if sidebar_control is not None:
+                sidebar_control.text = render_sidebar()
+            app.invalidate()
+
+    async def watch_sidebar_clock():
+        if sidebar_control is None:
+            return
+        while True:
+            await asyncio.sleep(1)
+            sidebar_control.text = render_sidebar()
             app.invalidate()
 
     task = asyncio.create_task(timer())
     resize_task = asyncio.create_task(watch_resize())
+    sidebar_clock_task = asyncio.create_task(watch_sidebar_clock())
     try:
         await app.run_async()
     finally:
         ensure_terminal_cursor_visible()
         task.cancel()
         resize_task.cancel()
+        sidebar_clock_task.cancel()
         try:
             await task
         except asyncio.CancelledError:
@@ -6588,10 +8370,22 @@ async def ask_question(
             await resize_task
         except asyncio.CancelledError:
             pass
+        try:
+            await sidebar_clock_task
+        except asyncio.CancelledError:
+            pass
+        if auto_advance_task is not None and not auto_advance_task.done():
+            auto_advance_task.cancel()
+            try:
+                await auto_advance_task
+            except asyncio.CancelledError:
+                pass
 
     ans = result["answer"]
     imposters_selected = result["imposters"]
     grading = evaluate_submission(ans, imposters_selected)
+    grading["quit_with_points"] = bool(result.get("cash_out"))
+    grading["quit_requested"] = bool(result.get("quit_requested"))
     return grading["is_perfect"], ans, imposters_selected, grading
 
 
@@ -7329,9 +9123,12 @@ def run_debug(
             prompt_input("Press Enter for the next debug question...")
 
     percentage = (total_points / total_possible) * 100 if total_possible else 0.0
+    completion_text = f"{len(debug_answers)}/{len(questions)} questions"
     console.print(
         Panel(
             f"[bold {theme['primary']}]Debug Summary[/bold {theme['primary']}]\n\n"
+            f"Result: [bold {theme['success']}]Completed[/bold {theme['success']}]\n"
+            f"Completion: [bold]{completion_text}[/bold]\n"
             f"Score: [bold]{total_points}/{total_possible}[/bold]\n"
             f"Percentage: [bold]{percentage:.1f}%[/bold]\n"
             f"Perfect fixes: [bold]{solved_count}/{len(questions)}[/bold]"
@@ -7376,9 +9173,14 @@ def run(
     full_screen: bool = False,
     ui: str = "classic",
     show_feedback: bool = True,
+    quiz_mode: str = "mcq",
+    ai_provider: str = DEFAULT_AI_PROVIDER,
+    ai_model: str = "",
+    ai_timeout: int = 30,
 ):
     try:
         from rich.console import Console
+        from rich.live import Live
         from rich.markdown import Markdown
         from rich.panel import Panel
     except ModuleNotFoundError as exc:
@@ -7397,33 +9199,65 @@ def run(
     saved_answers = []
 
     try:
+        millionaire_ai_settings = _resolve_millionaire_ai_settings(ai_provider, ai_model) if quiz_mode == "millionaire" else {}
+        millionaire_ai_enabled = bool(millionaire_ai_settings.get("enabled"))
+        millionaire_friend_name = "Friend"
+        if quiz_mode == "millionaire" and questions:
+            millionaire_friend_name = str(questions[0].get("friend_name") or "Friend").strip() or "Friend"
+
         rule_lines = ["[bold]Rules:[/bold]"]
-        if quiz_has_imposters:
+        if quiz_mode == "millionaire":
+            rule_lines.append("- 15-question points ladder to 1,000,000")
+            rule_lines.append("- Pick one best answer per question")
+            rule_lines.append(
+                "- Use [bold]↑/↓[/bold] to move, press [bold]Space[/bold] to select, "
+                "[bold]Enter[/bold] to submit, [bold]Q[/bold] to quit with current points"
+            )
+            rule_lines.append(
+                f"- Lifelines: [bold]F[/bold]=50-50, [bold]A[/bold]=Ask the People, "
+                f"[bold]C[/bold]=Ask {millionaire_friend_name} (once each)"
+            )
+            if millionaire_ai_enabled:
+                provider_chip = str(millionaire_ai_settings.get("provider_name") or "AI")
+                rule_lines.append(
+                    f"- Optional: [bold]D[/bold]=Ask AI ({provider_chip}) "
+                    "(once, only when AI key is configured)"
+                )
+                rule_lines.append(
+                    f"- AI status: [bold {theme['success']}]Connected[/bold {theme['success']}] ({provider_chip})"
+                )
+            rule_lines.append(
+                f"- You have up to [bold]{MILLIONAIRE_MAX_TIME_LIMIT_SECONDS}s[/bold] per question"
+            )
+            rule_lines.append("- If Time is set in file, it is capped at 120s")
+            rule_lines.append("- One wrong answer ends the game")
+            rule_lines.append("- Safety nets: Q2, Q5, Q10, Q15")
+        elif quiz_has_imposters:
             rule_lines.append("- Select correct answer(s) and flag misleading options (those are there to trick you)")
             rule_lines.append(
                 "- Use [bold]↑/↓[/bold] to move, [bold]Space[/bold] for correct choices, "
-                "[bold]X[/bold] for imposters, [bold]Enter[/bold] to submit"
+                "[bold]X[/bold] for imposters, [bold]Enter[/bold] to submit, [bold]Q[/bold] to quit"
             )
             rule_lines.append("- Imposter scoring: +1 correct flag, -1 false flag (minimum 0 imposter points)")
         elif has_multiple and not has_single:
             rule_lines.append("- Select all options you believe are correct")
             rule_lines.append(
                 "- Use [bold]↑/↓[/bold] to move, [bold]Space[/bold] to toggle choices, "
-                "[bold]Enter[/bold] to submit"
+                "[bold]Enter[/bold] to submit, [bold]Q[/bold] to quit"
             )
             rule_lines.append("- You get points when your final set matches the expected correct set")
         elif has_single and not has_multiple:
             rule_lines.append("- Pick the one best answer")
             rule_lines.append(
                 "- Use [bold]↑/↓[/bold] to move, press [bold]Space[/bold] to select, "
-                "[bold]Enter[/bold] to submit"
+                "[bold]Enter[/bold] to submit, [bold]Q[/bold] to quit"
             )
             rule_lines.append("- Correct answer gives full question points")
         else:
             rule_lines.append("- Questions include single-choice and multiple-choice items")
             rule_lines.append(
                 "- Use [bold]↑/↓[/bold] to move, [bold]Space[/bold] to select/toggle, "
-                "[bold]Enter[/bold] to submit"
+                "[bold]Enter[/bold] to submit, [bold]Q[/bold] to quit"
             )
             rule_lines.append("- Single-choice gives full points; multiple-choice needs the exact correct set")
 
@@ -7449,10 +9283,41 @@ def run(
         imposter_tp_total = 0
         imposter_fp_total = 0
         imposter_fn_total = 0
+        millionaire_current_points = 0
+        millionaire_guaranteed_points = 0
+        millionaire_lost = False
+        millionaire_cashed_out = False
+        millionaire_cashout_question = 0
+        millionaire_lost_on_question = 0
+        millionaire_lost_on_value = 0
+        user_quit = False
+        quit_on_question = 0
+        millionaire_state = (
+            {
+                "fifty_fifty_used": False,
+                "ask_people_used": False,
+                "call_friend_used": False,
+                "usage_by_question": {},
+                "messages_by_question": {},
+                "current_points": millionaire_current_points,
+                "guaranteed_points": millionaire_guaranteed_points,
+                "current_question_points": 0,
+                "is_safety_net_question": False,
+            }
+            if quiz_mode == "millionaire"
+            else None
+        )
 
         for i, q in enumerate(questions, start=1):
             if i > 1 and not full_screen:
                 console.print("\n")
+
+            if quiz_mode == "millionaire" and millionaire_state is not None:
+                q_points = _millionaire_points_for_question(i, len(questions))
+                millionaire_state["current_points"] = millionaire_current_points
+                millionaire_state["guaranteed_points"] = millionaire_guaranteed_points
+                millionaire_state["current_question_points"] = q_points
+                millionaire_state["is_safety_net_question"] = i in MILLIONAIRE_SAFETY_NET_QUESTIONS
 
             perfect, ans, imposter_ans, grading = run_coroutine_sync(
                 ask_question(
@@ -7465,8 +9330,37 @@ def run(
                     full_screen=full_screen,
                     ui=ui,
                     show_feedback=show_feedback,
+                    quiz_mode=quiz_mode,
+                    millionaire_state=millionaire_state,
+                    ai_provider=ai_provider,
+                    ai_model=ai_model,
+                    ai_timeout=ai_timeout,
                 )
             )
+
+            if quiz_mode == "millionaire" and grading.get("quit_with_points"):
+                millionaire_cashed_out = True
+                millionaire_cashout_question = i
+                console.print(
+                    Panel(
+                        f"[bold {theme['accent']}]You cashed out.[/bold {theme['accent']}]\n"
+                        f"You leave with current winnings: [bold]{_format_points(millionaire_current_points)}[/bold].\n"
+                        f"Guaranteed floor remains: [bold]{_format_points(millionaire_guaranteed_points)}[/bold].",
+                        border_style=theme["accent"],
+                    )
+                )
+                break
+            if grading.get("quit_requested"):
+                user_quit = True
+                quit_on_question = i
+                console.print(
+                    Panel(
+                        f"[bold {theme['accent']}]You quit the quiz.[/bold {theme['accent']}]\n"
+                        "Progress so far is kept in your summary.",
+                        border_style=theme["accent"],
+                    )
+                )
+                break
 
             selected_labels = format_labels(q["options"], ans)
             correct_labels = format_labels(q["options"], q["correct"])
@@ -7489,10 +9383,47 @@ def run(
             if not full_screen:
                 status_style = question_status_style(theme, status)
                 console.print(f"[{status_style}]{status}[/{status_style}]")
-                console.print(
-                    f"[{theme['secondary']}]Question points:[/{theme['secondary']}] "
-                    f"{grading['question_points']}/{grading['question_max_points']}"
-                )
+                if quiz_mode == "millionaire":
+                    q_points = _millionaire_points_for_question(i, len(questions))
+                    if grading["answer_correct"]:
+                        millionaire_current_points = q_points
+                        if i in MILLIONAIRE_SAFETY_NET_QUESTIONS:
+                            millionaire_guaranteed_points = millionaire_current_points
+                            console.print(
+                                f"[{theme['accent']}]🛟 Safety Net reached! "
+                                f"Guaranteed points locked: {_format_points(millionaire_guaranteed_points)}[/]"
+                            )
+                    else:
+                        millionaire_lost = True
+                        millionaire_lost_on_question = i
+                        millionaire_lost_on_value = q_points
+                    console.print(
+                        f"[{theme['secondary']}]Winnings:[/{theme['secondary']}] "
+                        f"{_format_points(millionaire_current_points)}"
+                    )
+                    console.print(
+                        f"[{theme['secondary']}]Guaranteed:[/{theme['secondary']}] "
+                        f"{_format_points(millionaire_guaranteed_points)}"
+                    )
+                    console.print(
+                        f"[{theme['secondary']}]Question value:[/{theme['secondary']}] "
+                        f"{_format_points(q_points)}"
+                    )
+                else:
+                    console.print(
+                        f"[{theme['secondary']}]Question points:[/{theme['secondary']}] "
+                        f"{grading['question_points']}/{grading['question_max_points']}"
+                    )
+            elif quiz_mode == "millionaire":
+                q_points = _millionaire_points_for_question(i, len(questions))
+                if grading["answer_correct"]:
+                    millionaire_current_points = q_points
+                    if i in MILLIONAIRE_SAFETY_NET_QUESTIONS:
+                        millionaire_guaranteed_points = millionaire_current_points
+                else:
+                    millionaire_lost = True
+                    millionaire_lost_on_question = i
+                    millionaire_lost_on_value = q_points
 
             if show_feedback and not full_screen:
                 console.print(
@@ -7533,9 +9464,28 @@ def run(
                 "imposter_false_positive": grading["imposter_false_positive"],
                 "imposter_false_negative": grading["imposter_false_negative"],
                 "explanation": q.get("explanation", ""),
+                "lifelines_used": (
+                    list((millionaire_state or {}).get("usage_by_question", {}).get(str(i), []))
+                    if quiz_mode == "millionaire"
+                    else []
+                ),
+                "current_points_after_question": millionaire_current_points if quiz_mode == "millionaire" else 0,
+                "guaranteed_points_after_question": millionaire_guaranteed_points if quiz_mode == "millionaire" else 0,
             })
 
-            if not full_screen:
+            if quiz_mode == "millionaire" and millionaire_lost:
+                console.print(
+                    Panel(
+                        f"[bold {theme['danger']}]You lost.[/bold {theme['danger']}]\n"
+                        f"Wrong on question [bold]{millionaire_lost_on_question}[/bold] "
+                        f"({_format_points(millionaire_lost_on_value)} points).\n"
+                        f"You leave with guaranteed points: [bold]{_format_points(millionaire_guaranteed_points)}[/bold].",
+                        border_style=theme["danger"],
+                    )
+                )
+                break
+
+            if not full_screen and i < len(questions):
                 prompt_input("Press Enter for the next question...")
             
         percentage = (points_earned / total_points_possible) * 100 if total_points_possible else 0.0
@@ -7561,6 +9511,61 @@ def run(
 
         precision_text = f"{(precision * 100):.1f}%" if precision is not None else "N/A"
         recall_text = f"{(recall * 100):.1f}%" if recall is not None else "N/A"
+        millionaire_lifeline_summary = ""
+        if quiz_mode == "millionaire" and millionaire_state is not None:
+            ff = "used" if millionaire_state.get("fifty_fifty_used") else "unused"
+            ap = "used" if millionaire_state.get("ask_people_used") else "unused"
+            cf = "used" if millionaire_state.get("call_friend_used") else "unused"
+            ai_used = "used" if millionaire_state.get("ask_ai_used") else "unused"
+            millionaire_lifeline_summary = (
+                f"Lifelines: [bold]50-50 {ff}[/bold], "
+                f"[bold]Ask {ap}[/bold], [bold]Ask {millionaire_friend_name} {cf}[/bold]"
+                + (
+                    f", [bold]Ask AI {ai_used}[/bold]"
+                    if millionaire_ai_enabled
+                    else ""
+                )
+                + "\n"
+            )
+        millionaire_score_line = ""
+        if quiz_mode == "millionaire":
+            if millionaire_lost:
+                final_points = millionaire_guaranteed_points
+            else:
+                final_points = millionaire_current_points
+            millionaire_score_line = (
+                f"Final Winnings: [bold]{_format_points(final_points)}[/bold]\n"
+                f"Guaranteed Floor: [bold]{_format_points(millionaire_guaranteed_points)}[/bold]\n"
+                + (
+                    f"Result: [bold {theme['danger']}]Lost on Q{millionaire_lost_on_question}[/bold {theme['danger']}]\n"
+                    if millionaire_lost
+                    else (
+                        f"Result: [bold {theme['accent']}]Cashed out on Q{millionaire_cashout_question}[/bold {theme['accent']}]\n"
+                        if millionaire_cashed_out
+                        else f"Result: [bold {theme['success']}]Game complete[/bold {theme['success']}]\n"
+                    )
+                )
+            )
+        base_result_line = ""
+        if quiz_mode != "millionaire":
+            if user_quit:
+                base_result_line = f"Result: [bold {theme['accent']}]Quit on Q{quit_on_question}[/bold {theme['accent']}]\n"
+            else:
+                base_result_line = "Result: [bold {theme['success']}]Completed[/bold {theme['success']}]\n"
+
+        millionaire_won = (
+            quiz_mode == "millionaire"
+            and len(questions) > 0
+            and correct_answers_count == len(questions)
+        )
+        if millionaire_won:
+            _play_win_confetti(console, theme, no_color=no_color, duration_seconds=1.2)
+            console.print(
+                Panel(
+                    f"[bold {theme['success']}]Congrats, you won![/bold {theme['success']}]",
+                    border_style=theme["success"],
+                )
+            )
 
         score_line = (
             f"Score: [bold]{points_earned}/{total_points_possible}[/bold]\n"
@@ -7570,9 +9575,12 @@ def run(
 
         summary = (
             f"[bold {theme['primary']}]Quiz Summary[/bold {theme['primary']}]\n\n"
+            f"{base_result_line}"
             f"{score_line}"
             f"Percentage: [bold]{percentage:.1f}%[/bold]\n"
             f"Correct Answers: [bold]{correct_answers_count}[/bold]\n"
+            + millionaire_score_line
+            + millionaire_lifeline_summary
             + (
                 f"Imposter Precision: [bold]{precision_text}[/bold]\n"
                 f"Imposter Recall: [bold]{recall_text}[/bold]\n"
@@ -7623,6 +9631,7 @@ def run_challenge(
 ):
     try:
         from rich.console import Console
+        from rich.live import Live
         from rich.markdown import Markdown
         from rich.panel import Panel
         from rich.table import Table
@@ -7640,6 +9649,8 @@ def run_challenge(
     console.print(LOGO)
 
     challenge_results: dict[int, dict] = {}
+    challenge_quit = False
+    challenge_quit_reason = ""
     difficulty_choices = [
         ("easy", "⭐ Easy", "Safer distractors, 1 star on correct answer."),
         ("normal", "⭐⭐ Normal", "Balanced distractors, 2 stars on correct answer."),
@@ -7665,6 +9676,8 @@ def run_challenge(
             "- Correct answer earns stars equal to chosen difficulty.",
             "- Incorrect answer earns 0 stars.",
             "- One attempt per category (category is then locked).",
+            "- In question screens: [bold]Space[/bold]=select, [bold]Enter[/bold]=confirm, [bold]Q[/bold]=quit.",
+            "- In board prompts type [bold]Q[/bold] to quit and keep progress.",
             "- Press [bold]Ctrl+C[/bold] to exit at any time.",
             "",
             "Press Enter to start your challenge board.",
@@ -7695,7 +9708,7 @@ def run_challenge(
                 result = challenge_results.get(idx)
                 if result is None:
                     status = "Pending"
-                    stars_label = f"{_challenge_star_badge(0)} (0)"
+                    stars_label = "⏳ (0)"
                     display_index = str(display_number)
                     selectable[display_number] = idx
                 else:
@@ -7716,6 +9729,10 @@ def run_challenge(
             chosen_category_idx = None
             while chosen_category_idx is None:
                 raw = prompt_input("Choose a pending category number: ").strip()
+                if raw.lower() in {"q", "quit"}:
+                    challenge_quit = True
+                    challenge_quit_reason = "Exited from category board"
+                    break
                 if not raw:
                     console.print(
                         f"[{theme['danger']}]Please enter a category number or name.[/{theme['danger']}]"
@@ -7745,6 +9762,8 @@ def run_challenge(
                     console.print(
                         f"[{theme['danger']}]That category is not available. Use a pending number or name.[/{theme['danger']}]"
                     )
+            if challenge_quit:
+                break
 
             category = categories[chosen_category_idx]
             category_name = category["category"]
@@ -7768,6 +9787,10 @@ def run_challenge(
             chosen_diff_key = None
             while chosen_diff_key is None:
                 raw = prompt_input("Choose difficulty (1-3): ").strip()
+                if raw.lower() in {"q", "quit"}:
+                    challenge_quit = True
+                    challenge_quit_reason = f"Exited before answering category '{category_name}'"
+                    break
                 mapped = difficulty_aliases.get(raw.casefold())
                 if mapped:
                     chosen_diff_key = mapped
@@ -7775,6 +9798,8 @@ def run_challenge(
                     console.print(
                         f"[{theme['danger']}]Please choose 1/2/3 or easy/normal/hard.[/{theme['danger']}]"
                     )
+            if challenge_quit:
+                break
 
             question = dict(category["difficulties"][chosen_diff_key])
             question["title"] = f"{category_name} ({_challenge_difficulty_text(chosen_diff_key)})"
@@ -7799,6 +9824,10 @@ def run_challenge(
                     show_feedback=show_feedback,
                 )
             )
+            if grading.get("quit_requested"):
+                challenge_quit = True
+                challenge_quit_reason = f"Exited on question in category '{category_name}'"
+                break
 
             stars_for_diff = CHALLENGE_STARS_BY_DIFFICULTY[chosen_diff_key]
             stars_earned = stars_for_diff if grading["answer_correct"] else 0
@@ -7865,14 +9894,25 @@ def run_challenge(
         else:
             highest_solved = "None"
 
-        ordered_results = [challenge_results[idx] for idx in range(len(categories))]
+        ordered_results = [challenge_results[idx] for idx in sorted(challenge_results)]
         stars_rows = "\n".join(
             f"- {item['category']}: {_challenge_star_badge(item['stars_earned'])}"
             for item in ordered_results
         )
+        if not stars_rows:
+            stars_rows = "- No categories completed yet."
+        if challenge_quit:
+            result_line = f"[bold {theme['accent']}]Quit early[/bold {theme['accent']}]"
+            if challenge_quit_reason:
+                result_line += f" ({challenge_quit_reason})"
+        else:
+            result_line = f"[bold {theme['success']}]Completed[/bold {theme['success']}]"
+        completion_text = f"{len(challenge_results)}/{len(categories)} categories attempted"
         console.print(
             Panel(
                 f"[bold {theme['primary']}]Challenge Summary[/bold {theme['primary']}]\n\n"
+                f"Result: {result_line}\n"
+                f"Completion: [bold]{completion_text}[/bold]\n"
                 f"Total stars: [bold]{total_stars}/{len(categories) * 3}[/bold]\n"
                 f"Correct categories: [bold]{correct_count}/{len(categories)}[/bold]\n"
                 f"Highest difficulty solved: [bold]{highest_solved}[/bold]\n\n"
@@ -7909,6 +9949,341 @@ def run_challenge(
         render_exit_message("Challenge quiz closed. Thanks for playing.", no_color=no_color)
 
 
+def run_chaos(
+    title: str,
+    chaos: dict,
+    theme_name: str = "auto",
+    no_color: bool = False,
+    ui: str = "classic",
+):
+    try:
+        from rich.console import Console
+        from rich.live import Live
+        from rich.markdown import Markdown
+        from rich.panel import Panel
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Running the quiz requires rich. Install dependencies from requirements.txt."
+        ) from exc
+
+    theme = select_theme(theme_name)
+    console = Console(no_color=no_color)
+    start_clean_screen(ui == "next")
+    console.print(LOGO)
+    quit_early = False
+    quit_reason = ""
+    started_at = time.time()
+    path_taken_steps: list[str] = []
+    recoveries_succeeded = 0
+    chaos_steps_total = 3
+    selection_history: list[str] = []
+    score_breakdown: list[dict] = []
+    chaos_sidebar_width = 68
+
+    def append_selection_history(step_label: str, selected_text: str, correct: bool, points_earned: int) -> None:
+        mark = "✓" if correct else "✗"
+        selection_history.append(
+            f"{step_label} {mark} +{points_earned} ({earned}/{maximum}): {selected_text}"
+        )
+
+    def prompt_choice(
+        question_block: dict,
+        *,
+        step_title: str,
+        step_index: int,
+        total_steps: int,
+    ) -> str:
+        def chaos_status_text() -> str:
+            elapsed = max(0, int(time.time() - started_at))
+            minutes, seconds = divmod(elapsed, 60)
+            path_text = " \u2192 ".join(path_taken_steps) if path_taken_steps else "Start"
+            history_block = ""
+            if selection_history:
+                history_width = max(18, chaos_sidebar_width - 8)
+                lines = [f"| - {truncate_for_display(item, history_width)}" for item in selection_history[-3:]]
+                history_block = "\n| Picks:\n" + "\n".join(lines)
+            return (
+                "Chaos Status\n\n"
+                "Mode: Chaos\n"
+                f"| Step: {step_index} / {total_steps}\n"
+                f"| Score: {earned}/{maximum}\n"
+                f"| Recoveries: {recoveries_succeeded}\n"
+                f"| Path: {path_text}\n"
+                f"| Time: {minutes:02d}:{seconds:02d}"
+                f"{history_block}"
+            )
+
+        options = question_block["options"]
+        option_texts = [item["text"] for item in options]
+        option_labels = [item["label"] for item in options]
+        while True:
+            chaos_question = {
+                "title": step_title,
+                "question": question_block["question"],
+                "options": option_texts,
+                "correct": [option_labels.index(question_block["answer"]) + 1],
+                "type": "single",
+                "time_limit": 1,
+                "explanation": "",
+                "imposters": [],
+            }
+            _perfect, ans, _imposters, grading = run_coroutine_sync(
+                ask_question(
+                    chaos_question,
+                    theme,
+                    question_index=step_index,
+                    total_questions=total_steps,
+                    no_color=no_color,
+                    compact=False,
+                    full_screen=False,
+                    ui=ui,
+                    show_feedback=False,
+                    quiz_mode="chaos",
+                    untimed=True,
+                    status_sidebar_renderer=chaos_status_text,
+                    status_sidebar_width=chaos_sidebar_width,
+                )
+            )
+            if grading.get("quit_requested"):
+                return "__QUIT__"
+            if ans:
+                chosen_index = int(ans[0])
+                if 1 <= chosen_index <= len(option_labels):
+                    return option_labels[chosen_index - 1]
+            console.print(
+                f"[{theme['danger']}]Please select one option with Space, then press Enter.[/{theme['danger']}]"
+            )
+
+    def option_text_for_label(question_block: dict, label: str) -> str:
+        for item in question_block["options"]:
+            if item["label"] == label:
+                return item["text"]
+        return label
+
+    def show_chaos_event_transition(selected_text: str) -> None:
+        panel_body = "Oh no...\nA chaos event was triggered."
+        console.print(
+            Panel(
+                panel_body,
+                title=f"[bold {theme['danger']}]Chaos Alert[/bold {theme['danger']}]",
+                border_style=theme["danger"],
+            )
+        )
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            prompt_input("Press Enter to see what happened.")
+
+    def show_next_stage_transition(
+        *,
+        title: str,
+        subtitle: str,
+        badge_frames: list[str],
+        prompt: str,
+    ) -> None:
+        _ = (title, subtitle, badge_frames)
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            prompt_input(prompt)
+
+    def result_band(score_value: int) -> str:
+        for tier in chaos["result"]["tiers"]:
+            if tier["min"] <= score_value <= tier["max"]:
+                return tier["text"]
+        return "No result band matched this score."
+
+    earned = 0
+    maximum = int(chaos["result"]["maximum_score"])
+
+    console.print(
+        Panel(
+            Markdown(
+                chaos["scenario"]
+                + "\n\n---\n"
+                + "Rules:\n"
+                + "- Use ↑/↓ to move, Space to select, Enter to confirm.\n"
+                + "- Press Q to quit and keep your current score.\n"
+                + "- Press Ctrl+C to force exit at any time."
+            ),
+            title=f"[bold {theme['primary']}]Chaos Mode: {title}[/bold {theme['primary']}]",
+            border_style=theme["panel"],
+        )
+    )
+
+    decision = chaos["decision1"]
+    console.print("")
+    choice_1 = prompt_choice(
+        decision,
+        step_title="Decision 1",
+        step_index=1,
+        total_steps=chaos_steps_total,
+    )
+    if choice_1 == "__QUIT__":
+        quit_early = True
+        quit_reason = "Quit during Decision 1"
+    else:
+        decision_text = option_text_for_label(decision, choice_1)
+        decision_score = int(decision["score"])
+        if choice_1 == decision["answer"]:
+            earned += decision_score
+            score_breakdown.append(
+                {"step": "Decision 1", "earned": decision_score, "max": decision_score, "correct": True}
+            )
+            path_taken_steps.append("[Decision 1 ✓]")
+            append_selection_history("Decision 1", decision_text, True, decision_score)
+            decision_status_plain = "Correct decision."
+        else:
+            score_breakdown.append(
+                {"step": "Decision 1", "earned": 0, "max": decision_score, "correct": False}
+            )
+            path_taken_steps.append("[Decision 1 ✗]")
+            append_selection_history("Decision 1", decision_text, False, 0)
+            decision_status_plain = "Risky decision."
+        path_taken_steps.append(f"[Chaos {choice_1}]")
+
+        decision_status_style = theme["success"] if choice_1 == decision["answer"] else theme["danger"]
+        console.print(f"[{decision_status_style}]{decision_status_plain}[/{decision_status_style}]")
+        show_chaos_event_transition(decision_text)
+        console.print(
+            Panel(
+                Markdown(decision["chaos_events"][choice_1]),
+                title=f"[bold {theme['danger']}]New Chaos Event ({choice_1})[/bold {theme['danger']}]",
+                border_style=theme["danger"],
+            )
+        )
+
+        path = chaos["paths"][choice_1]
+        recovery = path["recovery"]
+        recovery_choice = prompt_choice(
+            recovery,
+            step_title=f"Recovery {choice_1}",
+            step_index=2,
+            total_steps=chaos_steps_total,
+        )
+        if recovery_choice == "__QUIT__":
+            quit_early = True
+            quit_reason = f"Quit during Recovery {choice_1}"
+        else:
+            recovery_text = option_text_for_label(recovery, recovery_choice)
+            recovery_score = int(recovery["score"])
+            if recovery_choice == recovery["answer"]:
+                earned += recovery_score
+                recoveries_succeeded += 1
+                score_breakdown.append(
+                    {"step": "Recovery", "earned": recovery_score, "max": recovery_score, "correct": True}
+                )
+                path_taken_steps.append(f"[Recovery {choice_1} ✓]")
+                append_selection_history("Recovery", recovery_text, True, recovery_score)
+                recovery_status_plain = "Recovery successful."
+            else:
+                score_breakdown.append(
+                    {"step": "Recovery", "earned": 0, "max": recovery_score, "correct": False}
+                )
+                path_taken_steps.append(f"[Recovery {choice_1} ✗]")
+                append_selection_history("Recovery", recovery_text, False, 0)
+                recovery_status_plain = "Recovery missed."
+
+            recovery_status_style = theme["success"] if recovery_choice == recovery["answer"] else theme["danger"]
+            console.print(f"[{recovery_status_style}]{recovery_status_plain}[/{recovery_status_style}]")
+            show_next_stage_transition(
+                title="Recovery phase complete.",
+                subtitle="New evidence is ready for your final decision.",
+                badge_frames=[
+                    ">> NEW EVIDENCE UNLOCKED <<",
+                    "> > NEW EVIDENCE UNLOCKED < <",
+                    ">> NEW EVIDENCE UNLOCKED <<",
+                ],
+                prompt="Press Enter to see the final decision.",
+            )
+            console.print(Markdown(path["feedback"]))
+
+            final_decision = chaos["final_decision"]
+            console.print(
+                Panel(
+                    Markdown(final_decision["question"]),
+                    title=f"[bold {theme['accent']}]New Decision Event ({choice_1})[/bold {theme['accent']}]",
+                    border_style=theme["accent"],
+                )
+            )
+            final_choice = prompt_choice(
+                final_decision,
+                step_title="Final Decision",
+                step_index=3,
+                total_steps=chaos_steps_total,
+            )
+            if final_choice == "__QUIT__":
+                quit_early = True
+                quit_reason = "Quit during Final Decision"
+            else:
+                final_score = int(final_decision["score"])
+                if final_choice == final_decision["answer"]:
+                    earned += final_score
+                    score_breakdown.append(
+                        {"step": "Final Decision", "earned": final_score, "max": final_score, "correct": True}
+                    )
+                    path_taken_steps.append("[Final Decision ✓]")
+                    final_text = option_text_for_label(final_decision, final_choice)
+                    append_selection_history("Final", final_text, True, final_score)
+                    final_status = f"[{theme['success']}]Final decision is correct.[/{theme['success']}]"
+                else:
+                    score_breakdown.append(
+                        {"step": "Final Decision", "earned": 0, "max": final_score, "correct": False}
+                    )
+                    path_taken_steps.append("[Final Decision ✗]")
+                    final_text = option_text_for_label(final_decision, final_choice)
+                    append_selection_history("Final", final_text, False, 0)
+                    final_status = f"[{theme['danger']}]Final decision is incorrect.[/{theme['danger']}]"
+
+                console.print("")
+                console.print(
+                    Panel(
+                        f"{final_status}\n\n{final_decision['feedback']}",
+                        title=f"[bold {theme['primary']}]Final Feedback[/bold {theme['primary']}]",
+                        border_style=theme["panel"],
+                    )
+                )
+
+    percent = (earned / maximum * 100.0) if maximum > 0 else 0.0
+    console.print("")
+    result_line = (
+        f"[bold {theme['accent']}]Quit early[/bold {theme['accent']}] ({quit_reason})"
+        if quit_early
+        else f"[bold {theme['success']}]Completed[/bold {theme['success']}]"
+    )
+    completion_line = "Decision path partial" if quit_early else "Decision path complete"
+    elapsed = max(0, int(time.time() - started_at))
+    minutes, seconds = divmod(elapsed, 60)
+    path_line = " \u2192 ".join(path_taken_steps) if path_taken_steps else "Start"
+    breakdown_lines = [
+        f"- {item['step']}: {item['earned']}/{item['max']}"
+        for item in score_breakdown
+    ]
+    if not breakdown_lines:
+        breakdown_lines = ["- No scored steps completed."]
+    missed_steps = [item for item in score_breakdown if not item["correct"]]
+    if missed_steps:
+        missed_count = len(missed_steps)
+        missed_points = sum(item["max"] - item["earned"] for item in missed_steps)
+        retry_tip = (
+            f"You missed {missed_count} step(s) and {missed_points} point(s). "
+            "Review the chaos event and recovery logic, then try again."
+        )
+    else:
+        retry_tip = "Great flow. You can replay and try a different branch for practice."
+    console.print(
+        Panel(
+            f"[bold]Result:[/bold] {result_line}\n"
+            f"[bold]Completion:[/bold] {completion_line}\n"
+            f"[bold]Score:[/bold] {earned}/{maximum} ({percent:.0f}%)\n\n"
+            f"[bold]Recoveries:[/bold] {recoveries_succeeded}\n"
+            f"[bold]Path:[/bold] {path_line}\n"
+            f"[bold]Time:[/bold] {minutes:02d}:{seconds:02d}\n\n"
+            f"[bold]Score breakdown:[/bold]\n" + "\n".join(breakdown_lines) + "\n\n"
+            f"[bold]Why this score:[/bold] {retry_tip}\n\n"
+            f"[bold]Band:[/bold] {result_band(earned)}",
+            title=f"[bold {theme['success']}]Chaos Result[/bold {theme['success']}]",
+            border_style=theme["success"],
+        )
+    )
+
+
 def run_essay(
     essay: dict,
     theme_name: str = "auto",
@@ -7938,7 +10313,8 @@ def run_essay(
             "Essay mode with provider 'auto' requires at least one key.\n"
             "Checked in priority order: GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY.\n"
             "Set one before running, e.g.:\n"
-            f"{_platform_setup_hint_for_any_ai_key()}"
+            f"{_platform_setup_hint_for_any_ai_key()}\n\n"
+            f"{_essay_key_setup_help_text()}"
         )
 
     # Start with first candidate; this may be replaced by failover in auto mode.
@@ -7951,7 +10327,8 @@ def run_essay(
                 f"Essay mode with provider '{resolved_provider}' requires {env_key}.\n"
                 "Standard multiple-choice quizzes do not use AI and do not need this key.\n"
                 "Set it before running, e.g.:\n"
-                f"{_platform_setup_hint_for_env_key(env_key)}"
+                f"{_platform_setup_hint_for_env_key(env_key)}\n\n"
+                f"{_essay_key_setup_help_text()}"
             )
 
     theme = select_theme(theme_name)
@@ -8081,7 +10458,8 @@ def run_essay(
                     f"Essay mode with provider '{resolved_provider}' requires {env_key}.\n"
                     "Standard multiple-choice quizzes do not use AI and do not need this key.\n"
                     "Set it before running, e.g.:\n"
-                    f"{_platform_setup_hint_for_env_key(env_key)}"
+                    f"{_platform_setup_hint_for_env_key(env_key)}\n\n"
+                    f"{_essay_key_setup_help_text()}"
                 )
             evaluator = _evaluator_for_provider(resolved_provider)
             try:
@@ -8330,15 +10708,9 @@ def main():
         )
         room_parser.add_argument(
             "--mode",
-            choices=["compete", "collaborate", "boxing"],
+            choices=["compete", "collaborate"],
             default="",
             help="Room mode for create. If omitted, choose interactively.",
-        )
-        room_parser.add_argument(
-            "--role",
-            choices=["teacher", "student"],
-            default="",
-            help="Role for boxing mode. If omitted, choose interactively.",
         )
         room_parser.add_argument(
             "--quiz",
@@ -8423,6 +10795,8 @@ def main():
         hello_debug = created_by_name.get("hello-debug.md")
         hello_challenge = created_by_name.get("hello-challenge.md")
         hello_reverse = created_by_name.get("hello-reverse.md")
+        hello_millionaire = created_by_name.get("hello-millionaire.md")
+        hello_chaos = created_by_name.get("hello-chaos.md")
         hello_essay = created_by_name.get("hello-essay.md")
         if hello_quiz:
             print(f"quizmd --validate {hello_quiz}")
@@ -8439,6 +10813,12 @@ def main():
         if hello_reverse:
             print(f"quizmd --validate {hello_reverse}")
             print(f"quizmd {hello_reverse}")
+        if hello_millionaire:
+            print(f"quizmd --validate {hello_millionaire}")
+            print(f"quizmd {hello_millionaire}")
+        if hello_chaos:
+            print(f"quizmd --validate {hello_chaos}")
+            print(f"quizmd {hello_chaos}")
         if hello_essay:
             print(f"quizmd --validate {hello_essay}")
         print("Set one AI key for essay mode (MCQ quizzes do not need keys):")
@@ -8450,18 +10830,20 @@ def main():
             print("Room modes (online):")
             print(f"quizmd room --create --mode compete --quiz {hello_quiz}")
             print(f"quizmd room --create --mode collaborate --quiz {hello_quiz}")
-            print(f"quizmd room --create --mode boxing --quiz {hello_quiz}")
             print("quizmd room --join <room-name> [--token <room-token>]")
             print("Room quiz requirement: Time/time_limit must be >= 5 seconds for online modes.")
+            print("")
+            print("Game modes:")
+            print("quizmd alien-attack")
         return
 
     root_help_epilog = (
         "Other commands:\n"
         "  quizmd init [--ui next]\n"
-        "      Create starter files (hello-quiz.md, hello-imposter.md, hello-debug.md, hello-challenge.md, hello-reverse.md, hello-essay.md).\n"
+        "      Create starter files (hello-quiz.md, hello-imposter.md, hello-debug.md, hello-challenge.md, hello-reverse.md, hello-millionaire.md, hello-chaos.md, hello-essay.md).\n"
         "  quizmd room --create [ROOM_NAME] [options]\n"
         "  quizmd room --join ROOM_NAME [--token ROOM_TOKEN] [options]\n"
-        "      Multiplayer modes: compete, collaborate, boxing.\n"
+        "      Multiplayer modes: compete, collaborate.\n"
         "  quizmd alien-attack [--mode {single,double,triple}] [--difficulty {normal,hard,inferno}]\n"
         "      Play the Alien Attack terminal game.\n"
         "\n"
@@ -8539,8 +10921,12 @@ def main():
         mode = detect_quiz_mode(args.file)
         if mode == "essay":
             title, essay = parse_essay_markdown(args.file)
+        elif mode == "chaos":
+            title, chaos = parse_chaos_markdown(args.file)
         elif mode == "reverse":
             title, questions = parse_reverse_markdown(args.file)
+        elif mode == "millionaire":
+            title, questions = parse_millionaire_markdown(args.file)
         elif mode == "challenge":
             title, challenge_categories = parse_challenge_markdown(args.file)
         elif mode == "debug":
@@ -8563,10 +10949,24 @@ def main():
                 f"Validation passed: Essay Question: {title} ({essay['total_points']} points)",
                 sys.stdout,
             ))
+        elif mode == "chaos":
+            print(
+                safe_for_stream(
+                    f"Validation passed: Chaos Quiz: {title} ({len(chaos['paths'])} paths, max {chaos['result']['maximum_score']} points)",
+                    sys.stdout,
+                )
+            )
         elif mode == "reverse":
             print(
                 safe_for_stream(
                     f"Validation passed: Reverse Quiz: {title} ({len(questions)} questions)",
+                    sys.stdout,
+                )
+            )
+        elif mode == "millionaire":
+            print(
+                safe_for_stream(
+                    f"Validation passed: Millionaire Quiz: {title} ({len(questions)} questions, max {MILLIONAIRE_MAX_TIME_LIMIT_SECONDS}s each)",
                     sys.stdout,
                 )
             )
@@ -8592,6 +10992,14 @@ def main():
                 ai_provider=args.ai_provider,
                 ai_model=args.ai_model,
                 ai_timeout=args.ai_timeout,
+                ui=args.ui,
+            )
+        elif mode == "chaos":
+            run_chaos(
+                title,
+                chaos,
+                theme_name=args.theme,
+                no_color=no_color,
                 ui=args.ui,
             )
         elif mode == "challenge":
@@ -8625,6 +11033,10 @@ def main():
                 full_screen=args.full_screen,
                 ui=args.ui,
                 show_feedback=not args.hide_feedback,
+                quiz_mode=mode,
+                ai_provider=args.ai_provider,
+                ai_model=args.ai_model,
+                ai_timeout=args.ai_timeout,
             )
     except KeyboardInterrupt:
         render_exit_message(no_color=no_color)

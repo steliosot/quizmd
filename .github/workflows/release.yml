@@ -13,6 +13,11 @@ jobs:
     environment: pypi
     permissions:
       contents: read
+      id-token: write
+
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
 
     steps:
       - name: Checkout
@@ -23,16 +28,78 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Verify tag matches package version
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+          import os
+
+          ref = os.environ.get("GITHUB_REF_NAME", "")
+          if not ref.startswith("v"):
+              raise SystemExit(f"Release tags must start with v. Got: {ref}")
+          tag_version = ref[1:]
+          text = Path("pyproject.toml").read_text(encoding="utf-8")
+          m = re.search(r'^version\\s*=\\s*"([^"]+)"', text, re.MULTILINE)
+          if not m:
+              raise SystemExit("Could not read version from pyproject.toml")
+          pkg_version = m.group(1)
+          if pkg_version != tag_version:
+              raise SystemExit(
+                  f"Version mismatch: tag={tag_version} pyproject={pkg_version}. "
+                  "Create a new immutable tag that matches pyproject version."
+              )
+          print(f"Tag/version check passed: v{pkg_version}")
+          PY
+
+      - name: Ensure version is not already on PyPI
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          import urllib.error
+
+          version = os.environ["GITHUB_REF_NAME"][1:]
+          url = f"https://pypi.org/pypi/quizmd/{version}/json"
+          try:
+              with urllib.request.urlopen(url, timeout=10) as r:
+                  if r.status == 200:
+                      raise SystemExit(
+                          f"Version {version} already exists on PyPI. "
+                          "Do not retag/move versions; publish a new version instead."
+                      )
+          except urllib.error.HTTPError as e:
+              if e.code == 404:
+                  print(f"PyPI version check passed: {version} is new")
+              else:
+                  raise
+          PY
+
       - name: Build package
         run: |
           python -m pip install --upgrade pip build twine
           python -m build
           python -m twine check dist/*
 
+      - name: Smoke test built wheel in clean venv
+        run: |
+          python -m venv .release-smoke
+          . .release-smoke/bin/activate
+          pip install --upgrade pip
+          pip install dist/quizmd-*.whl
+          quizmd --version
+          mkdir release-smoke
+          cd release-smoke
+          quizmd init --force
+          test -f hello-millionaire.md
+          quizmd --validate hello-millionaire.md
+
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           user: __token__
           password: ${{ secrets.PYPI_API_TOKEN }}
-          skip-existing: true
+          skip-existing: false
           attestations: false
