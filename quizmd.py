@@ -4379,9 +4379,9 @@ async def _run_room_waiting_loop(
         print("")
         print(f"Connected as {display_name}.")
         if is_host:
-            print("Type /start when you are ready.")
+            print("Type /start when you are ready. Type /next after each result.")
         print("Chat: send a message to your peers, or type /help for commands.")
-        print("Commands: /start (host), /players, /help, /quit")
+        print("Commands: /start (host), /next (host), /players, /help, /quit")
         if not await _send_room_event("ready_toggle", {"ready": True}):
             return 1
         _print_lobby_prompt()
@@ -4460,6 +4460,27 @@ async def _run_room_waiting_loop(
                     in_quiz = False
                     print("Game started.")
                     _record("game_started", {"mode": room_mode})
+                    continue
+
+                if etype == "awaiting_next":
+                    _clear_lobby_prompt()
+                    in_quiz = False
+                    finished_after_continue = bool(payload.get("finished_after_continue", False))
+                    if is_host:
+                        if finished_after_continue:
+                            print("Review final results. Type /next to finish.")
+                        else:
+                            next_index = int(payload.get("next_question_index") or 0)
+                            total_questions = int(payload.get("total_questions") or 0)
+                            if total_questions:
+                                print(f"Review results. Type /next for question {next_index + 1}/{total_questions}.")
+                            else:
+                                print("Review results. Type /next to continue.")
+                    else:
+                        action = "finish" if finished_after_continue else "continue"
+                        print(f"Waiting for host to {action}...")
+                    _record("awaiting_next", {"payload": payload})
+                    _print_lobby_prompt()
                     continue
 
                 if etype == "game_starting":
@@ -4684,7 +4705,7 @@ async def _run_room_waiting_loop(
                     _print_lobby_prompt()
                     continue
                 if text == "/help":
-                    print("Commands: /start (host), /players, /help, /quit")
+                    print("Commands: /start (host), /next (host), /players, /help, /quit")
                     _print_lobby_prompt()
                     continue
                 if text == "/start":
@@ -4698,6 +4719,15 @@ async def _run_room_waiting_loop(
                     if not await _send_room_event("start_game", {}):
                         break
                     print("Start requested...")
+                    continue
+                if text == "/next":
+                    if not is_host:
+                        print("Only the room host can continue.")
+                        _print_lobby_prompt()
+                        continue
+                    if not await _send_room_event("next_question", {}):
+                        break
+                    print("Continuing...")
                     continue
                 local_chat_echoes.append(text)
                 if not _stdin_is_tty():

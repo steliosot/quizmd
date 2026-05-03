@@ -6428,6 +6428,131 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(out.count("[Stelios] ok"), 1)
         self.assertNotIn("\nok\n", out)
 
+    def test_room_waiting_loop_host_next_sends_next_question(self):
+        class _FakeWS:
+            def __init__(self):
+                self.sent_types = []
+
+            async def send(self, raw):
+                payload = json.loads(raw)
+                self.sent_types.append(payload.get("type"))
+
+            async def recv(self):
+                while "next_question" not in self.sent_types:
+                    await asyncio.sleep(0.01)
+                return json.dumps({"type": "game_finished", "payload": {}})
+
+        class _FakeConnect:
+            def __init__(self, ws):
+                self.ws = ws
+
+            async def __aenter__(self):
+                return self.ws
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class _FakeWebsocketsModule:
+            def __init__(self, ws):
+                self._ws = ws
+
+            def connect(self, *args, **kwargs):
+                return _FakeConnect(self._ws)
+
+        fake_ws = _FakeWS()
+        with patch("quizmd.os.name", "posix"):
+            with patch.dict(sys.modules, {"websockets": _FakeWebsocketsModule(fake_ws)}):
+                with patch("quizmd._read_lobby_line_nonblocking", side_effect=["/next", None]):
+                    buf = io.StringIO()
+                    with contextlib.redirect_stdout(buf):
+                        rc = run_coroutine_sync(
+                            _run_room_waiting_loop(
+                                ws_base="ws://example.test",
+                                room_code="ROOM1234",
+                                player_id="p1",
+                                token="tok",
+                                display_name="Stelios",
+                                room_name="room-name",
+                                is_host=True,
+                                room_mode="compete",
+                                player_role="host",
+                                theme_name="auto",
+                                no_color=True,
+                                full_screen=False,
+                            )
+                        )
+
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("next_question", fake_ws.sent_types)
+        self.assertIn("Continuing...", out)
+
+    def test_room_waiting_loop_prints_awaiting_next_message(self):
+        class _FakeWS:
+            def __init__(self):
+                self.recv_calls = 0
+
+            async def send(self, raw):
+                return None
+
+            async def recv(self):
+                self.recv_calls += 1
+                if self.recv_calls == 1:
+                    return json.dumps(
+                        {
+                            "type": "awaiting_next",
+                            "payload": {
+                                "next_question_index": 1,
+                                "total_questions": 3,
+                                "finished_after_continue": False,
+                            },
+                        }
+                    )
+                return json.dumps({"type": "game_finished", "payload": {}})
+
+        class _FakeConnect:
+            def __init__(self, ws):
+                self.ws = ws
+
+            async def __aenter__(self):
+                return self.ws
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class _FakeWebsocketsModule:
+            def __init__(self, ws):
+                self._ws = ws
+
+            def connect(self, *args, **kwargs):
+                return _FakeConnect(self._ws)
+
+        fake_ws = _FakeWS()
+        with patch.dict(sys.modules, {"websockets": _FakeWebsocketsModule(fake_ws)}):
+            with patch("quizmd._read_lobby_line_nonblocking", return_value=None):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    rc = run_coroutine_sync(
+                        _run_room_waiting_loop(
+                            ws_base="ws://example.test",
+                            room_code="ROOM1234",
+                            player_id="p1",
+                            token="tok",
+                            display_name="Stelios",
+                            room_name="room-name",
+                            is_host=True,
+                            room_mode="compete",
+                            player_role="host",
+                            theme_name="auto",
+                            no_color=True,
+                            full_screen=False,
+                        )
+                    )
+
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("Review results. Type /next for question 2/3.", out)
+
     def test_room_waiting_loop_prints_start_countdown(self):
         class _FakeWS:
             async def send(self, raw):
