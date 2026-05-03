@@ -27,7 +27,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.3rc17"
+__version__ = "2.4.3rc18"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -4168,12 +4168,14 @@ def _room_final_podium(players: list[dict]) -> str:
         lines.append(f"2. {second_name} - {second_score} pts")
     if len(top) >= 3:
         lines.append(f"3. {third_name} - {third_score} pts")
+    winner_line = f"*   {winner} wins!   *"
+    confetti_line = " ".join("*" for _ in range(max(12, math.ceil((len(winner_line) + 1) / 2))))
     lines.extend(
         [
             "",
-            "* * * * * * * * * * * *",
-            f"*   {winner} wins!   *",
-            "* * * * * * * * * * * *",
+            confetti_line,
+            winner_line,
+            confetti_line,
         ]
     )
     return "\n".join(lines)

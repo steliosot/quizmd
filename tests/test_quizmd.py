@@ -31,6 +31,7 @@ from quizmd import (
     _room_configured_servers,
     _room_create_request,
     _room_default_server,
+    _room_final_podium,
     _room_load_quiz_payload,
     _room_player_label,
     _room_final_results_countdown,
@@ -6995,6 +6996,15 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("2. Stelios - 4 pts", out)
         self.assertIn("3. Maya - 2 pts", out)
         self.assertIn("*   Tom wins!   *", out)
+
+    def test_room_final_podium_confetti_resizes_to_winner_name(self):
+        out = _room_final_podium([{"name": "Happy Falcon", "score": 1.23}])
+
+        lines = out.splitlines()
+        winner_line = "*   Happy Falcon wins!   *"
+        winner_index = lines.index(winner_line)
+        self.assertGreaterEqual(len(lines[winner_index - 1]), len(winner_line))
+        self.assertEqual(lines[winner_index - 1], lines[winner_index + 1])
 
     def test_room_final_results_countdown_prints_five_seconds(self):
         mocked_sleep = AsyncMock()
