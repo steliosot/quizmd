@@ -6853,8 +6853,63 @@ class QuizMarkdownTests(unittest.TestCase):
 
         out = buf.getvalue()
         self.assertEqual(rc, 0)
-        self.assertIn("\rQuiz starts in 1...", out)
-        self.assertIn("\rQuiz starts now.", out)
+        self.assertIn("\rGame starts in 1...", out)
+        self.assertIn("\rGame starts now.", out)
+
+    def test_room_waiting_loop_prints_next_question_countdown(self):
+        class _FakeWS:
+            async def send(self, raw):
+                return None
+
+            async def recv(self):
+                if not hasattr(self, "called"):
+                    self.called = True
+                    return json.dumps({"type": "next_question_starting", "payload": {"countdown_seconds": 1}})
+                return json.dumps({"type": "game_finished", "payload": {}})
+
+        class _FakeConnect:
+            def __init__(self, ws):
+                self.ws = ws
+
+            async def __aenter__(self):
+                return self.ws
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class _FakeWebsocketsModule:
+            def __init__(self, ws):
+                self._ws = ws
+
+            def connect(self, *args, **kwargs):
+                return _FakeConnect(self._ws)
+
+        fake_ws = _FakeWS()
+        with patch.dict(sys.modules, {"websockets": _FakeWebsocketsModule(fake_ws)}):
+            with patch("quizmd.os.name", "nt"), patch("quizmd.prompt_input", return_value=""):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    rc = run_coroutine_sync(
+                        _run_room_waiting_loop(
+                            ws_base="ws://example.test",
+                            room_code="ROOM1234",
+                            player_id="p1",
+                            token="tok",
+                            display_name="Stelios",
+                            room_name="room-name",
+                            is_host=False,
+                            room_mode="compete",
+                            player_role="participant",
+                            theme_name="auto",
+                            no_color=True,
+                            full_screen=False,
+                        )
+                    )
+
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("\rNext question in 1...", out)
+        self.assertIn("\rNext question now.", out)
 
     def test_room_waiting_loop_invalid_question_payload_is_skipped(self):
         class _FakeWS:

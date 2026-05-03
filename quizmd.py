@@ -27,7 +27,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.3rc11"
+__version__ = "2.4.3rc12"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -4610,14 +4610,33 @@ async def _run_room_waiting_loop(
                     try:
                         if seconds:
                             for remaining in range(seconds, 0, -1):
-                                print(f"\rQuiz starts in {remaining}...", end="", flush=True)
+                                print(f"\rGame starts in {remaining}...", end="", flush=True)
                                 await asyncio.sleep(1)
-                            print("\rQuiz starts now.        ")
+                            print("\rGame starts now.        ")
                         else:
-                            print("Quiz starts now.")
+                            print("Game starts now.")
                     finally:
                         in_quiz = False
                     _record("game_starting", {"seconds": seconds})
+                    continue
+
+                if etype == "next_question_starting":
+                    _clear_lobby_prompt()
+                    raw_seconds = payload.get("countdown_seconds")
+                    seconds = 5 if raw_seconds is None else int(raw_seconds)
+                    seconds = max(0, min(30, seconds))
+                    in_quiz = True
+                    try:
+                        if seconds:
+                            for remaining in range(seconds, 0, -1):
+                                print(f"\rNext question in {remaining}...", end="", flush=True)
+                                await asyncio.sleep(1)
+                            print("\rNext question now.        ")
+                        else:
+                            print("Next question now.")
+                    finally:
+                        in_quiz = False
+                    _record("next_question_starting", {"seconds": seconds, "payload": payload})
                     continue
 
                 if etype == "answer_progress":
