@@ -27,7 +27,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.3rc10"
+__version__ = "2.4.3rc11"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -4131,8 +4131,9 @@ def _room_final_podium(players: list[dict]) -> str:
 
 async def _room_final_results_countdown(seconds: int = 5, sleep_fn=asyncio.sleep) -> None:
     for remaining in range(max(0, seconds), 0, -1):
-        print(f"Final results are coming in {remaining}...")
+        print(f"\rFinal results in {remaining}...", end="", flush=True)
         await sleep_fn(1)
+    print("\rFinal results now.        ")
 
 
 def _save_room_session_transcript(
@@ -4605,12 +4606,17 @@ async def _run_room_waiting_loop(
                     raw_seconds = payload.get("countdown_seconds")
                     seconds = 5 if raw_seconds is None else int(raw_seconds)
                     seconds = max(0, min(30, seconds))
-                    if seconds:
-                        for remaining in range(seconds, 0, -1):
-                            print(f"Quiz starts in {remaining}...")
-                            await asyncio.sleep(1)
-                    else:
-                        print("Quiz starts now.")
+                    in_quiz = True
+                    try:
+                        if seconds:
+                            for remaining in range(seconds, 0, -1):
+                                print(f"\rQuiz starts in {remaining}...", end="", flush=True)
+                                await asyncio.sleep(1)
+                            print("\rQuiz starts now.        ")
+                        else:
+                            print("Quiz starts now.")
+                    finally:
+                        in_quiz = False
                     _record("game_starting", {"seconds": seconds})
                     continue
 

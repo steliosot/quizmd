@@ -6796,8 +6796,10 @@ class QuizMarkdownTests(unittest.TestCase):
 
         out = buf.getvalue()
         self.assertEqual(mocked_sleep.await_count, 5)
-        self.assertIn("Final results are coming in 5...", out)
-        self.assertIn("Final results are coming in 1...", out)
+        self.assertIn("\rFinal results in 5...", out)
+        self.assertIn("\rFinal results in 1...", out)
+        self.assertIn("\rFinal results now.", out)
+        self.assertNotIn("\nFinal results in 4", out)
 
     def test_room_waiting_loop_prints_start_countdown(self):
         class _FakeWS:
@@ -6829,7 +6831,7 @@ class QuizMarkdownTests(unittest.TestCase):
 
         fake_ws = _FakeWS()
         with patch.dict(sys.modules, {"websockets": _FakeWebsocketsModule(fake_ws)}):
-            with patch("quizmd._read_lobby_line_nonblocking", return_value=None):
+            with patch("quizmd.os.name", "nt"), patch("quizmd.prompt_input", return_value=""):
                 buf = io.StringIO()
                 with contextlib.redirect_stdout(buf):
                     rc = run_coroutine_sync(
@@ -6851,7 +6853,8 @@ class QuizMarkdownTests(unittest.TestCase):
 
         out = buf.getvalue()
         self.assertEqual(rc, 0)
-        self.assertIn("Quiz starts in 1...", out)
+        self.assertIn("\rQuiz starts in 1...", out)
+        self.assertIn("\rQuiz starts now.", out)
 
     def test_room_waiting_loop_invalid_question_payload_is_skipped(self):
         class _FakeWS:
