@@ -27,7 +27,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.3rc13"
+__version__ = "2.4.3rc14"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -3792,13 +3792,15 @@ def _room_generate_name() -> str:
             return candidate
 
 
-def _room_prompt_token_required() -> bool:
+def _room_prompt_yes_no(question: str, *, default: bool) -> bool:
     if not sys.stdin.isatty():
-        return False
+        return default
+    choices = "[Y/n]" if default else "[y/N]"
+    default_label = "yes" if default else "no"
     while True:
-        raw = prompt_input("Require room token for joiners? [y/N]: ").strip().lower()
+        raw = prompt_input(f"{question} {choices} default {default_label}: ").strip().lower()
         if not raw:
-            return False
+            return default
         if raw in {"y", "yes"}:
             return True
         if raw in {"n", "no"}:
@@ -3806,16 +3808,12 @@ def _room_prompt_token_required() -> bool:
         print("Please answer y or n.")
 
 
+def _room_prompt_token_required() -> bool:
+    return _room_prompt_yes_no("Require room token for joiners?", default=False)
+
+
 def _room_prompt_advance_mode() -> str:
-    if not sys.stdin.isatty():
-        return "auto"
-    while True:
-        raw = prompt_input("Auto-advance questions? [Y/n]: ").strip().lower()
-        if not raw or raw in {"y", "yes", "auto", "a"}:
-            return "auto"
-        if raw in {"n", "no", "manual", "m"}:
-            return "manual"
-        print("Please answer y for auto or n for manual.")
+    return "auto" if _room_prompt_yes_no("Auto-advance questions?", default=True) else "manual"
 
 
 def _room_validate_json_question(question: dict, source: Path, index: int) -> dict:

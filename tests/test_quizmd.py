@@ -34,6 +34,7 @@ from quizmd import (
     _room_load_quiz_payload,
     _room_player_label,
     _room_final_results_countdown,
+    _room_prompt_advance_mode,
     _room_prompt_token_required,
     _room_quiz_payload_from_markdown,
     _room_quiz_payload_from_json,
@@ -5356,13 +5357,31 @@ class QuizMarkdownTests(unittest.TestCase):
 
     def test_room_prompt_token_required_defaults_to_no(self):
         with patch("sys.stdin.isatty", return_value=True):
-            with patch("quizmd.prompt_input", return_value=""):
+            with patch("quizmd.prompt_input", return_value="") as mocked_prompt:
                 self.assertFalse(_room_prompt_token_required())
+        self.assertEqual(
+            mocked_prompt.call_args.args[0],
+            "Require room token for joiners? [y/N] default no: ",
+        )
 
     def test_room_prompt_token_required_accepts_yes(self):
         with patch("sys.stdin.isatty", return_value=True):
             with patch("quizmd.prompt_input", return_value="y"):
                 self.assertTrue(_room_prompt_token_required())
+
+    def test_room_prompt_advance_mode_defaults_to_auto(self):
+        with patch("sys.stdin.isatty", return_value=True):
+            with patch("quizmd.prompt_input", return_value="") as mocked_prompt:
+                self.assertEqual(_room_prompt_advance_mode(), "auto")
+        self.assertEqual(
+            mocked_prompt.call_args.args[0],
+            "Auto-advance questions? [Y/n] default yes: ",
+        )
+
+    def test_room_prompt_advance_mode_accepts_no_for_manual(self):
+        with patch("sys.stdin.isatty", return_value=True):
+            with patch("quizmd.prompt_input", return_value="n"):
+                self.assertEqual(_room_prompt_advance_mode(), "manual")
 
     def test_room_connected_players_keeps_roles(self):
         payload = {
