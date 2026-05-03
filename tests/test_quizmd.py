@@ -6592,6 +6592,67 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("next_question", fake_ws.sent_types)
         self.assertIn("Continuing...", out)
 
+    def test_room_waiting_loop_prefixed_start_is_command_not_chat(self):
+        class _FakeWS:
+            def __init__(self):
+                self.sent_types = []
+
+            async def send(self, raw):
+                payload = json.loads(raw)
+                self.sent_types.append(payload.get("type"))
+
+            async def recv(self):
+                while "start_game" not in self.sent_types:
+                    await asyncio.sleep(0.01)
+                return json.dumps({"type": "game_finished", "payload": {}})
+
+        class _FakeConnect:
+            def __init__(self, ws):
+                self.ws = ws
+
+            async def __aenter__(self):
+                return self.ws
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class _FakeWebsocketsModule:
+            def __init__(self, ws):
+                self._ws = ws
+
+            def connect(self, *args, **kwargs):
+                return _FakeConnect(self._ws)
+
+        fake_ws = _FakeWS()
+        with patch("quizmd.os.name", "posix"):
+            with patch.dict(sys.modules, {"websockets": _FakeWebsocketsModule(fake_ws)}):
+                with patch("quizmd._read_lobby_line_nonblocking", side_effect=["[Curious Falcon] /start", None]):
+                    buf = io.StringIO()
+                    with contextlib.redirect_stdout(buf):
+                        rc = run_coroutine_sync(
+                            _run_room_waiting_loop(
+                                ws_base="ws://example.test",
+                                room_code="ROOM1234",
+                                player_id="p1",
+                                token="tok",
+                                display_name="Curious Falcon",
+                                room_name="room-name",
+                                is_host=True,
+                                room_mode="compete",
+                                player_role="host",
+                                theme_name="auto",
+                                no_color=True,
+                                full_screen=False,
+                            )
+                        )
+
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("start_game", fake_ws.sent_types)
+        self.assertNotIn("chat_message", fake_ws.sent_types)
+        self.assertNotIn("[Curious Falcon] /start", out)
+        self.assertIn("Start requested...", out)
+
     def test_room_waiting_loop_prints_awaiting_next_message(self):
         class _FakeWS:
             def __init__(self):
@@ -6746,7 +6807,7 @@ class QuizMarkdownTests(unittest.TestCase):
             async def recv(self):
                 if not hasattr(self, "called"):
                     self.called = True
-                    return json.dumps({"type": "game_starting", "payload": {"countdown_seconds": 0}})
+                    return json.dumps({"type": "game_starting", "payload": {"countdown_seconds": 1}})
                 return json.dumps({"type": "game_finished", "payload": {}})
 
         class _FakeConnect:
@@ -6790,7 +6851,7 @@ class QuizMarkdownTests(unittest.TestCase):
 
         out = buf.getvalue()
         self.assertEqual(rc, 0)
-        self.assertIn("Starting now...", out)
+        self.assertIn("Quiz starts in 1...", out)
 
     def test_room_waiting_loop_invalid_question_payload_is_skipped(self):
         class _FakeWS:

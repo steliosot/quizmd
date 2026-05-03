@@ -27,7 +27,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.3rc9"
+__version__ = "2.4.3rc10"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -4379,6 +4379,15 @@ async def _run_room_waiting_loop(
         if _stdin_is_tty() and sys.stdout and hasattr(sys.stdout, "isatty") and sys.stdout.isatty():
             print("\033[1A\033[2K", end="", flush=True)
 
+    def _normalize_lobby_input(raw_text: str) -> str:
+        text = raw_text.strip()
+        own_prompt = f"[{display_name}]"
+        if text == own_prompt:
+            return ""
+        if text.startswith(own_prompt):
+            return text[len(own_prompt):].strip()
+        return text
+
     def _record(event_type: str, payload: dict[str, object]) -> None:
         transcript.append(
             {
@@ -4598,10 +4607,10 @@ async def _run_room_waiting_loop(
                     seconds = max(0, min(30, seconds))
                     if seconds:
                         for remaining in range(seconds, 0, -1):
-                            print(f"Starting in {remaining}...")
+                            print(f"Quiz starts in {remaining}...")
                             await asyncio.sleep(1)
                     else:
-                        print("Starting now...")
+                        print("Quiz starts now.")
                     _record("game_starting", {"seconds": seconds})
                     continue
 
@@ -4799,7 +4808,7 @@ async def _run_room_waiting_loop(
                     if line is None:
                         await asyncio.sleep(0.05)
                         continue
-                    text = line.strip()
+                    text = _normalize_lobby_input(line)
 
                 if not text:
                     _print_lobby_prompt()
