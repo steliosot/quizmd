@@ -184,11 +184,15 @@ quizmd --theme dark quizzes/harry-potter-quiz.md
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python -m unittest discover -s tests -q
+python -m pytest tests -q
 ```
 
-Multiplayer server local dev note:
-- Use Python 3.13 in `multiplayer/server` (`python3.13 -m venv .venv`), since Python 3.14 may fail dependency builds (`pydantic-core`).
+## Related Repositories
+
+- Room server: [steliosot/quizmd-server](https://github.com/steliosot/quizmd-server)
+- Web app: [steliosot/quizmd-web](https://github.com/steliosot/quizmd-web)
+
+This repository is the CLI/PyPI package.
 
 ## Community
 

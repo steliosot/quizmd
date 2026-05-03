@@ -6380,12 +6380,13 @@ class QuizMarkdownTests(unittest.TestCase):
                 self.calls.append(("set", fd, when, list(attrs)))
 
         fake_termios = _FakeTermios()
-        with patch.dict(sys.modules, {"termios": fake_termios}):
-            guard = _RoomNoEchoInput(_FakeStream())
-            guard.enable()
-            self.assertTrue(guard.enabled)
-            self.assertEqual(fake_termios.calls[1], ("set", 7, fake_termios.TCSADRAIN, [0, 0, 0, 0]))
-            guard.disable()
+        with patch("quizmd.os.name", "posix"):
+            with patch.dict(sys.modules, {"termios": fake_termios}):
+                guard = _RoomNoEchoInput(_FakeStream())
+                guard.enable()
+                self.assertTrue(guard.enabled)
+                self.assertEqual(fake_termios.calls[1], ("set", 7, fake_termios.TCSADRAIN, [0, 0, 0, 0]))
+                guard.disable()
 
         self.assertFalse(guard.enabled)
         self.assertEqual(fake_termios.calls[-1], ("set", 7, fake_termios.TCSADRAIN, [0, 0, 0, fake_termios.ECHO]))
@@ -6434,26 +6435,27 @@ class QuizMarkdownTests(unittest.TestCase):
                 return _FakeConnect(self._ws)
 
         fake_ws = _FakeWS()
-        with patch.dict(sys.modules, {"websockets": _FakeWebsocketsModule(fake_ws)}):
-            with patch("quizmd._read_lobby_line_nonblocking", side_effect=["ok", None]):
-                buf = io.StringIO()
-                with contextlib.redirect_stdout(buf):
-                    rc = run_coroutine_sync(
-                        _run_room_waiting_loop(
-                            ws_base="ws://example.test",
-                            room_code="ROOM1234",
-                            player_id="p1",
-                            token="tok",
-                            display_name="Stelios",
-                            room_name="room-name",
-                            is_host=False,
-                            room_mode="compete",
-                            player_role="participant",
-                            theme_name="auto",
-                            no_color=True,
-                            full_screen=False,
+        with patch("quizmd.os.name", "posix"):
+            with patch.dict(sys.modules, {"websockets": _FakeWebsocketsModule(fake_ws)}):
+                with patch("quizmd._read_lobby_line_nonblocking", side_effect=["ok", None]):
+                    buf = io.StringIO()
+                    with contextlib.redirect_stdout(buf):
+                        rc = run_coroutine_sync(
+                            _run_room_waiting_loop(
+                                ws_base="ws://example.test",
+                                room_code="ROOM1234",
+                                player_id="p1",
+                                token="tok",
+                                display_name="Stelios",
+                                room_name="room-name",
+                                is_host=False,
+                                room_mode="compete",
+                                player_role="participant",
+                                theme_name="auto",
+                                no_color=True,
+                                full_screen=False,
+                            )
                         )
-                    )
 
         out = buf.getvalue()
         self.assertEqual(rc, 0)
