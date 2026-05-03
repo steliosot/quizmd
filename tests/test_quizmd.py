@@ -6387,6 +6387,103 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(out.count("Submitted 1/2. Waiting for 1 more..."), 2)
         self.assertEqual(fake_ws.sent_types.count("submit_answer"), 2)
 
+    def test_room_waiting_loop_prints_collaborate_discussion_before_voting(self):
+        class _FakeWS:
+            def __init__(self):
+                self.sent_types = []
+                self.recv_calls = 0
+
+            async def send(self, raw):
+                payload = json.loads(raw)
+                self.sent_types.append(payload.get("type"))
+
+            async def recv(self):
+                self.recv_calls += 1
+                if self.recv_calls == 1:
+                    return json.dumps(
+                        {
+                            "type": "question",
+                            "payload": {
+                                "mode": "collaborate",
+                                "question": {
+                                    "question": "Pick one",
+                                    "options": ["A", "B"],
+                                    "type": "single",
+                                    "time_limit": 20,
+                                    "discussion_time": 7,
+                                },
+                                "question_index": 0,
+                                "total_questions": 1,
+                                "phase": "discussion",
+                                "discussion_seconds": 7,
+                            },
+                        }
+                    )
+                if self.recv_calls == 2:
+                    return json.dumps(
+                        {
+                            "type": "phase_changed",
+                            "payload": {
+                                "phase": "voting",
+                                "question_index": 0,
+                                "deadline_epoch": 10,
+                                "retry_count": 0,
+                            },
+                        }
+                    )
+                if self.recv_calls == 3:
+                    return json.dumps({"type": "game_finished", "payload": {}})
+                raise RuntimeError("socket closed")
+
+        class _FakeConnect:
+            def __init__(self, ws):
+                self.ws = ws
+
+            async def __aenter__(self):
+                return self.ws
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class _FakeWebsocketsModule:
+            def __init__(self, ws):
+                self._ws = ws
+
+            def connect(self, *args, **kwargs):
+                return _FakeConnect(self._ws)
+
+        fake_ws = _FakeWS()
+        answer_result = (False, [1], [], {"quit_requested": False})
+        with patch.dict(sys.modules, {"websockets": _FakeWebsocketsModule(fake_ws)}):
+            with patch("quizmd.ask_question", new=AsyncMock(return_value=answer_result)):
+                with patch("quizmd._read_lobby_line_nonblocking", return_value=None):
+                    buf = io.StringIO()
+                    with contextlib.redirect_stdout(buf):
+                        rc = run_coroutine_sync(
+                            _run_room_waiting_loop(
+                                ws_base="ws://example.test",
+                                room_code="ROOM1234",
+                                player_id="p1",
+                                token="tok",
+                                display_name="Stelios",
+                                room_name="room-name",
+                                is_host=False,
+                                room_mode="collaborate",
+                                player_role="participant",
+                                theme_name="auto",
+                                no_color=True,
+                                full_screen=False,
+                            )
+                        )
+
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("Question 1/1 is live. Discussion phase (7s). Voting opens next.", out)
+        self.assertIn("Voting phase started. Submit your answer now.", out)
+        self.assertIn("Question 1/1 is live.", out)
+        self.assertIn("Answer sent. Waiting for others...", out)
+        self.assertEqual(fake_ws.sent_types.count("submit_answer"), 1)
+
     def test_room_waiting_loop_prints_timeout_waiting_message(self):
         class _FakeWS:
             def __init__(self):

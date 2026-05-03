@@ -27,7 +27,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.3rc16"
+__version__ = "2.4.3rc17"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -4626,7 +4626,7 @@ async def _run_room_waiting_loop(
                 if etype == "game_started":
                     _clear_lobby_prompt()
                     in_quiz = False
-                    print("Game started.")
+                    print("Game started. Waiting for first question...")
                     _record("game_started", {"mode": room_mode})
                     continue
 
@@ -4734,6 +4734,25 @@ async def _run_room_waiting_loop(
                     seen_progress.clear()
                     if current_mode == "collaborate" and phase == "discussion":
                         current_phase = "discussion"
+                        seconds = int(payload.get("discussion_seconds") or q_payload.get("discussion_time") or 0)
+                        if seconds > 0:
+                            print(
+                                f"Question {current_question_index + 1}/{max(1, current_total_questions)} is live. "
+                                f"Discussion phase ({seconds}s). Voting opens next."
+                            )
+                        else:
+                            print(
+                                f"Question {current_question_index + 1}/{max(1, current_total_questions)} is live. "
+                                "Discussion phase. Voting opens next."
+                            )
+                        _record(
+                            "question_discussion",
+                            {
+                                "question_index": current_question_index,
+                                "total_questions": current_total_questions,
+                                "seconds": seconds,
+                            },
+                        )
                         continue
                     if current_mode == "collaborate":
                         current_phase = "voting"
