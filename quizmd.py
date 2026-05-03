@@ -4184,52 +4184,6 @@ def _read_lobby_line_nonblocking(timeout: float = 0.15) -> str | None:
     return line.rstrip("\r\n")
 
 
-class _RoomNoEchoInput:
-    def __init__(self, stream=None) -> None:
-        self.stream = stream or sys.stdin
-        self._termios = None
-        self._fd: int | None = None
-        self._original_attrs = None
-        self.enabled = False
-
-    def enable(self) -> None:
-        if self.enabled or os.name == "nt":
-            return
-        stream = self.stream
-        if not stream or not hasattr(stream, "fileno") or not hasattr(stream, "isatty"):
-            return
-        try:
-            if not stream.isatty():
-                return
-            import termios
-
-            fd = stream.fileno()
-            attrs = termios.tcgetattr(fd)
-            new_attrs = list(attrs)
-            new_attrs[3] = new_attrs[3] & ~termios.ECHO
-            termios.tcsetattr(fd, termios.TCSADRAIN, new_attrs)
-        except Exception:
-            return
-        self._termios = termios
-        self._fd = fd
-        self._original_attrs = attrs
-        self.enabled = True
-
-    def disable(self) -> None:
-        if not self.enabled:
-            return
-        try:
-            if self._termios is not None and self._fd is not None and self._original_attrs is not None:
-                self._termios.tcsetattr(self._fd, self._termios.TCSADRAIN, self._original_attrs)
-        except Exception:
-            pass
-        finally:
-            self._termios = None
-            self._fd = None
-            self._original_attrs = None
-            self.enabled = False
-
-
 def _room_runtime_question_payload(q_payload: object, question_index: int) -> dict[str, object] | None:
     if not isinstance(q_payload, dict):
         return None
@@ -4295,8 +4249,27 @@ async def _run_room_waiting_loop(
     prompted_rounds: set[tuple[int, int, int]] = set()
     current_progress_round: tuple[int, int, int] | None = None
     seen_progress: set[tuple[tuple[int, int, int], int, int, bool]] = set()
-    input_echo = _RoomNoEchoInput()
+    local_chat_echoes: list[str] = []
+    prompt_visible = False
     transcript: list[dict[str, object]] = []
+
+    def _stdin_is_tty() -> bool:
+        try:
+            return bool(sys.stdin and hasattr(sys.stdin, "isatty") and sys.stdin.isatty())
+        except Exception:
+            return False
+
+    def _print_lobby_prompt() -> None:
+        nonlocal prompt_visible
+        if not stop.is_set() and not in_quiz and not prompt_visible:
+            print(f"[{display_name}] ", end="", flush=True)
+            prompt_visible = True
+
+    def _clear_lobby_prompt() -> None:
+        nonlocal prompt_visible
+        if prompt_visible:
+            print("")
+            prompt_visible = False
 
     def _record(event_type: str, payload: dict[str, object]) -> None:
         transcript.append(
@@ -4340,7 +4313,6 @@ async def _run_room_waiting_loop(
             )
             return
         in_quiz = True
-        input_echo.disable()
         print(f"Question {question_index + 1}/{max(1, total_questions)} is live.")
         try:
             _perfect, answers, _imposters, _grading = await ask_question(
@@ -4367,8 +4339,6 @@ async def _run_room_waiting_loop(
             return
         finally:
             in_quiz = False
-            if not stop.is_set():
-                input_echo.enable()
 
         if _grading.get("quit_requested"):
             print("Leaving room...")
@@ -4410,10 +4380,11 @@ async def _run_room_waiting_loop(
         print(f"Connected as {display_name}.")
         if is_host:
             print("Type /start when you are ready.")
-        print("Chat enabled. Type message and press Enter.")
+        print("Chat: send a message to your peers, or type /help for commands.")
         print("Commands: /start (host), /players, /help, /quit")
         if not await _send_room_event("ready_toggle", {"ready": True}):
             return 1
+        _print_lobby_prompt()
 
         async def recv_loop():
             nonlocal connected_players
@@ -4444,14 +4415,21 @@ async def _run_room_waiting_loop(
                 payload = event.get("payload", {})
 
                 if etype == "chat_message":
+                    _clear_lobby_prompt()
                     sender = payload.get("from", "Unknown")
                     text = payload.get("text", "")
                     sender_role = str(payload.get("from_role") or "participant")
+                    if str(sender) == display_name and str(text) in local_chat_echoes:
+                        local_chat_echoes.remove(str(text))
+                        _record("chat_message", {"from": str(sender), "from_role": sender_role, "text": str(text)})
+                        continue
                     print(f"[{sender}] {text}")
                     _record("chat_message", {"from": str(sender), "from_role": sender_role, "text": str(text)})
+                    _print_lobby_prompt()
                     continue
 
                 if etype in {"connected", "lobby_update"}:
+                    _clear_lobby_prompt()
                     rows = payload.get("players", [])
                     if isinstance(rows, list):
                         for row in rows:
@@ -4468,20 +4446,38 @@ async def _run_room_waiting_loop(
                         print(f"{_room_player_label(name, role)} left.")
                         _record("player_left", {"name": name, "role": role})
                     known_connected = current_set
+                    _print_lobby_prompt()
                     continue
 
                 if etype == "error":
+                    _clear_lobby_prompt()
                     print(f"Server: {payload.get('message', 'Unknown error')}")
                     _record("error", {"message": str(payload.get("message", "Unknown error"))})
                     continue
 
                 if etype == "game_started":
+                    _clear_lobby_prompt()
                     in_quiz = False
-                    print("Game is starting now.")
+                    print("Game started.")
                     _record("game_started", {"mode": room_mode})
                     continue
 
+                if etype == "game_starting":
+                    _clear_lobby_prompt()
+                    raw_seconds = payload.get("countdown_seconds")
+                    seconds = 5 if raw_seconds is None else int(raw_seconds)
+                    seconds = max(0, min(30, seconds))
+                    if seconds:
+                        for remaining in range(seconds, 0, -1):
+                            print(f"Starting in {remaining}...")
+                            await asyncio.sleep(1)
+                    else:
+                        print("Starting now...")
+                    _record("game_starting", {"seconds": seconds})
+                    continue
+
                 if etype == "answer_progress":
+                    _clear_lobby_prompt()
                     qidx = int(payload.get("question_index", current_question_index or 0))
                     submitted = int(payload.get("submitted") or 0)
                     total = int(payload.get("total") or 0)
@@ -4508,6 +4504,7 @@ async def _run_room_waiting_loop(
                     continue
 
                 if etype == "question":
+                    _clear_lobby_prompt()
                     current_mode = str(payload.get("mode") or current_mode or "compete")
                     q_payload = payload.get("question", {})
                     current_question_index = int(payload.get("question_index", 0))
@@ -4537,6 +4534,7 @@ async def _run_room_waiting_loop(
                     continue
 
                 if etype == "phase_changed":
+                    _clear_lobby_prompt()
                     phase = str(payload.get("phase") or "").lower()
                     qidx = int(payload.get("question_index", current_question_index or 0))
                     if current_mode != "collaborate":
@@ -4580,6 +4578,7 @@ async def _run_room_waiting_loop(
                         continue
 
                 if etype == "round_result":
+                    _clear_lobby_prompt()
                     in_quiz = False
                     qidx = int(payload.get("question_index", -1))
                     print("")
@@ -4599,6 +4598,7 @@ async def _run_room_waiting_loop(
                     continue
 
                 if etype == "consensus_retry":
+                    _clear_lobby_prompt()
                     in_quiz = False
                     print("")
                     print(payload.get("message", "Not consensus, try again"))
@@ -4612,6 +4612,7 @@ async def _run_room_waiting_loop(
                     continue
 
                 if etype == "scoreboard":
+                    _clear_lobby_prompt()
                     print("")
                     print("Scoreboard:")
                     players = payload.get("players", [])
@@ -4622,6 +4623,7 @@ async def _run_room_waiting_loop(
                     continue
 
                 if etype == "game_finished":
+                    _clear_lobby_prompt()
                     print("")
                     print("Game finished.")
                     reason = payload.get("reason")
@@ -4636,7 +4638,6 @@ async def _run_room_waiting_loop(
 
         recv_task = asyncio.create_task(recv_loop())
         try:
-            input_echo.enable()
             while not stop.is_set():
                 if in_quiz:
                     await asyncio.sleep(0.1)
@@ -4661,9 +4662,14 @@ async def _run_room_waiting_loop(
                     if line is None:
                         await asyncio.sleep(0.05)
                         continue
+                    if prompt_visible:
+                        if not _stdin_is_tty():
+                            print("")
+                        prompt_visible = False
                     text = line.strip()
 
                 if not text:
+                    _print_lobby_prompt()
                     continue
                 if text == "/quit":
                     await _send_room_event("leave_room", {}, silent=True)
@@ -4675,13 +4681,16 @@ async def _run_room_waiting_loop(
                         print("Connected: " + ", ".join(labels))
                     else:
                         print("No connected players shown yet.")
+                    _print_lobby_prompt()
                     continue
                 if text == "/help":
                     print("Commands: /start (host), /players, /help, /quit")
+                    _print_lobby_prompt()
                     continue
                 if text == "/start":
                     if not is_host:
                         print("Only the room host can start.")
+                        _print_lobby_prompt()
                         continue
                     if not await _send_room_event("ready_toggle", {"ready": True}):
                         break
@@ -4690,15 +4699,18 @@ async def _run_room_waiting_loop(
                         break
                     print("Start requested...")
                     continue
+                local_chat_echoes.append(text)
+                if not _stdin_is_tty():
+                    print(f"[{display_name}] {text}")
                 if not await _send_room_event("chat_message", {"text": text}):
                     break
+                _print_lobby_prompt()
         except KeyboardInterrupt:
             await _send_room_event("leave_room", {}, silent=True)
             render_exit_message("Left room. See you next time.", no_color=no_color)
             stop.set()
         finally:
             stop.set()
-            input_echo.disable()
             recv_task.cancel()
             try:
                 await recv_task

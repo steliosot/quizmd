@@ -46,7 +46,6 @@ from quizmd import (
     _default_model_for_provider,
     _available_ai_providers_by_priority,
     _clean_inline_essay_answer,
-    _RoomNoEchoInput,
     _debug_changed_line_numbers,
     _debug_missing_key_hint,
     _debug_model_for_provider,
@@ -6357,40 +6356,6 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("Time is up. Waiting for result...", out)
         self.assertNotIn("submit_answer", fake_ws.sent_types)
 
-    def test_room_no_echo_input_disables_and_restores_terminal_echo(self):
-        class _FakeStream:
-            def isatty(self):
-                return True
-
-            def fileno(self):
-                return 7
-
-        class _FakeTermios:
-            ECHO = 8
-            TCSADRAIN = 1
-
-            def __init__(self):
-                self.calls = []
-
-            def tcgetattr(self, fd):
-                self.calls.append(("get", fd))
-                return [0, 0, 0, self.ECHO]
-
-            def tcsetattr(self, fd, when, attrs):
-                self.calls.append(("set", fd, when, list(attrs)))
-
-        fake_termios = _FakeTermios()
-        with patch("quizmd.os.name", "posix"):
-            with patch.dict(sys.modules, {"termios": fake_termios}):
-                guard = _RoomNoEchoInput(_FakeStream())
-                guard.enable()
-                self.assertTrue(guard.enabled)
-                self.assertEqual(fake_termios.calls[1], ("set", 7, fake_termios.TCSADRAIN, [0, 0, 0, 0]))
-                guard.disable()
-
-        self.assertFalse(guard.enabled)
-        self.assertEqual(fake_termios.calls[-1], ("set", 7, fake_termios.TCSADRAIN, [0, 0, 0, fake_termios.ECHO]))
-
     def test_room_waiting_loop_chat_prints_server_echo_once(self):
         class _FakeWS:
             def __init__(self):
@@ -6462,6 +6427,60 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("chat_message", fake_ws.sent_types)
         self.assertEqual(out.count("[Stelios] ok"), 1)
         self.assertNotIn("\nok\n", out)
+
+    def test_room_waiting_loop_prints_start_countdown(self):
+        class _FakeWS:
+            async def send(self, raw):
+                return None
+
+            async def recv(self):
+                if not hasattr(self, "called"):
+                    self.called = True
+                    return json.dumps({"type": "game_starting", "payload": {"countdown_seconds": 0}})
+                return json.dumps({"type": "game_finished", "payload": {}})
+
+        class _FakeConnect:
+            def __init__(self, ws):
+                self.ws = ws
+
+            async def __aenter__(self):
+                return self.ws
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class _FakeWebsocketsModule:
+            def __init__(self, ws):
+                self._ws = ws
+
+            def connect(self, *args, **kwargs):
+                return _FakeConnect(self._ws)
+
+        fake_ws = _FakeWS()
+        with patch.dict(sys.modules, {"websockets": _FakeWebsocketsModule(fake_ws)}):
+            with patch("quizmd._read_lobby_line_nonblocking", return_value=None):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    rc = run_coroutine_sync(
+                        _run_room_waiting_loop(
+                            ws_base="ws://example.test",
+                            room_code="ROOM1234",
+                            player_id="p1",
+                            token="tok",
+                            display_name="Stelios",
+                            room_name="room-name",
+                            is_host=False,
+                            room_mode="compete",
+                            player_role="participant",
+                            theme_name="auto",
+                            no_color=True,
+                            full_screen=False,
+                        )
+                    )
+
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("Starting now...", out)
 
     def test_room_waiting_loop_invalid_question_payload_is_skipped(self):
         class _FakeWS:
