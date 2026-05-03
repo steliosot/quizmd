@@ -33,6 +33,7 @@ from quizmd import (
     _room_default_server,
     _room_load_quiz_payload,
     _room_player_label,
+    _room_final_results_countdown,
     _room_prompt_token_required,
     _room_quiz_payload_from_markdown,
     _room_quiz_payload_from_json,
@@ -6552,6 +6553,86 @@ class QuizMarkdownTests(unittest.TestCase):
         out = buf.getvalue()
         self.assertEqual(rc, 0)
         self.assertIn("Review results. Type /next for question 2/3.", out)
+
+    def test_room_waiting_loop_prints_final_podium(self):
+        class _FakeWS:
+            async def send(self, raw):
+                return None
+
+            async def recv(self):
+                return json.dumps(
+                    {
+                        "type": "game_finished",
+                        "payload": {
+                            "players": [
+                                {"name": "Maya", "score": 2},
+                                {"name": "Tom", "score": 5},
+                                {"name": "Stelios", "score": 4},
+                                {"name": "Alex", "score": 1},
+                            ]
+                        },
+                    }
+                )
+
+        class _FakeConnect:
+            def __init__(self, ws):
+                self.ws = ws
+
+            async def __aenter__(self):
+                return self.ws
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class _FakeWebsocketsModule:
+            def __init__(self, ws):
+                self._ws = ws
+
+            def connect(self, *args, **kwargs):
+                return _FakeConnect(self._ws)
+
+        fake_ws = _FakeWS()
+        with patch.dict(sys.modules, {"websockets": _FakeWebsocketsModule(fake_ws)}):
+            with patch("quizmd._read_lobby_line_nonblocking", return_value=None):
+                with patch("quizmd._room_final_results_countdown", new=AsyncMock()) as mocked_countdown:
+                    buf = io.StringIO()
+                    with contextlib.redirect_stdout(buf):
+                        rc = run_coroutine_sync(
+                            _run_room_waiting_loop(
+                                ws_base="ws://example.test",
+                                room_code="ROOM1234",
+                                player_id="p1",
+                                token="tok",
+                                display_name="Stelios",
+                                room_name="room-name",
+                                is_host=False,
+                                room_mode="compete",
+                                player_role="participant",
+                                theme_name="auto",
+                                no_color=True,
+                                full_screen=False,
+                            )
+                        )
+
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        mocked_countdown.assert_awaited_once()
+        self.assertIn("Final podium", out)
+        self.assertIn("1. Tom - 5 pts", out)
+        self.assertIn("2. Stelios - 4 pts", out)
+        self.assertIn("3. Maya - 2 pts", out)
+        self.assertIn("*   Tom wins!   *", out)
+
+    def test_room_final_results_countdown_prints_five_seconds(self):
+        mocked_sleep = AsyncMock()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            run_coroutine_sync(_room_final_results_countdown(sleep_fn=mocked_sleep))
+
+        out = buf.getvalue()
+        self.assertEqual(mocked_sleep.await_count, 5)
+        self.assertIn("Final results are coming in 5...", out)
+        self.assertIn("Final results are coming in 1...", out)
 
     def test_room_waiting_loop_prints_start_countdown(self):
         class _FakeWS:

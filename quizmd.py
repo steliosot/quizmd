@@ -4024,6 +4024,81 @@ def _room_player_label(name: str, role: str) -> str:
     return name
 
 
+def _room_numeric_score(value: object) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _format_room_score(value: object) -> str:
+    score = _room_numeric_score(value)
+    if score.is_integer():
+        return str(int(score))
+    return f"{score:.2f}".rstrip("0").rstrip(".")
+
+
+def _room_final_podium(players: list[dict]) -> str:
+    scored_players = [
+        {
+            "name": str(row.get("name") or "Unknown"),
+            "score": _room_numeric_score(row.get("score")),
+        }
+        for row in players
+        if isinstance(row, dict)
+    ]
+    scored_players.sort(key=lambda row: (-row["score"], row["name"].lower()))
+    top = scored_players[:3]
+    if not top:
+        return "No final scores available."
+
+    def entry(index: int, fallback: str) -> tuple[str, str, str]:
+        if index >= len(top):
+            return fallback, "-", "-"
+        row = top[index]
+        return f"{index + 1}", row["name"], _format_room_score(row["score"])
+
+    first_rank, first_name, first_score = entry(0, "1")
+    second_rank, second_name, second_score = entry(1, "2")
+    third_rank, third_name, third_score = entry(2, "3")
+    winner = top[0]["name"]
+    lines = [
+        "Final podium",
+        "",
+        f"              [{first_rank}]",
+        f"          {first_name}",
+        f"          {first_score} pts",
+        "           _____",
+        "          |     |",
+        "          |  1  |",
+        "     _____|_____|_____",
+        "    |     |     |     |",
+        f"    |  {second_rank}  |     |  {third_rank}  |",
+        "    |_____|     |_____|",
+        "",
+        f"1. {first_name} - {first_score} pts",
+    ]
+    if len(top) >= 2:
+        lines.append(f"2. {second_name} - {second_score} pts")
+    if len(top) >= 3:
+        lines.append(f"3. {third_name} - {third_score} pts")
+    lines.extend(
+        [
+            "",
+            "* * * * * * * * * * * *",
+            f"*   {winner} wins!   *",
+            "* * * * * * * * * * * *",
+        ]
+    )
+    return "\n".join(lines)
+
+
+async def _room_final_results_countdown(seconds: int = 5, sleep_fn=asyncio.sleep) -> None:
+    for remaining in range(max(0, seconds), 0, -1):
+        print(f"Final results are coming in {remaining}...")
+        await sleep_fn(1)
+
+
 def _save_room_session_transcript(
     *,
     room_name: str,
@@ -4646,13 +4721,21 @@ async def _run_room_waiting_loop(
                 if etype == "game_finished":
                     _clear_lobby_prompt()
                     print("")
-                    print("Game finished.")
                     reason = payload.get("reason")
                     if reason:
+                        print("Game finished.")
                         print(f"Reason: {reason}")
-                    score_payload = payload.get("final_score")
-                    if isinstance(score_payload, int):
-                        print(f"Final score: {score_payload}%")
+                    else:
+                        players = payload.get("players", [])
+                        if isinstance(players, list) and players:
+                            await _room_final_results_countdown()
+                            print("")
+                            print(_room_final_podium(players))
+                        else:
+                            print("Game finished.")
+                            score_payload = payload.get("final_score")
+                            if isinstance(score_payload, int):
+                                print(f"Final score: {score_payload}%")
                     _record("game_finished", {"payload": payload})
                     stop.set()
                     return
