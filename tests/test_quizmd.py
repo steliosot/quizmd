@@ -48,6 +48,7 @@ from quizmd import (
     _run_room_waiting_loop,
     _default_model_for_provider,
     _available_ai_providers_by_priority,
+    _format_yes_no_prompt,
     _clean_inline_essay_answer,
     _debug_changed_line_numbers,
     _debug_missing_key_hint,
@@ -3275,11 +3276,21 @@ class QuizMarkdownTests(unittest.TestCase):
 
     def test_ask_yes_no_returns_false_when_input_stream_ends(self):
         with patch("builtins.input", side_effect=EOFError):
-            self.assertFalse(ask_yes_no("Save? [y/n]: "))
+            self.assertFalse(ask_yes_no("Save?"))
 
     def test_ask_yes_no_retries_then_returns_yes(self):
         with patch("builtins.input", side_effect=["maybe", "yes"]):
-            self.assertTrue(ask_yes_no("Save? [y/n]: "))
+            self.assertTrue(ask_yes_no("Save?"))
+
+    def test_ask_yes_no_uses_default_on_empty_input(self):
+        with patch("builtins.input", return_value=""):
+            self.assertTrue(ask_yes_no("Open editor?", default=True))
+        with patch("builtins.input", return_value=""):
+            self.assertFalse(ask_yes_no("Save locally?", default=False))
+
+    def test_format_yes_no_prompt_normalizes_legacy_brackets(self):
+        self.assertEqual(_format_yes_no_prompt("Save? [y/n]: ", default=False), "Save? [y/N]: ")
+        self.assertEqual(_format_yes_no_prompt("Open editor?", default=True), "Open editor? [Y/n]: ")
 
     def test_run_coroutine_sync_with_running_loop(self):
         async def inner():

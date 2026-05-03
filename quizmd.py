@@ -27,7 +27,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.3rc15"
+__version__ = "2.4.3rc16"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -3096,20 +3096,30 @@ def next_attempt_dir(quiz_title: str) -> Path:
 
 
 def ask_to_save_answers() -> bool:
-    return ask_yes_no("Save your answer locally on this device? (contains your text) [y/n]: ")
+    return ask_yes_no("Save your answer locally on this device? (contains your text)", default=False)
 
 
-def ask_yes_no(prompt: str) -> bool:
+def _format_yes_no_prompt(prompt: str, *, default: bool) -> str:
+    question = re.sub(r"\s*\[[Yy]/[Nn]\]\s*:?\s*$", "", prompt).strip()
+    choices = "[Y/n]" if default else "[y/N]"
+    return f"{question} {choices}: "
+
+
+def ask_yes_no(prompt: str, *, default: bool = False) -> bool:
+    formatted_prompt = _format_yes_no_prompt(prompt, default=default)
     while True:
         try:
-            choice = prompt_input(prompt).strip().lower()
+            choice = prompt_input(formatted_prompt).strip().lower()
         except RuntimeError:
             # If stdin is exhausted/non-interactive, fail closed instead of crashing.
-            return False
+            return default
+        if not choice:
+            return default
         if choice in {"y", "yes"}:
             return True
         if choice in {"n", "no"}:
             return False
+        print("Please answer y or n.")
 
 
 def init_starter_files(target_dir: str = ".", force: bool = False) -> list[Path]:
@@ -3804,16 +3814,7 @@ def _room_generate_name() -> str:
 def _room_prompt_yes_no(question: str, *, default: bool) -> bool:
     if not sys.stdin.isatty():
         return default
-    choices = "[Y/n]" if default else "[y/N]"
-    while True:
-        raw = prompt_input(f"{question} {choices}: ").strip().lower()
-        if not raw:
-            return default
-        if raw in {"y", "yes"}:
-            return True
-        if raw in {"n", "no"}:
-            return False
-        print("Please answer y or n.")
+    return ask_yes_no(question, default=default)
 
 
 def _room_prompt_token_required() -> bool:
@@ -7246,7 +7247,7 @@ def collect_essay_answer_via_editor(
     editor = (os.environ.get("EDITOR") or "").strip()
     if not editor:
         if _is_windows():
-            if ask_yes_no("No EDITOR is configured. Open Notepad now? [y/n]: "):
+            if ask_yes_no("No EDITOR is configured. Open Notepad now?", default=True):
                 editor = "notepad"
             else:
                 raise RuntimeError(
@@ -7280,7 +7281,7 @@ def collect_essay_answer_via_editor(
             subprocess.run(command, check=True)
         except (FileNotFoundError, subprocess.CalledProcessError) as exc:
             if _is_windows() and editor.lower() != "notepad":
-                if ask_yes_no(f"Could not open '{editor}'. Open Notepad instead? [y/n]: "):
+                if ask_yes_no(f"Could not open '{editor}'. Open Notepad instead?", default=True):
                     print("When ready, save and close Notepad, then return to this terminal.")
                     subprocess.run(["notepad", str(temp_path)], check=True)
                 else:
@@ -9115,7 +9116,7 @@ def collect_debug_fix_fallback(question: dict) -> tuple[str, bool]:
     print("")
     hint_used = False
     should_prompt_hint = sys.stdin.isatty()
-    if should_prompt_hint and ask_yes_no("Need a hint? [y/n]: "):
+    if should_prompt_hint and ask_yes_no("Need a hint?", default=False):
         print(f"Hint: {_default_debug_hint(question)}")
         hint_used = True
     print("Type the fixed code below. Enter '/end' on a new line when finished.")
@@ -10827,7 +10828,7 @@ def run_essay(
                 )
             )
 
-        if ask_yes_no("Do you want to see the rubric? [y/n]: "):
+        if ask_yes_no("Do you want to see the rubric?", default=False):
             rubric_markdown = _rubric_markdown(essay["criteria"])
             console.print(
                 Panel(
