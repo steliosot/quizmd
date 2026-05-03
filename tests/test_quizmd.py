@@ -7003,6 +7003,54 @@ class QuizMarkdownTests(unittest.TestCase):
         finally:
             Path(path).unlink(missing_ok=True)
 
+    def test_room_markdown_payload_rejects_nonfinite_question_points(self):
+        for value in ("nan", "inf"):
+            with self.subTest(value=value):
+                with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as handle:
+                    handle.write(
+                        "# Demo\n\n"
+                        "## Q1\n"
+                        "Pick A.\n\n"
+                        "- A\n"
+                        "- B\n\n"
+                        "Answer: 1\n"
+                        "Type: single\n"
+                        "Time: 20\n"
+                        f"Points: {value}\n"
+                    )
+                    path = handle.name
+                try:
+                    with self.assertRaisesRegex(ValueError, "points must be a finite number"):
+                        _room_quiz_payload_from_markdown(path)
+                finally:
+                    Path(path).unlink(missing_ok=True)
+
+    def test_room_json_payload_rejects_nonfinite_question_points(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "quiz_title": "Room Quiz",
+                    "questions": [
+                        {
+                            "title": "Q1",
+                            "question": "Pick A.",
+                            "options": ["A", "B"],
+                            "correct": [1],
+                            "type": "single",
+                            "time_limit": 20,
+                            "points": float("nan"),
+                        }
+                    ],
+                },
+                handle,
+            )
+            path = handle.name
+        try:
+            with self.assertRaisesRegex(ValueError, "Question points must be finite"):
+                _room_quiz_payload_from_json(path)
+        finally:
+            Path(path).unlink(missing_ok=True)
+
     def test_room_load_quiz_payload_rejects_non_mcq_modes(self):
         with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as handle:
             handle.write(

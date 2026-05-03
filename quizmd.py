@@ -6,6 +6,7 @@ import ast
 import asyncio
 import html
 import json
+import math
 import os
 import random
 import re
@@ -1451,6 +1452,10 @@ def parse_quiz_markdown(path: str, text_override: str | None = None):
                         raise ValueError(
                             f"{source}: points must be a number in question {title!r}"
                         ) from exc
+                    if not math.isfinite(points):
+                        raise ValueError(
+                            f"{source}: points must be a finite number in question {title!r}"
+                        )
                     if points <= 0:
                         raise ValueError(
                             f"{source}: points must be greater than zero in question {title!r}"
@@ -3812,6 +3817,11 @@ def _room_validate_json_question(question: dict, source: Path, index: int) -> di
         points = float(points_raw)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{source}: question {index} has invalid 'points' value {points_raw!r}") from exc
+    if not math.isfinite(points):
+        raise ValueError(
+            f"{source}: question {index} has invalid 'points' value {points}. "
+            "Question points must be finite."
+        )
     if points <= 0:
         raise ValueError(
             f"{source}: question {index} has invalid 'points' value {points}. "
