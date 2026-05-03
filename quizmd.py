@@ -27,7 +27,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.3rc8"
+__version__ = "2.4.3rc9"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -4361,7 +4361,6 @@ async def _run_room_waiting_loop(
     current_progress_round: tuple[int, int, int] | None = None
     seen_progress: set[tuple[tuple[int, int, int], int, int, bool]] = set()
     local_chat_echoes: list[str] = []
-    prompt_visible = False
     transcript: list[dict[str, object]] = []
 
     def _stdin_is_tty() -> bool:
@@ -4371,16 +4370,14 @@ async def _run_room_waiting_loop(
             return False
 
     def _print_lobby_prompt() -> None:
-        nonlocal prompt_visible
-        if not stop.is_set() and not in_quiz and not prompt_visible:
-            print(f"[{display_name}] ", end="", flush=True)
-            prompt_visible = True
+        return None
 
     def _clear_lobby_prompt() -> None:
-        nonlocal prompt_visible
-        if prompt_visible:
-            print("")
-            prompt_visible = False
+        return None
+
+    def _clear_typed_input_line() -> None:
+        if _stdin_is_tty() and sys.stdout and hasattr(sys.stdout, "isatty") and sys.stdout.isatty():
+            print("\033[1A\033[2K", end="", flush=True)
 
     def _record(event_type: str, payload: dict[str, object]) -> None:
         transcript.append(
@@ -4802,20 +4799,18 @@ async def _run_room_waiting_loop(
                     if line is None:
                         await asyncio.sleep(0.05)
                         continue
-                    if prompt_visible:
-                        if not _stdin_is_tty():
-                            print("")
-                        prompt_visible = False
                     text = line.strip()
 
                 if not text:
                     _print_lobby_prompt()
                     continue
                 if text == "/quit":
+                    _clear_typed_input_line()
                     await _send_room_event("leave_room", {}, silent=True)
                     stop.set()
                     break
                 if text == "/players":
+                    _clear_typed_input_line()
                     if connected_players:
                         labels = [_room_player_label(row["name"], row["role"]) for row in connected_players]
                         print("Connected: " + ", ".join(labels))
@@ -4824,10 +4819,12 @@ async def _run_room_waiting_loop(
                     _print_lobby_prompt()
                     continue
                 if text == "/help":
+                    _clear_typed_input_line()
                     print("Commands: /start (host), /next (host), /players, /help, /quit")
                     _print_lobby_prompt()
                     continue
                 if text == "/start":
+                    _clear_typed_input_line()
                     if not is_host:
                         print("Only the room host can start.")
                         _print_lobby_prompt()
@@ -4840,6 +4837,7 @@ async def _run_room_waiting_loop(
                     print("Start requested...")
                     continue
                 if text == "/next":
+                    _clear_typed_input_line()
                     if not is_host:
                         print("Only the room host can continue.")
                         _print_lobby_prompt()
@@ -4849,8 +4847,8 @@ async def _run_room_waiting_loop(
                     print("Continuing...")
                     continue
                 local_chat_echoes.append(text)
-                if not _stdin_is_tty():
-                    print(f"[{display_name}] {text}")
+                _clear_typed_input_line()
+                print(f"[{display_name}] {text}")
                 if not await _send_room_event("chat_message", {"text": text}):
                     break
                 _print_lobby_prompt()

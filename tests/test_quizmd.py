@@ -6429,6 +6429,110 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(out.count("[Stelios] ok"), 1)
         self.assertNotIn("\nok\n", out)
 
+    def test_room_waiting_loop_does_not_print_empty_chat_prompt_lines(self):
+        class _FakeWS:
+            def __init__(self):
+                self.sent_types = []
+                self.chat_sent = False
+                self.recv_calls = 0
+
+            async def send(self, raw):
+                payload = json.loads(raw)
+                self.sent_types.append(payload.get("type"))
+                if payload.get("type") == "chat_message":
+                    self.chat_sent = True
+
+            async def recv(self):
+                self.recv_calls += 1
+                if self.recv_calls == 1:
+                    return json.dumps(
+                        {
+                            "type": "lobby_update",
+                            "payload": {
+                                "players": [
+                                    {
+                                        "player_id": "host",
+                                        "name": "Stelios",
+                                        "role": "participant",
+                                        "connected": True,
+                                    },
+                                    {
+                                        "player_id": "tom",
+                                        "name": "Tom",
+                                        "role": "participant",
+                                        "connected": True,
+                                    },
+                                ]
+                            },
+                        }
+                    )
+                while not self.chat_sent:
+                    await asyncio.sleep(0.01)
+                if self.recv_calls == 2:
+                    return json.dumps(
+                        {
+                            "type": "chat_message",
+                            "payload": {"from": "Stelios", "from_role": "participant", "text": "Hi"},
+                        }
+                    )
+                if self.recv_calls == 3:
+                    return json.dumps(
+                        {
+                            "type": "chat_message",
+                            "payload": {"from": "Tom", "from_role": "participant", "text": "Hey"},
+                        }
+                    )
+                return json.dumps({"type": "game_finished", "payload": {}})
+
+        class _FakeConnect:
+            def __init__(self, ws):
+                self.ws = ws
+
+            async def __aenter__(self):
+                return self.ws
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class _FakeWebsocketsModule:
+            def __init__(self, ws):
+                self._ws = ws
+
+            def connect(self, *args, **kwargs):
+                return _FakeConnect(self._ws)
+
+        fake_ws = _FakeWS()
+        with patch("quizmd.os.name", "posix"):
+            with patch.dict(sys.modules, {"websockets": _FakeWebsocketsModule(fake_ws)}):
+                with patch("quizmd._read_lobby_line_nonblocking", side_effect=["Hi", None]):
+                    buf = io.StringIO()
+                    with contextlib.redirect_stdout(buf):
+                        rc = run_coroutine_sync(
+                            _run_room_waiting_loop(
+                                ws_base="ws://example.test",
+                                room_code="ROOM1234",
+                                player_id="host",
+                                token="tok",
+                                display_name="Stelios",
+                                room_name="room-name",
+                                is_host=True,
+                                room_mode="compete",
+                                player_role="participant",
+                                theme_name="auto",
+                                no_color=True,
+                                full_screen=False,
+                            )
+                        )
+
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("Stelios joined.", out)
+        self.assertIn("Tom joined.", out)
+        self.assertEqual(out.count("[Stelios] Hi"), 1)
+        self.assertEqual(out.count("[Tom] Hey"), 1)
+        self.assertNotIn("\n[Stelios]\n", out)
+        self.assertNotIn("\n[Tom]\n", out)
+
     def test_room_waiting_loop_host_next_sends_next_question(self):
         class _FakeWS:
             def __init__(self):
