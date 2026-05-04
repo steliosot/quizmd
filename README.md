@@ -5,7 +5,7 @@
 - Imposter quizzes (spot misleading options)
 - Chaos quizzes (branch + recovery scenarios)
 - Essay quizzes (AI rubric scoring)
-- Online room modes (compete/collaborate)
+- Online room types (compete/collaborate/eliminate)
 - Terminal game modes (Alien Attack)
 
 ## Install
@@ -108,7 +108,11 @@ quizmd hello-essay.md
 - What: discussion + voting phase, team consensus scoring.
 - Start room: `quizmd room --create --mode collaborate --quiz hello-quiz.md`
 
-### 11) Game: Alien Attack (Terminal)
+### 11) Room: Eliminate (Online)
+- What: wrong answers eliminate players from scoring, but everyone keeps playing for practice.
+- Start room: `quizmd room --create --mode eliminate --quiz hello-quiz.md`
+
+### 12) Game: Alien Attack (Terminal)
 - What: arcade shooter mini-game.
 - Start: `quizmd alien-attack`
 
@@ -119,7 +123,7 @@ quizmd room --join <room-name> [--token <room-token>]
 ```
 
 Room quiz requirement:
-- In online room modes, each question `Time`/`time_limit` must be **5 seconds or higher**.
+- In online room types, each question `Time`/`time_limit` must be **5 seconds or higher**.
 - For JSON room quizzes, optional `discussion_time` (seconds) controls collaborate chat phase per question.
 
 ## `quizmd init` Coverage
@@ -129,7 +133,7 @@ Yes, `quizmd init` covers all mode types:
 - Imposter via `hello-imposter.md`
 - Chaos via `hello-chaos.md`
 - Essay via `hello-essay.md`
-- Room modes by using `hello-quiz.md` with `--mode compete|collaborate`
+- Room types by using `hello-quiz.md` with `--mode compete|collaborate|eliminate`
 
 ## Essay Keys (Essay Mode Only)
 

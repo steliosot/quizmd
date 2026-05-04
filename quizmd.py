@@ -27,7 +27,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.3rc18"
+__version__ = "2.4.3rc21"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -479,6 +479,19 @@ Explanation: Consistency helps regulate the body's sleep rhythm.
 Answer: 4
 Type: single
 Explanation: All three habits are evidence-based sleep hygiene practices.
+
+## Bonus: Final Sprint
+Which score unlocks the bonus question in Challenge mode?
+
+- Any score
+- 25% of regular stars
+- 75% of regular stars
+- Only a perfect score
+
+Answer: 3
+Type: single
+Time: 30
+Explanation: The bonus unlocks after you collect at least 75% of the regular category stars.
 """
 
 HELLO_REVERSE_TEMPLATE = """# Reverse Quiz: Python Reverse Engineering
@@ -982,16 +995,17 @@ export GEMINI_API_KEY="your_key_here"  # or OPENAI_API_KEY / ANTHROPIC_API_KEY
 quizmd hello-essay.md
 ```
 
-## Room modes (online)
+## Room types (online)
 
 ```bash
 quizmd room --create --mode compete --quiz hello-quiz.md
 quizmd room --create --mode collaborate --quiz hello-quiz.md
+quizmd room --create --mode eliminate --quiz hello-quiz.md
 quizmd room --join <room-name> [--token <room-token>]
 ```
 
 Room quiz requirement:
-- For online room modes, each question `Time`/`time_limit` must be 5 seconds or higher.
+- For online room types, each question `Time`/`time_limit` must be 5 seconds or higher.
 """
 
 QUIZMD_TERMINAL_PALETTES = {
@@ -1009,9 +1023,13 @@ QUIZMD_TERMINAL_PALETTES = {
             "pt_timer_warning": "ansimagenta",
             "pt_timer_danger": "ansired",
             "pt_instruction": "ansigray",
+            "pt_focus_fg": "ansiwhite",
+            "pt_focus_bg": "#3f6f7a",
+            "pt_confirmed_fg": "ansiwhite",
+            "pt_confirmed_bg": "#4f7f68",
             "pt_selected_fg": "ansiwhite",
-            "pt_selected_bg": "ansiblue",
-            "pt_selected_fg_pulse": "ansiblue",
+            "pt_selected_bg": "#3f6f7a",
+            "pt_selected_fg_pulse": "#3f6f7a",
             "pt_selected_bg_pulse": "ansiwhite",
             "pt_marked_fg": "ansiwhite",
             "pt_marked_bg": "#4f7f68",
@@ -1032,8 +1050,12 @@ QUIZMD_TERMINAL_PALETTES = {
             "success": "ansigreen",
             "border": "ansiblue",
             "label": "ansicyan bold",
-            "selected_fg": "ansiblack",
-            "selected_bg": "ansicyan",
+            "focus_fg": "ansiwhite",
+            "focus_bg": "#3f6f7a",
+            "confirmed_fg": "ansiwhite",
+            "confirmed_bg": "#4f7f68",
+            "selected_fg": "ansiwhite",
+            "selected_bg": "#3f6f7a",
             "changed_fg": "ansiwhite",
             "changed_bg": "#6b3a3a",
         },
@@ -1053,9 +1075,13 @@ QUIZMD_TERMINAL_PALETTES = {
             "pt_timer_warning": "ansired",
             "pt_timer_danger": "ansired",
             "pt_instruction": "black",
+            "pt_focus_fg": "ansiwhite",
+            "pt_focus_bg": "#3f6f7a",
+            "pt_confirmed_fg": "ansiwhite",
+            "pt_confirmed_bg": "#4f7f68",
             "pt_selected_fg": "ansiwhite",
-            "pt_selected_bg": "ansiblue",
-            "pt_selected_fg_pulse": "ansiblue",
+            "pt_selected_bg": "#3f6f7a",
+            "pt_selected_fg_pulse": "#3f6f7a",
             "pt_selected_bg_pulse": "ansiwhite",
             "pt_marked_fg": "ansiwhite",
             "pt_marked_bg": "#4f7f68",
@@ -1075,8 +1101,12 @@ QUIZMD_TERMINAL_PALETTES = {
             "success": "ansigreen",
             "border": "ansiblue",
             "label": "ansiblue bold",
+            "focus_fg": "ansiwhite",
+            "focus_bg": "#3f6f7a",
+            "confirmed_fg": "ansiwhite",
+            "confirmed_bg": "#4f7f68",
             "selected_fg": "ansiwhite",
-            "selected_bg": "ansiblue",
+            "selected_bg": "#3f6f7a",
             "changed_fg": "ansiblack",
             "changed_bg": "#ffdede",
         },
@@ -1147,6 +1177,10 @@ def _prompt_ui_palette(theme: dict) -> dict[str, str]:
     if _is_light_theme(theme):
         return dict(QUIZMD_TERMINAL_PALETTES["light"]["prompt"])
     return dict(QUIZMD_TERMINAL_PALETTES["dark"]["prompt"])
+
+
+def _strip_prompt_markup(markup: str) -> str:
+    return re.sub(r"<[^>]+>", "", markup)
 
 
 def should_use_compact_layout(min_width: int = 100, columns: int | None = None) -> bool:
@@ -1529,11 +1563,12 @@ def parse_quiz_markdown(path: str, text_override: str | None = None):
 CHALLENGE_DIFFICULTY_ORDER = ("easy", "normal", "hard")
 CHALLENGE_STARS_BY_DIFFICULTY = {"easy": 1, "normal": 2, "hard": 3}
 CHALLENGE_DEFAULT_TIME_LIMIT_SECONDS = 45
+CHALLENGE_BONUS_UNLOCK_RATIO = 0.75
 REVERSE_DEFAULT_TIME_LIMIT_SECONDS = 45
 MILLIONAIRE_TOTAL_QUESTIONS = 15
 MILLIONAIRE_DEFAULT_TIME_LIMIT_SECONDS = 120
 MILLIONAIRE_MAX_TIME_LIMIT_SECONDS = 120
-MILLIONAIRE_LIFELINES = ("50-50", "Ask the People", "Call a Friend")
+MILLIONAIRE_LIFELINES = ("50-50", "Ask the People", "Hint from Friend")
 MILLIONAIRE_SAFETY_NET_QUESTIONS = (2, 5, 10, 15)
 MILLIONAIRE_POINTS_LADDER = (
     100,
@@ -1574,13 +1609,16 @@ def parse_challenge_markdown(path: str) -> tuple[str, list[dict]]:
     if not quiz_title:
         raise ValueError(f"{source}: challenge quiz title cannot be empty")
 
-    category_pattern = re.compile(r"^##\s+Category:\s*(.+?)\s*$", flags=re.IGNORECASE)
+    category_pattern = re.compile(r"^##\s+Category:\s*(.*?)\s*$", flags=re.IGNORECASE)
+    bonus_pattern = re.compile(r"^##\s+Bonus:\s*(.*?)\s*$", flags=re.IGNORECASE)
     difficulty_pattern = re.compile(r"^###\s*(Easy|Normal|Hard)\s*$", flags=re.IGNORECASE)
     field_pattern = re.compile(r"(?i)^(answer|type|time|explanation)\s*:\s*(.*)$")
     option_pattern = re.compile(r"^\s*-\s*(.*)$")
 
     category_blocks: list[tuple[str, list[str]]] = []
+    bonus_blocks: list[tuple[str, list[str]]] = []
     current_category_name: str | None = None
+    current_bonus_name: str | None = None
     current_category_lines: list[str] = []
     in_code_fence = False
     saw_header = False
@@ -1600,8 +1638,25 @@ def parse_challenge_markdown(path: str) -> tuple[str, list[dict]]:
             and (match := category_pattern.match(stripped)) is not None
         ):
             if current_category_name is not None:
-                category_blocks.append((current_category_name, current_category_lines))
+                if current_bonus_name is not None:
+                    bonus_blocks.append((current_category_name, current_category_lines))
+                else:
+                    category_blocks.append((current_category_name, current_category_lines))
             current_category_name = match.group(1).strip()
+            current_bonus_name = None
+            current_category_lines = []
+            continue
+        if (
+            not in_code_fence
+            and (match := bonus_pattern.match(stripped)) is not None
+        ):
+            if current_category_name is not None:
+                if current_bonus_name is not None:
+                    bonus_blocks.append((current_category_name, current_category_lines))
+                else:
+                    category_blocks.append((current_category_name, current_category_lines))
+            current_category_name = match.group(1).strip()
+            current_bonus_name = current_category_name
             current_category_lines = []
             continue
         if current_category_name is None:
@@ -1613,10 +1668,15 @@ def parse_challenge_markdown(path: str) -> tuple[str, list[dict]]:
         current_category_lines.append(raw_line)
 
     if current_category_name is not None:
-        category_blocks.append((current_category_name, current_category_lines))
+        if current_bonus_name is not None:
+            bonus_blocks.append((current_category_name, current_category_lines))
+        else:
+            category_blocks.append((current_category_name, current_category_lines))
 
     if not category_blocks:
         raise ValueError(f"{source}: no categories found. Add at least one '## Category: <name>' block.")
+    if len(bonus_blocks) > 1:
+        raise ValueError(f"{source}: challenge mode supports only one '## Bonus: <name>' block.")
 
     seen_categories: set[str] = set()
     categories: list[dict] = []
@@ -1773,6 +1833,30 @@ def parse_challenge_markdown(path: str) -> tuple[str, list[dict]]:
                 "category": category_name,
                 "question": shared_question_text,
                 "difficulties": difficulties,
+            }
+        )
+
+    if bonus_blocks:
+        bonus_name, bonus_lines = bonus_blocks[0]
+        if not bonus_name:
+            raise ValueError(f"{source}: bonus name cannot be empty")
+        if bonus_name.casefold() in seen_categories:
+            raise ValueError(f"{source}: bonus name {bonus_name!r} duplicates a category name")
+        bonus_text = f"# Bonus\n## {bonus_name}\n" + "\n".join(bonus_lines).strip() + "\n"
+        _bonus_title, bonus_questions = parse_quiz_markdown(str(source), text_override=bonus_text)
+        if len(bonus_questions) != 1:
+            raise ValueError(f"{source}: bonus block must contain exactly one question")
+        bonus_question = bonus_questions[0]
+        if bonus_question.get("type") != "single":
+            raise ValueError(f"{source}: bonus question supports only Type: single")
+        if len(bonus_question.get("correct", [])) != 1:
+            raise ValueError(f"{source}: bonus question requires exactly one correct answer")
+        categories.append(
+            {
+                "category": bonus_name,
+                "question": bonus_question["question"],
+                "bonus": True,
+                "question_data": bonus_question,
             }
         )
 
@@ -2329,6 +2413,10 @@ def _debug_changed_line_numbers(broken_code: str, fixed_code: str) -> list[int]:
         if broken_line != fixed_line:
             changed.append(idx + 1)
     return changed
+
+
+def _debug_submission_unchanged(broken_code: str, student_code: str) -> bool:
+    return _normalize_code_lines(broken_code) == _normalize_code_lines(student_code)
 
 
 def _score_debug_submission(broken_code: str, fixed_code: str, student_code: str) -> dict:
@@ -3271,9 +3359,11 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
     room_cards = (
         "[bold]Compete[/bold]\n[dim]Fast live quiz race[/dim]",
         "[bold]Collaborate[/bold]\n[dim]Team consensus quiz[/dim]",
+        "[bold]Eliminate[/bold]\n[dim]Wrong answers knock players out[/dim]",
     )
     if wide_layout:
         rooms = Table.grid(expand=True)
+        rooms.add_column(ratio=1)
         rooms.add_column(ratio=1)
         rooms.add_column(ratio=1)
         rooms.add_row(*room_cards)
@@ -3282,14 +3372,18 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
     console.print(
         Panel(
             rooms,
-            title="[bold]Room modes[/bold]",
+            title="[bold]Room types[/bold]",
             border_style=theme["secondary"],
             expand=True,
             width=panel_width,
         )
     )
 
-    game_cards = ("[bold]Alien Attack[/bold]\n[dim]Arcade typing mini-game[/dim]\n[green]No AI key[/green]",)
+    game_cards = (
+        "[bold]Alien Attack[/bold]\n"
+        "[dim]Arcade typing mini-game. Try: quizmd alien-attack[/dim]\n"
+        "[green]No AI key[/green]",
+    )
     if wide_layout:
         games = Table.grid(expand=True)
         games.add_column(ratio=1)
@@ -3334,8 +3428,9 @@ def render_init_next_screen(created: list[Path] | None = None, target_dir: str =
         console.print(
             Panel(
                 "[bold]Getting started[/bold]\n"
+                "[dim]Example quizzes are in the [bold]quizzes[/bold] folder.[/dim]\n"
                 "[dim]Run your first quiz now:[/dim]\n"
-                "quizmd hello-quiz.md",
+                "quizmd quizzes/harry-potter-quiz.md",
                 title=f"[bold {theme['accent']}]Try it out[/bold {theme['accent']}]",
                 border_style=theme["accent"],
                 expand=True,
@@ -3448,7 +3543,7 @@ def _room_server_online(server: str) -> bool:
 
 
 def _room_supported_modes(server: str) -> set[str] | None:
-    """Return supported room modes from OpenAPI when available."""
+    """Return supported room types from OpenAPI when available."""
     base = _room_http_base(server)
     try:
         payload = _room_get_json(f"{base}/openapi.json", timeout=6)
@@ -3581,20 +3676,6 @@ def _room_http_error(exc: urllib.error.HTTPError) -> str:
     return f"{status} {detail}"
 
 
-def _room_join_role_unsupported(error_text: str) -> bool:
-    lowered = (error_text or "").lower()
-    if "body.role" not in lowered and " role" not in lowered and "role " not in lowered:
-        return False
-    indicators = (
-        "extra inputs are not permitted",
-        "extra_forbidden",
-        "unexpected field",
-        "unexpected keyword",
-        "not permitted",
-    )
-    return any(token in lowered for token in indicators)
-
-
 def _room_join_token_unsupported(error_text: str) -> bool:
     lowered = (error_text or "").lower()
     if "room_token" not in lowered:
@@ -3637,6 +3718,18 @@ def _room_create_advance_mode_unsupported(error_text: str) -> bool:
     return any(token in lowered for token in indicators)
 
 
+def _room_advance_mode_unsupported_message(advance_mode: str) -> str:
+    if advance_mode == "manual":
+        return (
+            "This room server is too old to support manual advance mode. "
+            "Deploy/update quizmd-server, or create the room with --advance auto."
+        )
+    return (
+        "This room server is too old to support auto-advance settings. "
+        "Deploy/update quizmd-server, or try again with the current cloud server."
+    )
+
+
 def _room_join_missing_token(error_text: str) -> bool:
     lowered = (error_text or "").lower()
     if "room_token" not in lowered and "room token" not in lowered:
@@ -3650,6 +3743,18 @@ def _room_join_missing_token(error_text: str) -> bool:
         "token is required",
     )
     return any(token in lowered for token in indicators)
+
+
+def _room_request_not_found(error_text: str) -> bool:
+    lowered = (error_text or "").lower()
+    return "404" in lowered and ("room not found" in lowered or "not found" in lowered)
+
+
+def _room_not_found_message(room_name: str) -> str:
+    return (
+        f'Room "{room_name}" was not found. '
+        "Check the room name, or ask the host to create it again."
+    )
 
 
 def _room_post_json(url: str, payload: dict, timeout: int = 20) -> dict:
@@ -3712,7 +3817,6 @@ def _room_create_request(
     advance_mode: str = "auto",
     room_name: str,
     host_name: str,
-    host_role: str = "",
     token_required: bool = False,
     quiz_title: str,
     questions: list[dict],
@@ -3725,8 +3829,6 @@ def _room_create_request(
         "host_name": host_name,
         "questions": questions,
     }
-    if host_role:
-        payload["host_role"] = host_role
     payload["token_required"] = token_required
     url = f"{_room_http_base(server)}/rooms"
     try:
@@ -3734,16 +3836,15 @@ def _room_create_request(
     except RuntimeError as exc:
         if _room_create_advance_mode_unsupported(str(exc)):
             if advance_mode != "auto":
-                raise RuntimeError(
-                    "This room server is too old to support manual advance mode. "
-                    "Deploy/update quizmd-server, or create the room with --advance auto."
-                ) from exc
+                raise RuntimeError(_room_advance_mode_unsupported_message(advance_mode)) from exc
             legacy_payload = dict(payload)
             legacy_payload.pop("advance_mode", None)
             try:
                 return _room_post_json(url, legacy_payload)
             except RuntimeError as legacy_exc:
                 exc = legacy_exc
+                if _room_create_advance_mode_unsupported(str(exc)):
+                    raise RuntimeError(_room_advance_mode_unsupported_message(advance_mode)) from exc
         if not _room_create_token_required_unsupported(str(exc)):
             raise
         if not token_required:
@@ -3766,14 +3867,11 @@ def _room_join_by_name_request(
     room_name: str,
     room_token: str = "",
     player_name: str,
-    role: str = "",
 ) -> dict:
     quoted = urllib.parse.quote(room_name.strip().lower(), safe="")
     payload = {"player_name": player_name}
     if room_token:
         payload["room_token"] = room_token
-    if role:
-        payload["role"] = role
     return _room_post_json(
         f"{_room_http_base(server)}/rooms/by-name/{quoted}/join",
         payload,
@@ -3992,6 +4090,7 @@ def _room_mode_label(mode: str) -> str:
     labels = {
         "compete": "Compete",
         "collaborate": "Collaborate",
+        "eliminate": "Eliminate",
     }
     return labels.get(str(mode or "").lower(), str(mode or "Room").title())
 
@@ -4006,7 +4105,6 @@ def render_room_created_screen(
     join_command: str,
     token_required: bool,
     room_token: str = "",
-    host_role: str = "",
     theme_name: str = "auto",
     no_color: bool = False,
 ) -> None:
@@ -4020,8 +4118,6 @@ def render_room_created_screen(
         print("")
         print(f"Room created by: {host_name}")
         print(f"Room: {room_name}")
-        if host_role:
-            print(f"Role: {host_role}")
         if token_required and room_token:
             print(f"Room token: {room_token}")
         print(f"Quiz: {quiz_title}")
@@ -4046,17 +4142,10 @@ def render_room_created_screen(
         f"[dim]Mode[/dim]\n[bold]{_room_mode_label(mode)}[/bold]",
         f"[dim]Access[/dim]\n[bold]{access}[/bold]",
     )
-    role = str(host_role or "").strip()
-    if role:
-        summary.add_row(
-            f"[dim]Role[/dim]\n[bold]{role}[/bold]",
-            f"[dim]Questions[/dim]\n[bold]{question_count}[/bold]",
-        )
-    else:
-        summary.add_row(
-            f"[dim]Questions[/dim]\n[bold]{question_count}[/bold]",
-            "",
-        )
+    summary.add_row(
+        f"[dim]Questions[/dim]\n[bold]{question_count}[/bold]",
+        "",
+    )
 
     console.print("")
     console.print(
@@ -4105,8 +4194,6 @@ def _room_connected_players(payload: dict) -> list[dict[str, str]]:
 
 
 def _room_player_label(name: str, role: str) -> str:
-    if role in {"teacher", "student"}:
-        return f"{name} ({role})"
     return name
 
 
@@ -4124,19 +4211,81 @@ def _format_room_score(value: object) -> str:
     return f"{score:.2f}".rstrip("0").rstrip(".")
 
 
-def _room_final_podium(players: list[dict]) -> str:
+def _room_scored_players(players: list[dict]) -> list[dict]:
     scored_players = [
         {
             "name": str(row.get("name") or "Unknown"),
             "score": _room_numeric_score(row.get("score")),
+            "eliminated": bool(row.get("eliminated", False)),
         }
         for row in players
         if isinstance(row, dict)
     ]
-    scored_players.sort(key=lambda row: (-row["score"], row["name"].lower()))
+    scored_players.sort(key=lambda row: (row["eliminated"], -row["score"], row["name"].lower()))
+    return scored_players
+
+
+def _room_final_scoreboard(players: list[dict]) -> str:
+    scored_players = _room_scored_players(players)
+    if not scored_players:
+        return "No final scores available."
+
+    show_status = any(row["eliminated"] for row in scored_players)
+    rows = [
+        (
+            str(rank),
+            row["name"],
+            f"{_format_room_score(row['score'])} pts",
+            "eliminated" if row["eliminated"] else "active",
+        )
+        for rank, row in enumerate(scored_players, start=1)
+    ]
+    rank_width = max(len("Rank"), *(len(row[0]) for row in rows))
+    name_width = min(28, max(len("Player"), *(len(row[1]) for row in rows)))
+    score_width = max(len("Score"), *(len(row[2]) for row in rows))
+    status_width = max(len("Status"), *(len(row[3]) for row in rows)) if show_status else 0
+
+    def clip_name(name: str) -> str:
+        if len(name) <= name_width:
+            return name
+        if name_width <= 1:
+            return name[:name_width]
+        return name[: name_width - 1] + "."
+
+    border = f"+-{'-' * rank_width}-+-{'-' * name_width}-+-{'-' * score_width}-+"
+    if show_status:
+        border = f"+-{'-' * rank_width}-+-{'-' * name_width}-+-{'-' * score_width}-+-{'-' * status_width}-+"
+    lines = [
+        "Final scoreboard",
+        "",
+        border,
+        (
+            f"| {'Rank'.ljust(rank_width)} | {'Player'.ljust(name_width)} | "
+            f"{'Score'.rjust(score_width)} | {'Status'.ljust(status_width)} |"
+            if show_status
+            else f"| {'Rank'.ljust(rank_width)} | {'Player'.ljust(name_width)} | {'Score'.rjust(score_width)} |"
+        ),
+        border,
+    ]
+    for rank, name, score, status in rows:
+        if show_status:
+            lines.append(
+                f"| {rank.ljust(rank_width)} | {clip_name(name).ljust(name_width)} | "
+                f"{score.rjust(score_width)} | {status.ljust(status_width)} |"
+            )
+        else:
+            lines.append(
+                f"| {rank.ljust(rank_width)} | {clip_name(name).ljust(name_width)} | {score.rjust(score_width)} |"
+            )
+    lines.append(border)
+    return "\n".join(lines)
+
+
+def _room_final_podium(players: list[dict]) -> str:
+    scored_players = [row for row in _room_scored_players(players) if not row["eliminated"]]
     top = scored_players[:3]
     if not top:
-        return "No final scores available."
+        return "No final winners available."
 
     def entry(index: int, fallback: str) -> tuple[str, str, str]:
         if index >= len(top):
@@ -4227,6 +4376,36 @@ def _save_room_session_transcript(
     return out
 
 
+def _space_selector_markup(
+    title: str,
+    options: list[tuple[str, str]],
+    *,
+    selected: int,
+    theme: dict,
+    no_color: bool,
+):
+    lines = [
+        f"<style fg='{theme['pt_title']}'><b>{html.escape(title)}</b></style>",
+        f"<style fg='{theme['pt_instruction']}'>Use ↑/↓ to choose. Space or Enter to confirm.</style>",
+        "",
+    ]
+    for idx, (label, _) in enumerate(options):
+        pointer = "&gt;" if idx == selected else " "
+        marker = "[x]" if idx == selected else "[ ]"
+        if no_color:
+            lines.append(f"{'>' if idx == selected else ' '} {marker} {label}")
+        else:
+            style = (
+                f"fg='{theme.get('pt_focus_fg', theme['pt_selected_fg'])}' "
+                f"bg='{theme.get('pt_focus_bg', theme['pt_selected_bg'])}'"
+                if idx == selected
+                else f"fg='{theme['pt_primary']}'"
+            )
+            lines.append(f"<style {style}>{pointer} {html.escape(marker)} {html.escape(label)}</style>")
+    markup = "\n".join(lines)
+    return _strip_prompt_markup(markup) if no_color else markup
+
+
 def _select_with_space(
     title: str,
     options: list[tuple[str, str]],
@@ -4256,28 +4435,10 @@ def _select_with_space(
 
     theme = select_theme(theme_name)
     selected = 0
-    chosen = 0
 
     def render():
-        lines = [
-            f"<style fg='{theme['pt_title']}'><b>{html.escape(title)}</b></style>",
-            f"<style fg='{theme['pt_instruction']}'>Use ↑/↓, Space to select, Enter to confirm.</style>",
-            "",
-        ]
-        for idx, (label, _) in enumerate(options):
-            pointer = "&gt;" if idx == selected else " "
-            marker = "[x]" if idx == chosen else "[ ]"
-            if no_color:
-                lines.append(f"{'>' if idx == selected else ' '} {marker} {label}")
-            else:
-                style = (
-                    f"fg='{theme['pt_selected_fg']}' bg='{theme['pt_selected_bg']}'"
-                    if idx == selected
-                    else f"fg='{theme['pt_primary']}'"
-                )
-                lines.append(f"<style {style}>{pointer} {html.escape(marker)} {html.escape(label)}</style>")
-        markup = "\n".join(lines)
-        return markup if no_color else PromptHTML(markup)
+        markup = _space_selector_markup(title, options, selected=selected, theme=theme, no_color=no_color)
+        return _strip_prompt_markup(markup) if no_color else PromptHTML(markup)
 
     # Render a concrete first frame immediately so some terminals do not appear blank
     # before the first key event.
@@ -4298,14 +4459,12 @@ def _select_with_space(
         control.text = render()
 
     @kb.add("space")
-    def _(_event):
-        nonlocal chosen
-        chosen = selected
-        control.text = render()
+    def _(event):
+        event.app.exit(result=options[selected][1])
 
     @kb.add("enter")
     def _(event):
-        event.app.exit(result=options[chosen][1])
+        event.app.exit(result=options[selected][1])
 
     @kb.add("c-c")
     def _(event):
@@ -4390,6 +4549,7 @@ async def _run_room_waiting_loop(
     theme_name: str,
     no_color: bool,
     full_screen: bool,
+    ui: str = "next",
 ) -> int:
     try:
         import websockets
@@ -4415,6 +4575,7 @@ async def _run_room_waiting_loop(
     seen_progress: set[tuple[tuple[int, int, int], int, int, bool]] = set()
     local_chat_echoes: list[str] = []
     transcript: list[dict[str, object]] = []
+    lobby_prompt_visible = False
 
     def _stdin_is_tty() -> bool:
         try:
@@ -4422,19 +4583,37 @@ async def _run_room_waiting_loop(
         except Exception:
             return False
 
+    def _lobby_prompt() -> str:
+        return f"[{display_name}]: "
+
     def _print_lobby_prompt() -> None:
-        return None
+        nonlocal lobby_prompt_visible
+        if in_quiz or stop.is_set() or lobby_prompt_visible:
+            return
+        if _stdin_is_tty() and sys.stdout and hasattr(sys.stdout, "isatty") and sys.stdout.isatty():
+            print(_lobby_prompt(), end="", flush=True)
+            lobby_prompt_visible = True
 
     def _clear_lobby_prompt() -> None:
-        return None
+        nonlocal lobby_prompt_visible
+        if lobby_prompt_visible and _stdin_is_tty() and sys.stdout and hasattr(sys.stdout, "isatty") and sys.stdout.isatty():
+            print("\r\033[2K", end="", flush=True)
+        lobby_prompt_visible = False
 
     def _clear_typed_input_line() -> None:
+        nonlocal lobby_prompt_visible
         if _stdin_is_tty() and sys.stdout and hasattr(sys.stdout, "isatty") and sys.stdout.isatty():
             print("\033[1A\033[2K", end="", flush=True)
+        lobby_prompt_visible = False
 
     def _normalize_lobby_input(raw_text: str) -> str:
         text = raw_text.strip()
         own_prompt = f"[{display_name}]"
+        own_prompt_with_colon = f"{own_prompt}:"
+        if text == own_prompt_with_colon:
+            return ""
+        if text.startswith(own_prompt_with_colon):
+            return text[len(own_prompt_with_colon):].strip()
         if text == own_prompt:
             return ""
         if text.startswith(own_prompt):
@@ -4493,6 +4672,7 @@ async def _run_room_waiting_loop(
                 no_color=no_color,
                 compact=False,
                 full_screen=full_screen,
+                ui=ui,
                 show_feedback=False,
             )
         except KeyboardInterrupt:
@@ -4592,6 +4772,7 @@ async def _run_room_waiting_loop(
                     if str(sender) == display_name and str(text) in local_chat_echoes:
                         local_chat_echoes.remove(str(text))
                         _record("chat_message", {"from": str(sender), "from_role": sender_role, "text": str(text)})
+                        _print_lobby_prompt()
                         continue
                     print(f"[{sender}] {text}")
                     _record("chat_message", {"from": str(sender), "from_role": sender_role, "text": str(text)})
@@ -4718,6 +4899,17 @@ async def _run_room_waiting_loop(
                     )
                     continue
 
+                if etype == "waiting_for_next_question":
+                    _clear_lobby_prompt()
+                    message = str(
+                        payload.get("message")
+                        or "This question is already live. You will join from the next question."
+                    )
+                    print(message)
+                    _record("waiting_for_next_question", {"payload": payload})
+                    _print_lobby_prompt()
+                    continue
+
                 if etype == "question":
                     _clear_lobby_prompt()
                     current_mode = str(payload.get("mode") or current_mode or "compete")
@@ -4824,11 +5016,23 @@ async def _run_room_waiting_loop(
                             mark = "correct" if bool(row.get("is_correct", False)) else "wrong"
                             delta = row.get("delta")
                             score = row.get("score")
+                            eliminated = bool(row.get("eliminated", False))
+                            newly_eliminated = bool(row.get("newly_eliminated", False))
+                            suffix = " [eliminated]" if eliminated else ""
+                            if newly_eliminated:
+                                suffix = " [newly eliminated]"
                             if delta is not None and score is not None:
-                                print(f"  - {name}: {mark}, delta={delta}, score={score}")
+                                print(f"  - {name}: {mark}, delta={delta}, score={score}{suffix}")
                             else:
-                                print(f"  - {name}: {mark}")
+                                print(f"  - {name}: {mark}{suffix}")
                     _record("round_result", {"payload": payload})
+                    continue
+
+                if etype == "eliminated":
+                    _clear_lobby_prompt()
+                    print("")
+                    print(payload.get("message", "Oh no, you are eliminated! Keep playing for practice."))
+                    _record("eliminated", {"payload": payload})
                     continue
 
                 if etype == "consensus_retry":
@@ -4852,7 +5056,8 @@ async def _run_room_waiting_loop(
                     players = payload.get("players", [])
                     if isinstance(players, list):
                         for row in players:
-                            print(f"  - {row.get('name', 'Unknown')}: {row.get('score', 0)}")
+                            status = " [eliminated]" if bool(row.get("eliminated", False)) else ""
+                            print(f"  - {row.get('name', 'Unknown')}: {row.get('score', 0)}{status}")
                     _record("scoreboard", {"payload": payload})
                     continue
 
@@ -4869,6 +5074,8 @@ async def _run_room_waiting_loop(
                             await _room_final_results_countdown()
                             print("")
                             print(_room_final_podium(players))
+                            print("")
+                            print(_room_final_scoreboard(players))
                         else:
                             print("Game finished.")
                             score_payload = payload.get("final_score")
@@ -4886,7 +5093,7 @@ async def _run_room_waiting_loop(
                     continue
                 if os.name == "nt":
                     try:
-                        text = (await asyncio.to_thread(prompt_input, "")).strip()
+                        text = (await asyncio.to_thread(prompt_input, _lobby_prompt())).strip()
                     except RuntimeError:
                         stop.set()
                         break
@@ -4978,9 +5185,7 @@ async def _run_room_waiting_loop(
 def run_room_command(args: argparse.Namespace) -> int:
     no_color = is_no_color_requested(args.no_color)
     theme_name = args.theme
-    requested_role = str(getattr(args, "role", "") or "").strip().lower()
-    if requested_role and requested_role not in {"teacher", "student"}:
-        raise RuntimeError("Invalid room role. Use teacher or student.")
+    room_ui = str(getattr(args, "ui", "") or "next")
     start_clean_screen()
     print(LOGO)
 
@@ -4999,12 +5204,13 @@ def run_room_command(args: argparse.Namespace) -> int:
         mode_choices = [
             ("Compete", "compete"),
             ("Collaborate", "collaborate"),
+            ("Eliminate", "eliminate"),
         ]
         if supported_modes:
             mode_choices = [choice for choice in mode_choices if choice[1] in supported_modes]
         if not mode_choices:
             raise RuntimeError(
-                "This cloud server did not report any supported room modes. "
+                "This cloud server did not report any supported room types. "
                 "Please try again later or check server deployment."
             )
 
@@ -5024,7 +5230,6 @@ def run_room_command(args: argparse.Namespace) -> int:
         advance_mode = str(getattr(args, "advance", "") or "").strip().lower()
         if not advance_mode:
             advance_mode = _room_prompt_advance_mode()
-        host_role = ""
         if getattr(args, "require_token", False):
             token_required = True
         elif getattr(args, "no_token", False):
@@ -5051,7 +5256,6 @@ def run_room_command(args: argparse.Namespace) -> int:
                     advance_mode=advance_mode,
                     room_name=room_name,
                     host_name=host_name,
-                    host_role=host_role,
                     token_required=token_required,
                     quiz_title=quiz_title,
                     questions=questions,
@@ -5059,6 +5263,8 @@ def run_room_command(args: argparse.Namespace) -> int:
                 break
             except RuntimeError as exc:
                 error_text = str(exc)
+                if _room_create_advance_mode_unsupported(error_text):
+                    raise RuntimeError(_room_advance_mode_unsupported_message(advance_mode)) from exc
                 if auto_room_name and "409" in error_text:
                     room_name = _room_generate_name()
                     continue
@@ -5069,7 +5275,6 @@ def run_room_command(args: argparse.Namespace) -> int:
             raise RuntimeError("Could not create a unique room name. Please retry.")
         token_required = bool(created.get("token_required", token_required))
         room_token = str(created.get("room_token") or "").strip()
-        role_label = str(created.get("host_role") or host_role or "").strip()
         if token_required and room_token:
             share_command = (
                 f'quizmd room --join "{created.get("room_name", room_name)}" '
@@ -5089,7 +5294,6 @@ def run_room_command(args: argparse.Namespace) -> int:
             join_command=share_command,
             token_required=token_required,
             room_token=room_token,
-            host_role="",
             theme_name=theme_name,
             no_color=no_color,
         )
@@ -5105,25 +5309,28 @@ def run_room_command(args: argparse.Namespace) -> int:
                 room_name=str(created.get("room_name") or room_name),
                 is_host=True,
                 room_mode=str(created.get("mode") or mode),
-                player_role=str(created.get("host_role") or host_role or "participant"),
+                player_role="participant",
                 theme_name=theme_name,
                 no_color=no_color,
                 full_screen=args.full_screen,
+                ui=room_ui,
             )
         )
 
     room_name = _room_validate_name(str(args.join or ""))
+    room_info = {}
+    try:
+        room_info = _room_info_request(server=server, room_ref=room_name)
+    except RuntimeError as exc:
+        if _room_request_not_found(str(exc)):
+            raise RuntimeError(_room_not_found_message(room_name)) from exc
+        room_info = {}
+
     player_name = (args.name or "").strip()
     if not player_name:
         suggested = _room_random_player_name()
         player_name = prompt_input(f"Enter name [{suggested}]: ").strip() or suggested
 
-    join_role = requested_role
-    room_info = {}
-    try:
-        room_info = _room_info_request(server=server, room_ref=room_name)
-    except RuntimeError:
-        room_info = {}
     token_required = bool(room_info.get("token_required", False))
     room_token = str(getattr(args, "token", "") or "").strip()
     if token_required and not room_token:
@@ -5131,21 +5338,11 @@ def run_room_command(args: argparse.Namespace) -> int:
     if token_required and not room_token:
         raise RuntimeError("Room token is required to join this room.")
 
-    detected_mode = str(room_info.get("mode") or "").lower()
-    if detected_mode and join_role:
-        # Keep compatibility with legacy callers passing a room role.
-        print("Role flag ignored: rooms use participant role.")
-        join_role = ""
-
-    attempt_plan: list[tuple[str, str]] = [(room_token, join_role)]
-    if join_role:
-        attempt_plan.append((room_token, ""))
+    attempt_plan: list[str] = [room_token]
     if room_token:
-        attempt_plan.append(("", join_role))
-    if room_token and join_role:
-        attempt_plan.append(("", ""))
-    seen_attempts: set[tuple[str, str]] = set()
-    attempts: list[tuple[str, str]] = []
+        attempt_plan.append("")
+    seen_attempts: set[str] = set()
+    attempts: list[str] = []
     for item in attempt_plan:
         if item in seen_attempts:
             continue
@@ -5155,14 +5352,13 @@ def run_room_command(args: argparse.Namespace) -> int:
     joined = None
     last_error: RuntimeError | None = None
     while attempts:
-        attempt_token, attempt_role = attempts.pop(0)
+        attempt_token = attempts.pop(0)
         try:
             joined = _room_join_by_name_request(
                 server=server,
                 room_name=room_name,
                 room_token=attempt_token,
                 player_name=player_name,
-                role=attempt_role,
             )
             break
         except RuntimeError as exc:
@@ -5173,12 +5369,7 @@ def run_room_command(args: argparse.Namespace) -> int:
                 if not prompted:
                     raise RuntimeError("Room token is required to join this room.") from exc
                 room_token = prompted
-                fresh_plan: list[tuple[str, str]] = [(room_token, join_role)]
-                if join_role:
-                    fresh_plan.append((room_token, ""))
-                fresh_plan.append(("", join_role))
-                if join_role:
-                    fresh_plan.append(("", ""))
+                fresh_plan: list[str] = [room_token, ""]
                 attempts = []
                 seen_attempts = set()
                 for item in fresh_plan:
@@ -5187,12 +5378,11 @@ def run_room_command(args: argparse.Namespace) -> int:
                     seen_attempts.add(item)
                     attempts.append(item)
                 continue
-            if attempt_role and _room_join_role_unsupported(error_text):
-                print("Server compatibility mode: retrying join without role field.")
-                continue
             if attempt_token and _room_join_token_unsupported(error_text):
                 print("Server compatibility mode: retrying join without room token field.")
                 continue
+            if _room_request_not_found(error_text):
+                raise RuntimeError(_room_not_found_message(room_name)) from exc
             raise
     if joined is None:
         if last_error is not None:
@@ -5208,10 +5398,11 @@ def run_room_command(args: argparse.Namespace) -> int:
             room_name=str(joined.get("room_name") or room_name),
             is_host=False,
             room_mode=str(joined.get("mode") or room_info.get("mode") or "compete"),
-            player_role=str(joined.get("player_role") or join_role or "participant"),
+            player_role=str(joined.get("player_role") or "participant"),
             theme_name=theme_name,
             no_color=no_color,
             full_screen=args.full_screen,
+            ui=room_ui,
         )
     )
 
@@ -6435,11 +6626,23 @@ def _challenge_star_badge(stars: int) -> str:
     return "⭐" * stars
 
 
+def _challenge_stars_word(count: int) -> str:
+    return "star" if count == 1 else "stars"
+
+
+def _challenge_result_stars_label(item: dict) -> str:
+    if item.get("bonus"):
+        return "🎁 (bonus)"
+    stars = int(item.get("stars_earned", 0) or 0)
+    return f"{_challenge_star_badge(stars)} ({stars})"
+
+
 def _challenge_difficulty_text(level: str) -> str:
     labels = {
         "easy": "⭐ Easy",
         "normal": "⭐⭐ Normal",
         "hard": "⭐⭐⭐ Hard",
+        "bonus": "Bonus",
     }
     return labels.get(level, level.title())
 
@@ -6451,12 +6654,14 @@ def save_challenge_attempt(
     answers: list[dict],
 ) -> Path:
     attempt_dir = next_attempt_dir(quiz_title)
+    regular_categories = [category for category in categories if not category.get("bonus")]
     payload = {
         "mode": "challenge",
         "quiz_title": quiz_title,
         "stars_earned": total_stars,
-        "stars_total": len(categories) * 3,
-        "total_categories": len(categories),
+        "stars_total": len(regular_categories) * 3,
+        "total_categories": len(regular_categories),
+        "has_bonus": any(category.get("bonus") for category in categories),
         "answers": answers,
     }
     (attempt_dir / "answers.json").write_text(
@@ -6466,15 +6671,16 @@ def save_challenge_attempt(
 
     lines = [
         f"Quiz: {quiz_title}",
-        f"Stars: {total_stars}/{len(categories) * 3}",
+        f"Stars: {total_stars}/{len(regular_categories) * 3}",
         "",
     ]
     for item in answers:
+        stars_label = _challenge_result_stars_label(item)
         lines.extend(
             [
                 f"Category: {item['category']}",
                 f"Difficulty: {_challenge_difficulty_text(item['difficulty'])}",
-                f"Stars earned: {_challenge_star_badge(item['stars_earned'])} ({item['stars_earned']})",
+                f"Stars earned: {stars_label}",
                 f"Correct: {'yes' if item['is_correct'] else 'no'}",
                 f"Selected: {item['selected_labels'] or 'No answer'}",
                 f"Expected: {item['expected_labels']}",
@@ -7739,6 +7945,29 @@ def _millionaire_audience_percentages(
         return winner, votes
 
 
+def _millionaire_audience_bar_message(
+    votes: dict[int, int],
+    winner: int,
+    option_count: int,
+    *,
+    no_color: bool = False,
+    bar_width: int = 6,
+) -> str:
+    width = max(3, min(10, int(bar_width)))
+    filled_char = "#" if no_color else "█"
+    empty_char = "." if no_color else "░"
+    parts = []
+    for idx in range(1, max(1, int(option_count)) + 1):
+        pct = max(0, min(100, int(votes.get(idx, 0))))
+        filled = int(round((pct / 100) * width))
+        if pct > 0:
+            filled = max(1, filled)
+        filled = min(width, filled)
+        bar = (filled_char * filled) + (empty_char * (width - filled))
+        parts.append(f"{idx} {bar} {pct}%")
+    return f"Audience: {'  '.join(parts)}\nMost votes: option {winner}."
+
+
 def _millionaire_friend_hint(question: dict, audience_winner: int | None = None) -> str:
     hint = str(question.get("hint") or "").strip()
     if hint:
@@ -7935,15 +8164,21 @@ def build_question_markup(
                 f"bg='{theme.get('pt_imposter_bg', theme['pt_timer_danger'])}'"
             )
         elif idx in marked:
-            style = f"fg='{theme['pt_marked_fg']}' bg='{theme['pt_marked_bg']}'"
+            style = (
+                f"fg='{theme.get('pt_confirmed_fg', theme['pt_marked_fg'])}' "
+                f"bg='{theme.get('pt_confirmed_bg', theme['pt_marked_bg'])}'"
+            )
         elif i == selected:
             if pulse:
                 style = (
-                    f"fg='{theme.get('pt_selected_fg_pulse', theme['pt_selected_fg'])}' "
-                    f"bg='{theme.get('pt_selected_bg_pulse', theme['pt_selected_bg'])}'"
+                    f"fg='{theme.get('pt_selected_fg_pulse', theme.get('pt_focus_fg', theme['pt_selected_fg']))}' "
+                    f"bg='{theme.get('pt_selected_bg_pulse', theme.get('pt_focus_bg', theme['pt_selected_bg']))}'"
                 )
             else:
-                style = f"fg='{theme['pt_selected_fg']}' bg='{theme['pt_selected_bg']}'"
+                style = (
+                    f"fg='{theme.get('pt_focus_fg', theme['pt_selected_fg'])}' "
+                    f"bg='{theme.get('pt_focus_bg', theme['pt_selected_bg'])}'"
+                )
         else:
             style = f"fg='{theme['pt_primary']}'"
 
@@ -8107,11 +8342,11 @@ async def ask_question(
         cf = "✓" if millionaire_state.get("call_friend_used") else "C"
         ai = "✓" if millionaire_state.get("ask_ai_used") else "D"
         if no_color:
-            base = f"Lifelines: [{ff}]50-50  [{ap}]Ask  [{cf}]Ask {friend_name}"
+            base = f"Lifelines: [{ff}]50-50  [{ap}]Ask  [{cf}]Hint from {friend_name}"
             if ai_lifeline_enabled:
                 base += f"  [{ai}]Ask AI"
             return base
-        base = f"Lifelines: [{ff}] 50-50  [{ap}] Ask the People  [{cf}] Ask {friend_name}"
+        base = f"Lifelines: [{ff}] 50-50  [{ap}] Ask the People  [{cf}] Hint from {friend_name}"
         if ai_lifeline_enabled:
             provider_name = str(ai_settings.get("provider_name") or "AI")
             base += f"  [{ai}] Ask AI ({provider_name})"
@@ -8409,10 +8644,14 @@ async def ask_question(
             total_questions=total_questions,
         )
         audience_winner = winner
-        ordered = " | ".join(f"{idx}:{votes.get(idx, 0)}%" for idx in range(1, len(q.get("options", [])) + 1))
         millionaire_state["ask_people_used"] = True
         used_lifelines_this_question.append("Ask the People")
-        millionaire_message = f"Audience vote -> {ordered}. Most votes: option {winner}."
+        millionaire_message = _millionaire_audience_bar_message(
+            votes,
+            winner,
+            len(q.get("options", [])),
+            no_color=no_color,
+        )
         control.text = render()
 
     @kb.add("C")
@@ -8422,13 +8661,13 @@ async def ask_question(
         if not millionaire_mode or millionaire_state is None:
             return
         if millionaire_state.get("call_friend_used"):
-            millionaire_message = "Call a Friend already used."
+            millionaire_message = f"Hint from {friend_name} already used."
             control.text = render()
             return
         hint = _millionaire_friend_hint(q, audience_winner=audience_winner)
         millionaire_state["call_friend_used"] = True
-        used_lifelines_this_question.append("Call a Friend")
-        millionaire_message = f"{friend_name} says: {hint}"
+        used_lifelines_this_question.append(f"Hint from {friend_name}")
+        millionaire_message = f"Hint from {friend_name}: {hint}"
         control.text = render()
 
     @kb.add("D")
@@ -9253,7 +9492,8 @@ def run_debug(
             question["fixed_code"],
             student_code,
         )
-        if not grading["is_perfect"] and debug_ai_enabled:
+        submitted_without_changes = _debug_submission_unchanged(question["broken_code"], student_code)
+        if not grading["is_perfect"] and debug_ai_enabled and not submitted_without_changes:
             ai_applied = False
             ai_failure: tuple[str, str] | None = None
             for idx, provider in enumerate(provider_candidates):
@@ -9482,7 +9722,7 @@ def run(
             )
             rule_lines.append(
                 f"- Lifelines: [bold]F[/bold]=50-50, [bold]A[/bold]=Ask the People, "
-                f"[bold]C[/bold]=Ask {millionaire_friend_name} (once each)"
+                f"[bold]C[/bold]=Hint from {millionaire_friend_name} (once each)"
             )
             if millionaire_ai_enabled:
                 provider_chip = str(millionaire_ai_settings.get("provider_name") or "AI")
@@ -9786,7 +10026,7 @@ def run(
             ai_used = "used" if millionaire_state.get("ask_ai_used") else "unused"
             millionaire_lifeline_summary = (
                 f"Lifelines: [bold]50-50 {ff}[/bold], "
-                f"[bold]Ask {ap}[/bold], [bold]Ask {millionaire_friend_name} {cf}[/bold]"
+                f"[bold]Ask {ap}[/bold], [bold]Hint from {millionaire_friend_name} {cf}[/bold]"
                 + (
                     f", [bold]Ask AI {ai_used}[/bold]"
                     if millionaire_ai_enabled
@@ -9910,6 +10150,14 @@ def run_challenge(
     if not categories:
         raise RuntimeError("Challenge mode requires at least one category.")
 
+    regular_categories = [category for category in categories if not category.get("bonus")]
+    bonus_categories = [category for category in categories if category.get("bonus")]
+    if not regular_categories:
+        raise RuntimeError("Challenge mode requires at least one regular category.")
+    if len(bonus_categories) > 1:
+        raise RuntimeError("Challenge mode supports only one bonus question.")
+    categories = regular_categories + bonus_categories
+
     theme = select_theme(theme_name)
     console = Console(no_color=no_color)
     start_clean_screen(ui == "next")
@@ -9918,6 +10166,19 @@ def run_challenge(
     challenge_results: dict[int, dict] = {}
     challenge_quit = False
     challenge_quit_reason = ""
+    regular_indices = [idx for idx, category in enumerate(categories) if not category.get("bonus")]
+    bonus_indices = [idx for idx, category in enumerate(categories) if category.get("bonus")]
+    bonus_idx = bonus_indices[0] if bonus_indices else None
+    regular_total_stars = len(regular_indices) * max(CHALLENGE_STARS_BY_DIFFICULTY.values())
+    bonus_unlock_stars = math.ceil(regular_total_stars * CHALLENGE_BONUS_UNLOCK_RATIO) if bonus_idx is not None else 0
+
+    def current_regular_stars() -> int:
+        return sum(
+            item["stars_earned"]
+            for idx, item in challenge_results.items()
+            if idx in regular_indices
+        )
+
     difficulty_choices = [
         ("easy", "⭐ Easy", "Safer distractors, 1 star on correct answer."),
         ("normal", "⭐⭐ Normal", "Balanced distractors, 2 stars on correct answer."),
@@ -9949,6 +10210,11 @@ def run_challenge(
             "",
             "Press Enter to start your challenge board.",
         ]
+        if bonus_idx is not None:
+            intro_lines.insert(
+                6,
+                f"- Bonus unlocks at {bonus_unlock_stars}/{regular_total_stars} regular stars.",
+            )
         console.print(
             Panel(
                 f"[bold {theme['primary']}]Challenge Quiz: {title}[/bold {theme['primary']}]\n\n"
@@ -9958,11 +10224,12 @@ def run_challenge(
         )
         prompt_input()
 
-        while len(challenge_results) < len(categories):
+        while True:
             start_clean_screen(ui == "next")
             console.print(LOGO)
 
-            total_stars_now = sum(item["stars_earned"] for item in challenge_results.values())
+            total_stars_now = current_regular_stars()
+            bonus_unlocked = bonus_idx is not None and total_stars_now >= bonus_unlock_stars
             board = Table(show_header=True, header_style=f"bold {theme['primary']}")
             board.add_column("#", style=theme["secondary"], justify="right", width=3)
             board.add_column("Category", style=theme["primary"])
@@ -9973,7 +10240,21 @@ def run_challenge(
                 category_name = category["category"]
                 display_number = idx + 1
                 result = challenge_results.get(idx)
-                if result is None:
+                if category.get("bonus") and result is None and not bonus_unlocked:
+                    remaining_stars = max(0, bonus_unlock_stars - total_stars_now)
+                    status = f"🔒 {remaining_stars} {_challenge_stars_word(remaining_stars)} to unlock"
+                    stars_label = "🔒 (0)"
+                    display_index = str(display_number)
+                elif category.get("bonus") and result is None:
+                    status = "Unlocked"
+                    stars_label = "🎁 (0)"
+                    display_index = str(display_number)
+                    selectable[display_number] = idx
+                elif category.get("bonus"):
+                    status = "Completed"
+                    stars_label = "🎁 (0)"
+                    display_index = str(display_number)
+                elif result is None:
                     status = "Pending"
                     stars_label = "⏳ (0)"
                     display_index = str(display_number)
@@ -9988,12 +10269,20 @@ def run_challenge(
                 Panel(
                     board,
                     title=f"[bold {theme['primary']}]Category Board[/bold {theme['primary']}]",
-                    subtitle=f"[{theme['accent']}]Current stars: {total_stars_now}/{len(categories) * 3}[/{theme['accent']}]",
+                    subtitle=f"[{theme['accent']}]Current stars: {total_stars_now}/{regular_total_stars}[/{theme['accent']}]",
                     border_style=theme["panel"],
                 )
             )
 
             chosen_category_idx = None
+            regular_done = all(idx in challenge_results for idx in regular_indices)
+            bonus_done_or_unavailable = (
+                bonus_idx is None
+                or bonus_idx in challenge_results
+                or (regular_done and not bonus_unlocked)
+            )
+            if regular_done and bonus_done_or_unavailable:
+                break
             while chosen_category_idx is None:
                 raw = prompt_input("Choose a pending category number: ").strip()
                 if raw.lower() in {"q", "quit"}:
@@ -10034,42 +10323,48 @@ def run_challenge(
 
             category = categories[chosen_category_idx]
             category_name = category["category"]
+            is_bonus_question = bool(category.get("bonus"))
 
-            start_clean_screen(ui == "next")
-            console.print(LOGO)
-            difficulty_table = Table(show_header=True, header_style=f"bold {theme['primary']}")
-            difficulty_table.add_column("#", style=theme["secondary"], justify="right", width=3)
-            difficulty_table.add_column("Difficulty", style=theme["primary"])
-            difficulty_table.add_column("Risk/Reward", style=theme["accent"])
-            for idx, (_key, label, desc) in enumerate(difficulty_choices, start=1):
-                difficulty_table.add_row(str(idx), label, desc)
-            console.print(
-                Panel(
-                    difficulty_table,
-                    title=f"[bold {theme['primary']}]Category: {category_name}[/bold {theme['primary']}]",
-                    border_style=theme["panel"],
-                )
-            )
-
-            chosen_diff_key = None
-            while chosen_diff_key is None:
-                raw = prompt_input("Choose difficulty (1-3): ").strip()
-                if raw.lower() in {"q", "quit"}:
-                    challenge_quit = True
-                    challenge_quit_reason = f"Exited before answering category '{category_name}'"
-                    break
-                mapped = difficulty_aliases.get(raw.casefold())
-                if mapped:
-                    chosen_diff_key = mapped
-                else:
-                    console.print(
-                        f"[{theme['danger']}]Please choose 1/2/3 or easy/normal/hard.[/{theme['danger']}]"
+            if is_bonus_question:
+                chosen_diff_key = "bonus"
+                question = dict(category["question_data"])
+                question["title"] = f"{category_name} (Bonus)"
+            else:
+                start_clean_screen(ui == "next")
+                console.print(LOGO)
+                difficulty_table = Table(show_header=True, header_style=f"bold {theme['primary']}")
+                difficulty_table.add_column("#", style=theme["secondary"], justify="right", width=3)
+                difficulty_table.add_column("Difficulty", style=theme["primary"])
+                difficulty_table.add_column("Risk/Reward", style=theme["accent"])
+                for idx, (_key, label, desc) in enumerate(difficulty_choices, start=1):
+                    difficulty_table.add_row(str(idx), label, desc)
+                console.print(
+                    Panel(
+                        difficulty_table,
+                        title=f"[bold {theme['primary']}]Category: {category_name}[/bold {theme['primary']}]",
+                        border_style=theme["panel"],
                     )
-            if challenge_quit:
-                break
+                )
 
-            question = dict(category["difficulties"][chosen_diff_key])
-            question["title"] = f"{category_name} ({_challenge_difficulty_text(chosen_diff_key)})"
+                chosen_diff_key = None
+                while chosen_diff_key is None:
+                    raw = prompt_input("Choose difficulty (1-3): ").strip()
+                    if raw.lower() in {"q", "quit"}:
+                        challenge_quit = True
+                        challenge_quit_reason = f"Exited before answering category '{category_name}'"
+                        break
+                    mapped = difficulty_aliases.get(raw.casefold())
+                    if mapped:
+                        chosen_diff_key = mapped
+                    else:
+                        console.print(
+                            f"[{theme['danger']}]Please choose 1/2/3 or easy/normal/hard.[/{theme['danger']}]"
+                        )
+                if challenge_quit:
+                    break
+
+                question = dict(category["difficulties"][chosen_diff_key])
+                question["title"] = f"{category_name} ({_challenge_difficulty_text(chosen_diff_key)})"
             raw_limit = question.get("time_limit")
             try:
                 parsed_limit = int(raw_limit) if raw_limit is not None else 0
@@ -10096,7 +10391,7 @@ def run_challenge(
                 challenge_quit_reason = f"Exited on question in category '{category_name}'"
                 break
 
-            stars_for_diff = CHALLENGE_STARS_BY_DIFFICULTY[chosen_diff_key]
+            stars_for_diff = 0 if is_bonus_question else CHALLENGE_STARS_BY_DIFFICULTY[chosen_diff_key]
             stars_earned = stars_for_diff if grading["answer_correct"] else 0
             expected_labels = format_labels(question["options"], question["correct"])
             selected_labels = format_labels(question["options"], ans)
@@ -10112,6 +10407,7 @@ def run_challenge(
                 "question_text": question["question"],
                 "explanation": question.get("explanation", ""),
                 "result_label": "Correct" if grading["answer_correct"] else "Wrong",
+                "bonus": is_bonus_question,
             }
 
             status = "Correct" if grading["answer_correct"] else "Wrong"
@@ -10145,13 +10441,24 @@ def run_challenge(
                 )
             )
 
-            remaining = len(categories) - len(challenge_results)
+            fresh_total_stars = current_regular_stars()
+            remaining = len([idx for idx in regular_indices if idx not in challenge_results])
+            if bonus_idx is not None and bonus_idx not in challenge_results and fresh_total_stars >= bonus_unlock_stars:
+                remaining += 1
             if remaining > 0:
                 prompt_input("Press Enter to return to the category board...")
 
-        total_stars = sum(item["stars_earned"] for item in challenge_results.values())
-        correct_count = sum(1 for item in challenge_results.values() if item["is_correct"])
-        solved_levels = [item["difficulty"] for item in challenge_results.values() if item["is_correct"]]
+        total_stars = current_regular_stars()
+        correct_count = sum(
+            1
+            for idx, item in challenge_results.items()
+            if idx in regular_indices and item["is_correct"]
+        )
+        solved_levels = [
+            item["difficulty"]
+            for idx, item in challenge_results.items()
+            if idx in regular_indices and item["is_correct"]
+        ]
         if "hard" in solved_levels:
             highest_solved = "⭐⭐⭐ Hard"
         elif "normal" in solved_levels:
@@ -10163,7 +10470,7 @@ def run_challenge(
 
         ordered_results = [challenge_results[idx] for idx in sorted(challenge_results)]
         stars_rows = "\n".join(
-            f"- {item['category']}: {_challenge_star_badge(item['stars_earned'])}"
+            f"- {item['category']}: {_challenge_result_stars_label(item)}"
             for item in ordered_results
         )
         if not stars_rows:
@@ -10174,21 +10481,35 @@ def run_challenge(
                 result_line += f" ({challenge_quit_reason})"
         else:
             result_line = f"[bold {theme['success']}]Completed[/bold {theme['success']}]"
-        completion_text = f"{len(challenge_results)}/{len(categories)} categories attempted"
+        completed_regular_count = len([idx for idx in regular_indices if idx in challenge_results])
+        completion_text = f"{completed_regular_count}/{len(regular_indices)} categories attempted"
+        bonus_text = ""
+        if bonus_idx is not None:
+            if bonus_idx in challenge_results:
+                bonus_text = "\nBonus: [bold]attempted[/bold]"
+            elif total_stars >= bonus_unlock_stars:
+                bonus_text = "\nBonus: [bold]unlocked, not attempted[/bold]"
+            else:
+                missing_stars = max(0, bonus_unlock_stars - total_stars)
+                bonus_text = (
+                    f"\nBonus: [bold]locked ({missing_stars} "
+                    f"{_challenge_stars_word(missing_stars)} short)[/bold]"
+                )
         console.print(
             Panel(
                 f"[bold {theme['primary']}]Challenge Summary[/bold {theme['primary']}]\n\n"
                 f"Result: {result_line}\n"
                 f"Completion: [bold]{completion_text}[/bold]\n"
-                f"Total stars: [bold]{total_stars}/{len(categories) * 3}[/bold]\n"
-                f"Correct categories: [bold]{correct_count}/{len(categories)}[/bold]\n"
+                f"Total stars: [bold]{total_stars}/{regular_total_stars}[/bold]\n"
+                f"Correct categories: [bold]{correct_count}/{len(regular_indices)}[/bold]\n"
                 f"Highest difficulty solved: [bold]{highest_solved}[/bold]\n\n"
-                f"[bold]Stars by category[/bold]\n{stars_rows}",
+                f"[bold]Stars by category[/bold]\n{stars_rows}"
+                f"{bonus_text}",
                 border_style=theme["panel"],
             )
         )
-        perfect_total_stars = len(categories) * 3
-        if correct_count == len(categories) and total_stars == perfect_total_stars:
+        perfect_total_stars = regular_total_stars
+        if correct_count == len(regular_indices) and total_stars == perfect_total_stars:
             confetti = " *ੈ✩‧₊˚༘˚⋆𐙚｡⋆𖦹.✧˚ "
             console.print(
                 Panel(
@@ -10222,6 +10543,7 @@ def run_chaos(
     theme_name: str = "auto",
     no_color: bool = False,
     ui: str = "classic",
+    full_screen: bool = False,
 ):
     try:
         from rich.console import Console
@@ -10302,7 +10624,7 @@ def run_chaos(
                     total_questions=total_steps,
                     no_color=no_color,
                     compact=False,
-                    full_screen=False,
+                    full_screen=full_screen,
                     ui=ui,
                     show_feedback=False,
                     quiz_mode="chaos",
@@ -10327,7 +10649,12 @@ def run_chaos(
                 return item["text"]
         return label
 
+    def wait_to_reveal_chaos_screen() -> None:
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            prompt_input("Press Enter to see what happened.")
+
     def show_chaos_event_transition(selected_text: str) -> None:
+        _ = selected_text
         panel_body = "Oh no...\nA chaos event was triggered."
         console.print(
             Panel(
@@ -10336,19 +10663,6 @@ def run_chaos(
                 border_style=theme["danger"],
             )
         )
-        if sys.stdin.isatty() and sys.stdout.isatty():
-            prompt_input("Press Enter to see what happened.")
-
-    def show_next_stage_transition(
-        *,
-        title: str,
-        subtitle: str,
-        badge_frames: list[str],
-        prompt: str,
-    ) -> None:
-        _ = (title, subtitle, badge_frames)
-        if sys.stdin.isatty() and sys.stdout.isatty():
-            prompt_input(prompt)
 
     def result_band(score_value: int) -> str:
         for tier in chaos["result"]["tiers"]:
@@ -10405,6 +10719,7 @@ def run_chaos(
             decision_status_plain = "Risky decision."
         path_taken_steps.append(f"[Chaos {choice_1}]")
 
+        wait_to_reveal_chaos_screen()
         decision_status_style = theme["success"] if choice_1 == decision["answer"] else theme["danger"]
         console.print(f"[{decision_status_style}]{decision_status_plain}[/{decision_status_style}]")
         show_chaos_event_transition(decision_text)
@@ -10447,18 +10762,9 @@ def run_chaos(
                 append_selection_history("Recovery", recovery_text, False, 0)
                 recovery_status_plain = "Recovery missed."
 
+            wait_to_reveal_chaos_screen()
             recovery_status_style = theme["success"] if recovery_choice == recovery["answer"] else theme["danger"]
             console.print(f"[{recovery_status_style}]{recovery_status_plain}[/{recovery_status_style}]")
-            show_next_stage_transition(
-                title="Recovery phase complete.",
-                subtitle="New evidence is ready for your final decision.",
-                badge_frames=[
-                    ">> NEW EVIDENCE UNLOCKED <<",
-                    "> > NEW EVIDENCE UNLOCKED < <",
-                    ">> NEW EVIDENCE UNLOCKED <<",
-                ],
-                prompt="Press Enter to see the final decision.",
-            )
             console.print(Markdown(path["feedback"]))
 
             final_decision = chaos["final_decision"]
@@ -10498,6 +10804,7 @@ def run_chaos(
                     append_selection_history("Final", final_text, False, 0)
                     final_status = f"[{theme['danger']}]Final decision is incorrect.[/{theme['danger']}]"
 
+                wait_to_reveal_chaos_screen()
                 console.print("")
                 console.print(
                     Panel(
@@ -10643,7 +10950,7 @@ def run_essay(
                 instructions=instructions,
                 hint_text=hint_text,
                 theme=theme,
-                use_fullscreen_box=False,
+                use_fullscreen_box=True,
                 show_intro=False,
             )
             answer_heading = f"[bold {theme['primary']}]Your answer[/bold {theme['primary']}]"
@@ -10975,7 +11282,7 @@ def main():
         )
         room_parser.add_argument(
             "--mode",
-            choices=["compete", "collaborate"],
+            choices=["compete", "collaborate", "eliminate"],
             default="",
             help="Room mode for create. If omitted, choose interactively.",
         )
@@ -11005,6 +11312,12 @@ def main():
             "--full-screen",
             action="store_true",
             help="Render room questions in full-screen mode.",
+        )
+        room_parser.add_argument(
+            "--ui",
+            choices=UI_CHOICES,
+            default="next",
+            help="Question UI for room play.",
         )
         args = room_parser.parse_args(raw_args[1:])
         try:
@@ -11100,11 +11413,12 @@ def main():
             print(f"quizmd {hello_essay}")
         if hello_quiz:
             print("")
-            print("Room modes (online):")
+            print("Room types (online):")
             print(f"quizmd room --create --mode compete --quiz {hello_quiz}")
             print(f"quizmd room --create --mode collaborate --quiz {hello_quiz}")
+            print(f"quizmd room --create --mode eliminate --quiz {hello_quiz}")
             print("quizmd room --join <room-name> [--token <room-token>]")
-            print("Room quiz requirement: Time/time_limit must be >= 5 seconds for online modes.")
+            print("Room quiz requirement: Time/time_limit must be >= 5 seconds for online room types.")
             print("")
             print("Game modes:")
             print("quizmd alien-attack")
@@ -11116,7 +11430,7 @@ def main():
         "      Create starter files (hello-quiz.md, hello-imposter.md, hello-debug.md, hello-challenge.md, hello-reverse.md, hello-millionaire.md, hello-chaos.md, hello-essay.md).\n"
         "  quizmd room --create [ROOM_NAME] [options]\n"
         "  quizmd room --join ROOM_NAME [--token ROOM_TOKEN] [options]\n"
-        "      Multiplayer modes: compete, collaborate.\n"
+        "      Multiplayer modes: compete, collaborate, eliminate.\n"
         "  quizmd alien-attack [--mode {single,double,triple}] [--difficulty {normal,hard,inferno}]\n"
         "      Play the Alien Attack terminal game.\n"
         "\n"
@@ -11244,9 +11558,16 @@ def main():
                 )
             )
         elif mode == "challenge":
+            regular_count = len([item for item in challenge_categories if not item.get("bonus")])
+            bonus_count = len([item for item in challenge_categories if item.get("bonus")])
+            challenge_count_text = (
+                f"{regular_count} categories + bonus"
+                if bonus_count
+                else f"{regular_count} categories"
+            )
             print(
                 safe_for_stream(
-                    f"Validation passed: Challenge Quiz: {title} ({len(challenge_categories)} categories)",
+                    f"Validation passed: Challenge Quiz: {title} ({challenge_count_text})",
                     sys.stdout,
                 )
             )
@@ -11274,6 +11595,7 @@ def main():
                 theme_name=args.theme,
                 no_color=no_color,
                 ui=args.ui,
+                full_screen=args.full_screen,
             )
         elif mode == "challenge":
             run_challenge(

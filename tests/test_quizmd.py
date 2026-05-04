@@ -31,6 +31,7 @@ from quizmd import (
     _room_configured_servers,
     _room_create_request,
     _room_default_server,
+    _room_final_scoreboard,
     _room_final_podium,
     _room_load_quiz_payload,
     _room_player_label,
@@ -47,6 +48,7 @@ from quizmd import (
     _room_server_online,
     _room_supported_modes,
     _run_room_waiting_loop,
+    _space_selector_markup,
     _default_model_for_provider,
     _available_ai_providers_by_priority,
     _format_yes_no_prompt,
@@ -54,6 +56,7 @@ from quizmd import (
     _debug_changed_line_numbers,
     _debug_missing_key_hint,
     _debug_model_for_provider,
+    _debug_submission_unchanged,
     _apply_debug_ai_override,
     _debug_evaluator_for_provider,
     _score_debug_submission,
@@ -68,6 +71,7 @@ from quizmd import (
     _reason_code_from_provider_exception,
     _select_debug_ai_candidates,
     _millionaire_5050_hidden_indexes,
+    _millionaire_audience_bar_message,
     _millionaire_audience_percentages,
     _millionaire_ai_loading_message,
     _millionaire_ask_ai_hint,
@@ -793,6 +797,20 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertGreater(correct_winner_early, 105)  # very strong bias early
         self.assertLess(correct_winner_late, 70)       # much weaker signal late
 
+    def test_millionaire_audience_bar_message_is_compact(self):
+        message = _millionaire_audience_bar_message(
+            {1: 3, 2: 4, 3: 92, 4: 1},
+            3,
+            4,
+            no_color=True,
+        )
+        self.assertIn("Audience:", message)
+        self.assertIn("1 #..... 3%", message)
+        self.assertIn("3 ###### 92%", message)
+        self.assertIn("Most votes: option 3.", message)
+        self.assertNotIn("Audience vote ->", message)
+        self.assertLessEqual(len(message.splitlines()), 2)
+
     def test_millionaire_friend_hint_uses_hint_then_explanation(self):
         self.assertEqual(
             _millionaire_friend_hint({"hint": "Watch out for the edge case.", "explanation": "Fallback."}),
@@ -1024,6 +1042,115 @@ class QuizMarkdownTests(unittest.TestCase):
         finally:
             Path(challenge_path).unlink(missing_ok=True)
 
+    def test_parse_challenge_markdown_accepts_locked_bonus_question(self):
+        challenge_path = self.write_quiz(
+            "# Challenge Quiz: Risk Mode\n\n"
+            "## Category: Complexity\n"
+            "What is complexity?\n\n"
+            "### Easy\n"
+            "- O(n)\n"
+            "- O(n^2)\n"
+            "Answer: 2\n"
+            "Type: single\n\n"
+            "### Normal\n"
+            "- O(n^2)\n"
+            "- O(n log n)\n"
+            "Answer: 1\n"
+            "Type: single\n\n"
+            "### Hard\n"
+            "- O(n^2)\n"
+            "- O(n^2 + n)\n"
+            "Answer: 1\n"
+            "Type: single\n\n"
+            "## Bonus: Final Sprint\n"
+            "What unlocks this bonus?\n"
+            "- Any score\n"
+            "- 75% of regular stars\n"
+            "Answer: 2\n"
+            "Type: single\n"
+            "Time: 30\n"
+            "Explanation: Bonus unlocks after 75%.\n"
+        )
+        try:
+            title, categories = parse_challenge_markdown(challenge_path)
+            self.assertEqual(title, "Risk Mode")
+            self.assertEqual(len(categories), 2)
+            self.assertFalse(categories[0].get("bonus", False))
+            self.assertTrue(categories[1]["bonus"])
+            self.assertEqual(categories[1]["category"], "Final Sprint")
+            self.assertEqual(categories[1]["question_data"]["correct"], [2])
+            self.assertEqual(categories[1]["question_data"]["time_limit"], 30)
+        finally:
+            Path(challenge_path).unlink(missing_ok=True)
+
+    def test_parse_challenge_markdown_keeps_bonus_at_bottom(self):
+        challenge_path = self.write_quiz(
+            "# Challenge Quiz: Risk Mode\n\n"
+            "## Bonus: Final Sprint\n"
+            "What unlocks this bonus?\n"
+            "- Any score\n"
+            "- 75% of regular stars\n"
+            "Answer: 2\n"
+            "Type: single\n\n"
+            "## Category: Complexity\n"
+            "What is complexity?\n\n"
+            "### Easy\n"
+            "- O(n)\n"
+            "- O(n^2)\n"
+            "Answer: 2\n"
+            "Type: single\n\n"
+            "### Normal\n"
+            "- O(n^2)\n"
+            "- O(n log n)\n"
+            "Answer: 1\n"
+            "Type: single\n\n"
+            "### Hard\n"
+            "- O(n^2)\n"
+            "- O(n^2 + n)\n"
+            "Answer: 1\n"
+            "Type: single\n"
+        )
+        try:
+            _title, categories = parse_challenge_markdown(challenge_path)
+            self.assertEqual([item["category"] for item in categories], ["Complexity", "Final Sprint"])
+            self.assertFalse(categories[0].get("bonus", False))
+            self.assertTrue(categories[1].get("bonus", False))
+        finally:
+            Path(challenge_path).unlink(missing_ok=True)
+
+    def test_parse_challenge_markdown_rejects_empty_bonus_name_cleanly(self):
+        challenge_path = self.write_quiz(
+            "# Challenge Quiz: Risk Mode\n\n"
+            "## Category: Complexity\n"
+            "What is complexity?\n\n"
+            "### Easy\n"
+            "- O(n)\n"
+            "- O(n^2)\n"
+            "Answer: 2\n"
+            "Type: single\n\n"
+            "### Normal\n"
+            "- O(n^2)\n"
+            "- O(n log n)\n"
+            "Answer: 1\n"
+            "Type: single\n\n"
+            "### Hard\n"
+            "- O(n^2)\n"
+            "- O(n^2 + n)\n"
+            "Answer: 1\n"
+            "Type: single\n\n"
+            "## Bonus:\n"
+            "What unlocks this bonus?\n"
+            "- Any score\n"
+            "- 75% of regular stars\n"
+            "Answer: 2\n"
+            "Type: single\n"
+        )
+        try:
+            with self.assertRaisesRegex(ValueError, "bonus name cannot be empty"):
+                parse_challenge_markdown(challenge_path)
+        finally:
+            Path(challenge_path).unlink(missing_ok=True)
+
     def test_parse_challenge_markdown_accepts_lowercase_header(self):
         challenge_path = self.write_quiz(
             "# challenge quiz: Risk Mode\n\n"
@@ -1245,6 +1372,12 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(grading["question_max_points"], 2)
         self.assertFalse(grading["is_perfect"])
 
+    def test_debug_submission_unchanged_ignores_trailing_blank_lines(self):
+        broken = "def greet(name)\n    print(name\n"
+        student = "def greet(name)\n    print(name\n\n"
+        self.assertTrue(_debug_submission_unchanged(broken, student))
+        self.assertFalse(_debug_submission_unchanged(broken, "def greet(name):\n    print(name\n"))
+
     def test_debug_scoring_accepts_python_ast_equivalent_fix(self):
         broken = "x == 0\nprint(x)\n"
         fixed = "x = 0\nprint(x)\n"
@@ -1384,6 +1517,43 @@ class QuizMarkdownTests(unittest.TestCase):
                                 run_debug("Debug Quiz", questions, no_color=True)
         mocked_save_debug_attempt.assert_called_once()
 
+    def test_run_debug_skips_ai_when_submission_is_unchanged(self):
+        questions = [
+            {
+                "title": "Question 1",
+                "prompt": "Fix it.",
+                "type": "debug",
+                "question_text": "Fix it.",
+                "broken_code": "def greet(name)\n    print(name\n",
+                "fixed_code": "def greet(name):\n    print(name)\n",
+                "hint": "",
+                "explanation": "Add punctuation.",
+                "changed_lines": [1, 2],
+            }
+        ]
+        class TTYBuffer(io.StringIO):
+            def isatty(self):
+                return True
+
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=True):
+            with patch.object(sys.stdin, "isatty", return_value=True):
+                with patch("quizmd.prompt_input", return_value=""):
+                    with patch(
+                        "quizmd.collect_debug_fix_inline_box",
+                        return_value=(questions[0]["broken_code"] + "\n", False),
+                    ):
+                        with patch("quizmd.ask_to_save_answers", return_value=False):
+                            with patch("quizmd._evaluate_with_loading_message") as mocked_ai:
+                                buf = TTYBuffer()
+                                with contextlib.redirect_stdout(buf):
+                                    run_debug("Debug Quiz", questions, no_color=True, ai_provider="gemini")
+
+        output = buf.getvalue()
+        mocked_ai.assert_not_called()
+        self.assertIn("Question points:", output)
+        self.assertIn("0/2", output)
+        self.assertNotIn("AI review note:", output)
+
     def test_run_challenge_scores_stars_and_locks_categories(self):
         categories = [
             {
@@ -1488,6 +1658,144 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("Total stars:", out)
         self.assertIn("3/6", out)
         self.assertIn("Correct categories:", out)
+
+    def test_run_challenge_unlocks_bonus_after_seventy_five_percent_stars(self):
+        categories = [
+            {
+                "category": "Complexity",
+                "question": "What is O(n^2)?",
+                "difficulties": {
+                    key: {
+                        "title": f"Complexity [{key.title()}]",
+                        "question": "What is O(n^2)?",
+                        "options": ["A", "B"],
+                        "correct": [1],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "Explanation",
+                        "imposters": [],
+                    }
+                    for key in ("easy", "normal", "hard")
+                },
+            },
+            {
+                "category": "Data Structures",
+                "question": "Which has O(1) lookup?",
+                "difficulties": {
+                    key: {
+                        "title": f"Data Structures [{key.title()}]",
+                        "question": "Which has O(1) lookup?",
+                        "options": ["dict", "list"],
+                        "correct": [1],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "Explanation",
+                        "imposters": [],
+                    }
+                    for key in ("easy", "normal", "hard")
+                },
+            },
+            {
+                "category": "Final Sprint",
+                "question": "Bonus?",
+                "bonus": True,
+                "question_data": {
+                    "title": "Final Sprint",
+                    "question": "Bonus?",
+                    "options": ["A", "B"],
+                    "correct": [1],
+                    "type": "single",
+                    "time_limit": None,
+                    "explanation": "Bonus explanation",
+                    "imposters": [],
+                },
+            },
+        ]
+
+        prompt_sequence = ["", "1", "3", "", "2", "3", "", "3"]
+        grading_sequence = [
+            (True, [1], [], {"answer_correct": True, "question_points": 1, "question_max_points": 1}),
+            (True, [1], [], {"answer_correct": True, "question_points": 1, "question_max_points": 1}),
+            (True, [1], [], {"answer_correct": True, "question_points": 1, "question_max_points": 1}),
+        ]
+        grading_iter = iter(grading_sequence)
+
+        def fake_run_coroutine(coro):
+            try:
+                coro.close()
+            except Exception:
+                pass
+            return next(grading_iter)
+
+        with patch("quizmd.prompt_input", side_effect=prompt_sequence):
+            with patch("quizmd.run_coroutine_sync", side_effect=fake_run_coroutine):
+                with patch("quizmd.ask_to_save_answers", return_value=False):
+                    buf = io.StringIO()
+                    with contextlib.redirect_stdout(buf):
+                        run_challenge("Risk Mode", categories, no_color=True, show_feedback=True)
+        out = buf.getvalue()
+        self.assertIn("Bonus unlocks at 5/6 regular stars.", out)
+        self.assertIn("🔒 5 stars to unlock", out)
+        self.assertIn("🔒 2 stars to unlock", out)
+        self.assertIn("Unlocked", out)
+        self.assertIn("Bonus: attempted", out)
+        self.assertIn("Total stars:", out)
+        self.assertIn("6/6", out)
+        self.assertIn("Final Sprint: 🎁 (bonus)", out)
+
+    def test_run_challenge_rejects_multiple_bonus_questions(self):
+        categories = [
+            {
+                "category": "Complexity",
+                "question": "What is complexity?",
+                "difficulties": {
+                    key: {
+                        "title": f"Complexity [{key.title()}]",
+                        "question": "What is complexity?",
+                        "options": ["A", "B"],
+                        "correct": [1],
+                        "type": "single",
+                        "time_limit": None,
+                        "explanation": "",
+                        "imposters": [],
+                    }
+                    for key in ("easy", "normal", "hard")
+                },
+            },
+            {
+                "category": "Final Sprint",
+                "question": "Bonus?",
+                "bonus": True,
+                "question_data": {
+                    "title": "Final Sprint",
+                    "question": "Bonus?",
+                    "options": ["A", "B"],
+                    "correct": [1],
+                    "type": "single",
+                    "time_limit": None,
+                    "explanation": "",
+                    "imposters": [],
+                },
+            },
+            {
+                "category": "Final Sprint 2",
+                "question": "Bonus 2?",
+                "bonus": True,
+                "question_data": {
+                    "title": "Final Sprint 2",
+                    "question": "Bonus 2?",
+                    "options": ["A", "B"],
+                    "correct": [1],
+                    "type": "single",
+                    "time_limit": None,
+                    "explanation": "",
+                    "imposters": [],
+                },
+            },
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, "one bonus"):
+            run_challenge("Risk Mode", categories, no_color=True)
 
     def test_run_challenge_accepts_text_category_and_difficulty_choices(self):
         categories = [
@@ -1719,6 +2027,27 @@ class QuizMarkdownTests(unittest.TestCase):
             self.assertIn("Chaos Result", out)
             self.assertIn("Score: 10/10", out)
             self.assertIn("Excellent.", out)
+        finally:
+            Path(chaos_path).unlink(missing_ok=True)
+
+    def test_run_chaos_forwards_full_screen_to_question_renderer(self):
+        chaos_path = self.write_valid_chaos()
+        try:
+            title, payload = parse_chaos_markdown(chaos_path)
+            captured_kwargs = []
+
+            async def fake_ask_question(*_args, **kwargs):
+                captured_kwargs.append(kwargs)
+                return (True, [1], [], {"answer_correct": True, "question_points": 1, "question_max_points": 1, "quit_requested": False})
+
+            with patch("quizmd.ask_question", side_effect=fake_ask_question):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    run_chaos(title, payload, no_color=True, full_screen=True)
+
+            self.assertEqual(len(captured_kwargs), 3)
+            self.assertTrue(all(kwargs["full_screen"] for kwargs in captured_kwargs))
+            self.assertTrue(all(kwargs["show_feedback"] is False for kwargs in captured_kwargs))
         finally:
             Path(chaos_path).unlink(missing_ok=True)
 
@@ -2499,6 +2828,8 @@ class QuizMarkdownTests(unittest.TestCase):
             kwargs["hint_text"],
             "🤔 Hint: Focus on the key points your instructor expects.",
         )
+        self.assertTrue(kwargs["use_fullscreen_box"])
+        self.assertFalse(kwargs["show_intro"])
         self.assertIn("theme", kwargs)
         mocked_editor.assert_not_called()
 
@@ -3479,6 +3810,32 @@ class QuizMarkdownTests(unittest.TestCase):
     def test_quiz_theme_uses_soft_marked_answer_green(self):
         self.assertEqual(THEMES["dark"]["pt_marked_bg"], "#4f7f68")
         self.assertEqual(THEMES["light"]["pt_marked_bg"], "#4f7f68")
+        self.assertEqual(THEMES["dark"]["pt_focus_bg"], "#3f6f7a")
+        self.assertEqual(THEMES["light"]["pt_focus_bg"], "#3f6f7a")
+
+    def test_space_selector_markup_marks_highlighted_row_as_choice(self):
+        markup = _space_selector_markup(
+            "Mode:",
+            [("Compete", "compete"), ("Collaborate", "collaborate")],
+            selected=1,
+            theme=THEMES["dark"],
+            no_color=False,
+        )
+        self.assertIn("bg='#3f6f7a'", markup)
+        self.assertIn("&gt; [x] Collaborate", markup)
+        self.assertIn("  [ ] Compete", markup)
+
+    def test_space_selector_markup_no_color_has_no_prompt_html(self):
+        text = _space_selector_markup(
+            "Mode:",
+            [("Compete", "compete"), ("Collaborate", "collaborate")],
+            selected=1,
+            theme=THEMES["dark"],
+            no_color=True,
+        )
+        self.assertNotIn("<style", text)
+        self.assertIn("> [x] Collaborate", text)
+        self.assertIn("  [ ] Compete", text)
 
     def test_no_color_detection_from_cli_or_env(self):
         self.assertTrue(is_no_color_requested(True))
@@ -4418,7 +4775,8 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("Lifelines", out)
         self.assertIn("F", out)
         self.assertIn("Ask the People", out)
-        self.assertIn("Ask Friend", out)
+        self.assertIn("Hint from Friend", out)
+        self.assertNotIn("Ask Friend", out)
         self.assertIn("Q", out)
         self.assertIn("quit with", out)
         self.assertIn("current points", out)
@@ -4474,6 +4832,8 @@ class QuizMarkdownTests(unittest.TestCase):
         out = buf.getvalue()
         self.assertIn("D", out)
         self.assertIn("Ask AI", out)
+        self.assertIn("Hint from Stelios", out)
+        self.assertNotIn("Ask Stelios", out)
 
     def test_run_millionaire_rules_hide_ai_lifeline_when_no_key(self):
         questions = [
@@ -5054,6 +5414,16 @@ class QuizMarkdownTests(unittest.TestCase):
         finally:
             Path(chaos_path).unlink(missing_ok=True)
 
+    def test_main_full_screen_flag_routes_to_chaos_runner(self):
+        chaos_path = self.write_valid_chaos()
+        try:
+            with patch("sys.argv", ["quizmd.py", "--full-screen", chaos_path]):
+                with patch("quizmd.run_chaos") as mocked_run_chaos:
+                    main()
+            self.assertTrue(mocked_run_chaos.call_args.kwargs["full_screen"])
+        finally:
+            Path(chaos_path).unlink(missing_ok=True)
+
     def test_main_routes_to_reverse_runner(self):
         reverse_path = self.write_quiz(
             "# Reverse Quiz: Behavior to Code\n\n"
@@ -5134,9 +5504,11 @@ class QuizMarkdownTests(unittest.TestCase):
                 _millionaire_title, millionaire_questions = parse_millionaire_markdown("hello-millionaire.md")
                 _chaos_title, chaos_payload = parse_chaos_markdown("hello-chaos.md")
                 self.assertEqual(
-                    [item["category"] for item in challenge_categories],
+                    [item["category"] for item in challenge_categories if not item.get("bonus")],
                     ["Geography", "Literature", "Science", "Athletics", "History", "Lifestyle"],
                 )
+                bonus_categories = [item for item in challenge_categories if item.get("bonus")]
+                self.assertEqual([item["category"] for item in bonus_categories], ["Final Sprint"])
                 self.assertEqual(_reverse_title, "Python Reverse Engineering")
                 self.assertEqual(len(reverse_questions), 5)
                 self.assertEqual(len(millionaire_questions), 15)
@@ -5234,13 +5606,15 @@ class QuizMarkdownTests(unittest.TestCase):
                 self.assertTrue(Path("QUIZ_GUIDE.md").exists())
                 self.assertIn("Try it out", out)
                 self.assertIn("Getting started", out)
-                self.assertIn("quizmd hello-quiz.md", out)
+                self.assertIn("Example quizzes are in the quizzes folder.", out)
+                self.assertIn("quizmd quizzes/harry-potter-quiz.md", out)
                 self.assertNotIn("quizmd --validate hello-debug.md", out)
                 self.assertIn("Documentation:", out)
                 self.assertIn("https://steliosot.github.io/quizmd-docs/", out)
-                self.assertIn("Room modes", out)
+                self.assertIn("Room types", out)
                 self.assertIn("Compete", out)
                 self.assertIn("Collaborate", out)
+                self.assertIn("Eliminate", out)
                 self.assertNotIn("Boxing", out)
                 self.assertIn("Game modes", out)
                 self.assertIn("Alien Attack", out)
@@ -5260,7 +5634,7 @@ class QuizMarkdownTests(unittest.TestCase):
                 self.assertIn("Decision tree + recovery", out)
                 self.assertLessEqual(max(len(line) for line in out.splitlines()), 120)
                 self.assertNotIn("Next steps:", out)
-                self.assertNotIn("Room modes (online):", out)
+                self.assertNotIn("Room types (online):", out)
             finally:
                 os.chdir(old_cwd)
 
@@ -5365,7 +5739,7 @@ class QuizMarkdownTests(unittest.TestCase):
             "openapi": "3.1.0",
             "components": {
                 "schemas": {
-                    "Mode": {"type": "string", "enum": ["compete", "collaborate"]},
+                    "Mode": {"type": "string", "enum": ["compete", "collaborate", "eliminate"]},
                     "CreateRoomRequest": {
                         "type": "object",
                         "properties": {"mode": {"$ref": "#/components/schemas/Mode"}},
@@ -5376,7 +5750,7 @@ class QuizMarkdownTests(unittest.TestCase):
         with patch("quizmd._room_get_json", return_value=openapi_payload):
             self.assertEqual(
                 _room_supported_modes("https://quizmd-server.example"),
-                {"compete", "collaborate"},
+                {"compete", "collaborate", "eliminate"},
             )
 
     def test_room_supported_modes_returns_none_when_openapi_unavailable(self):
@@ -5428,7 +5802,7 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(title, "Python Basics Beta (5Q)")
         self.assertEqual(len(questions), 5)
 
-    def test_room_connected_players_keeps_roles(self):
+    def test_room_connected_players_ignores_legacy_role_labels(self):
         payload = {
             "players": [
                 {"name": "Mary", "role": "student", "connected": True},
@@ -5438,7 +5812,7 @@ class QuizMarkdownTests(unittest.TestCase):
         }
         rows = _room_connected_players(payload)
         self.assertEqual(rows, [{"name": "Mary", "role": "student"}, {"name": "Tim", "role": "teacher"}])
-        self.assertEqual(_room_player_label("Mary", "student"), "Mary (student)")
+        self.assertEqual(_room_player_label("Mary", "student"), "Mary")
         self.assertEqual(_room_player_label("Alex", "participant"), "Alex")
 
     def test_save_room_session_transcript_outputs_json(self):
@@ -5466,7 +5840,7 @@ class QuizMarkdownTests(unittest.TestCase):
                 os.chdir(old_cwd)
 
     def test_run_room_create_modes_start_with_logo_and_instructions(self):
-        for mode in ("compete", "collaborate"):
+        for mode in ("compete", "collaborate", "eliminate"):
             with self.subTest(mode=mode):
                 args = argparse.Namespace(
                     create="__AUTO__",
@@ -5492,12 +5866,15 @@ class QuizMarkdownTests(unittest.TestCase):
                     "mode": mode,
                     "host_role": "",
                 }
-                with patch("quizmd._room_supported_modes", return_value={"compete", "collaborate"}):
+                with patch("quizmd._room_supported_modes", return_value={"compete", "collaborate", "eliminate"}):
                     with patch("quizmd._room_load_quiz_payload", return_value=("Sample", [{"question": "q"}])):
                         with patch("quizmd._room_generate_name", return_value="berlin-elephant-1"):
                             with patch("quizmd._room_create_request", return_value=created):
                                 with patch("quizmd._room_ensure_server_ready", return_value=None):
-                                    with patch("quizmd._run_room_waiting_loop", new=AsyncMock(return_value=0)):
+                                    with patch(
+                                        "quizmd._run_room_waiting_loop",
+                                        new=AsyncMock(return_value=0),
+                                    ) as mocked_wait:
                                         with patch("quizmd.start_clean_screen") as mocked_clean:
                                             buf = io.StringIO()
                                             with contextlib.redirect_stdout(buf):
@@ -5512,6 +5889,7 @@ class QuizMarkdownTests(unittest.TestCase):
                 self.assertIn("Quiz: Sample", out)
                 self.assertIn("Join command:", out)
                 self.assertIn('--name "tom"', out)
+                self.assertEqual(mocked_wait.call_args.kwargs["ui"], "next")
 
     def test_main_room_keyboard_interrupt_shows_friendly_exit(self):
         with patch("sys.argv", ["quizmd.py", "room", "--create", "--no-color"]):
@@ -5728,6 +6106,51 @@ class QuizMarkdownTests(unittest.TestCase):
                     questions=[{"question": "Ready?", "options": ["No", "Yes"], "correct": [2]}],
                 )
 
+    def test_room_create_request_has_friendly_auto_advance_legacy_error(self):
+        with patch(
+            "quizmd._room_post_json",
+            side_effect=RuntimeError("Request failed: 422 body.advance_mode: Extra inputs are not permitted"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "too old to support auto-advance settings"):
+                _room_create_request(
+                    server="https://quizmd-server.example",
+                    mode="compete",
+                    advance_mode="auto",
+                    room_name="berlin-elephant",
+                    host_name="Mary",
+                    token_required=False,
+                    quiz_title="Sample",
+                    questions=[{"question": "Ready?", "options": ["No", "Yes"], "correct": [2]}],
+                )
+
+    def test_run_room_command_create_has_friendly_auto_advance_legacy_error(self):
+        args = argparse.Namespace(
+            create="stelios-room-manual",
+            join=None,
+            name="Mary",
+            token="",
+            server="http://127.0.0.1:8011",
+            mode="compete",
+            quiz="hello-quiz.md",
+            theme="auto",
+            no_color=True,
+            full_screen=False,
+            role="",
+            require_token=False,
+            no_token=True,
+            advance="auto",
+            ui="next",
+        )
+        with patch("quizmd._room_supported_modes", return_value={"compete", "collaborate", "eliminate"}):
+            with patch("quizmd._room_load_quiz_payload", return_value=("Sample", [{"question": "q"}])):
+                with patch("quizmd._room_ensure_server_ready", return_value=None):
+                    with patch(
+                        "quizmd._room_create_request",
+                        side_effect=RuntimeError("Request failed: 422 body.advance_mode: Extra inputs are not permitted"),
+                    ):
+                        with self.assertRaisesRegex(RuntimeError, "too old to support auto-advance settings"):
+                            run_room_command(args)
+
     def test_run_room_command_create_without_quiz_prints_tip(self):
         args = argparse.Namespace(
             create="__AUTO__",
@@ -5821,10 +6244,9 @@ class QuizMarkdownTests(unittest.TestCase):
                     with patch("quizmd._run_room_waiting_loop", new=AsyncMock(return_value=0)):
                         result = run_room_command(args)
         self.assertEqual(result, 0)
-        self.assertEqual(mocked_join.call_args.kwargs["role"], "")
         self.assertEqual(mocked_join.call_args.kwargs["room_token"], "tok_12345678")
 
-    def test_run_room_command_join_retries_without_role_on_legacy_server(self):
+    def test_run_room_command_join_never_sends_legacy_role(self):
         args = argparse.Namespace(
             create=None,
             join="berlin-elephant-1",
@@ -5848,21 +6270,14 @@ class QuizMarkdownTests(unittest.TestCase):
             "mode": "compete",
             "player_role": "participant",
         }
-        side_effects = [
-            RuntimeError("Request failed: 422 body.role: Extra inputs are not permitted"),
-            joined,
-        ]
         with patch("quizmd._room_info_request", return_value={}):
-            with patch("quizmd._room_join_by_name_request", side_effect=side_effects) as mocked_join:
+            with patch("quizmd._room_join_by_name_request", return_value=joined) as mocked_join:
                 with patch("quizmd._room_ensure_server_ready", return_value=None):
                     with patch("quizmd._run_room_waiting_loop", new=AsyncMock(return_value=0)):
                         result = run_room_command(args)
         self.assertEqual(result, 0)
-        self.assertEqual(mocked_join.call_count, 2)
-        self.assertEqual(mocked_join.call_args_list[0].kwargs["role"], "student")
-        self.assertEqual(mocked_join.call_args_list[0].kwargs["room_token"], "tok_12345678")
-        self.assertEqual(mocked_join.call_args_list[1].kwargs["role"], "")
-        self.assertEqual(mocked_join.call_args_list[1].kwargs["room_token"], "tok_12345678")
+        self.assertEqual(mocked_join.call_count, 1)
+        self.assertEqual(mocked_join.call_args.kwargs["room_token"], "tok_12345678")
 
     def test_run_room_command_join_prompts_for_token_when_required(self):
         args = argparse.Namespace(
@@ -5935,6 +6350,61 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(mocked_join.call_count, 2)
         self.assertEqual(mocked_join.call_args_list[0].kwargs["room_token"], "")
         self.assertEqual(mocked_join.call_args_list[1].kwargs["room_token"], "secure_token_123")
+
+    def test_run_room_command_join_missing_room_fails_before_name_prompt(self):
+        args = argparse.Namespace(
+            create=None,
+            join="missing-room",
+            name="",
+            token="",
+            server="http://127.0.0.1:8011",
+            mode="",
+            quiz="",
+            theme="auto",
+            no_color=True,
+            full_screen=False,
+            role="",
+        )
+        with patch("quizmd._room_ensure_server_ready", return_value=None):
+            with patch(
+                "quizmd._room_info_request",
+                side_effect=RuntimeError("Request failed: 404 Room not found"),
+            ):
+                with patch("quizmd.prompt_input") as mocked_prompt:
+                    with patch("quizmd._room_join_by_name_request") as mocked_join:
+                        with self.assertRaisesRegex(
+                            RuntimeError,
+                            'Room "missing-room" was not found. Check the room name',
+                        ):
+                            run_room_command(args)
+        mocked_prompt.assert_not_called()
+        mocked_join.assert_not_called()
+
+    def test_run_room_command_join_missing_room_has_friendly_join_error(self):
+        args = argparse.Namespace(
+            create=None,
+            join="missing-room",
+            name="Stelios",
+            token="",
+            server="http://127.0.0.1:8011",
+            mode="",
+            quiz="",
+            theme="auto",
+            no_color=True,
+            full_screen=False,
+            role="",
+        )
+        with patch("quizmd._room_ensure_server_ready", return_value=None):
+            with patch("quizmd._room_info_request", return_value={}):
+                with patch(
+                    "quizmd._room_join_by_name_request",
+                    side_effect=RuntimeError("Request failed: 404 Room not found"),
+                ):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        'Room "missing-room" was not found. Check the room name',
+                    ):
+                        run_room_command(args)
 
     def test_run_room_command_server_unavailable_friendly_error(self):
         args = argparse.Namespace(
@@ -6142,6 +6612,7 @@ class QuizMarkdownTests(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         self.assertEqual(mocked_ask.call_args.kwargs["show_feedback"], False)
+        self.assertEqual(mocked_ask.call_args.kwargs["ui"], "next")
         self.assertIn("submit_answer", fake_ws.sent_types)
 
     def test_room_waiting_loop_prints_answer_progress_once(self):
@@ -6638,6 +7109,86 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(out.count("[Stelios] ok"), 1)
         self.assertNotIn("\nok\n", out)
 
+    def test_room_waiting_loop_repaints_prompt_after_own_chat_echo(self):
+        class _TTYBuffer(io.StringIO):
+            def isatty(self):
+                return True
+
+        class _TTYInput:
+            def isatty(self):
+                return True
+
+        class _FakeWS:
+            def __init__(self):
+                self.sent_types = []
+                self.chat_sent = False
+                self.recv_calls = 0
+
+            async def send(self, raw):
+                payload = json.loads(raw)
+                self.sent_types.append(payload.get("type"))
+                if payload.get("type") == "chat_message":
+                    self.chat_sent = True
+
+            async def recv(self):
+                while not self.chat_sent:
+                    await asyncio.sleep(0.01)
+                self.recv_calls += 1
+                if self.recv_calls == 1:
+                    return json.dumps(
+                        {
+                            "type": "chat_message",
+                            "payload": {"from": "Sneaky Falcon", "from_role": "participant", "text": "hi"},
+                        }
+                    )
+                return json.dumps({"type": "game_finished", "payload": {}})
+
+        class _FakeConnect:
+            def __init__(self, ws):
+                self.ws = ws
+
+            async def __aenter__(self):
+                return self.ws
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class _FakeWebsocketsModule:
+            def __init__(self, ws):
+                self._ws = ws
+
+            def connect(self, *args, **kwargs):
+                return _FakeConnect(self._ws)
+
+        fake_ws = _FakeWS()
+        tty_out = _TTYBuffer()
+        with patch("quizmd.os.name", "posix"):
+            with patch("sys.stdin", _TTYInput()):
+                with patch.dict(sys.modules, {"websockets": _FakeWebsocketsModule(fake_ws)}):
+                    with patch("quizmd._read_lobby_line_nonblocking", side_effect=["hi", None]):
+                        with contextlib.redirect_stdout(tty_out):
+                            rc = run_coroutine_sync(
+                                _run_room_waiting_loop(
+                                    ws_base="ws://example.test",
+                                    room_code="ROOM1234",
+                                    player_id="p1",
+                                    token="tok",
+                                    display_name="Sneaky Falcon",
+                                    room_name="room-name",
+                                    is_host=False,
+                                    room_mode="compete",
+                                    player_role="participant",
+                                    theme_name="auto",
+                                    no_color=True,
+                                    full_screen=False,
+                                )
+                            )
+
+        out = tty_out.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.count("[Sneaky Falcon] hi"), 1)
+        self.assertGreaterEqual(out.count("[Sneaky Falcon]: "), 3)
+
     def test_room_waiting_loop_does_not_print_empty_chat_prompt_lines(self):
         class _FakeWS:
             def __init__(self):
@@ -6835,7 +7386,7 @@ class QuizMarkdownTests(unittest.TestCase):
         fake_ws = _FakeWS()
         with patch("quizmd.os.name", "posix"):
             with patch.dict(sys.modules, {"websockets": _FakeWebsocketsModule(fake_ws)}):
-                with patch("quizmd._read_lobby_line_nonblocking", side_effect=["[Curious Falcon] /start", None]):
+                with patch("quizmd._read_lobby_line_nonblocking", side_effect=["[Curious Falcon]: /start", None]):
                     buf = io.StringIO()
                     with contextlib.redirect_stdout(buf):
                         rc = run_coroutine_sync(
@@ -6859,7 +7410,7 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("start_game", fake_ws.sent_types)
         self.assertNotIn("chat_message", fake_ws.sent_types)
-        self.assertNotIn("[Curious Falcon] /start", out)
+        self.assertNotIn("[Curious Falcon]: /start", out)
         self.assertIn("Start requested...", out)
 
     def test_room_waiting_loop_prints_awaiting_next_message(self):
@@ -6996,6 +7547,9 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("2. Stelios - 4 pts", out)
         self.assertIn("3. Maya - 2 pts", out)
         self.assertIn("*   Tom wins!   *", out)
+        self.assertIn("Final scoreboard", out)
+        self.assertIn("| 1    | Tom     | 5 pts |", out)
+        self.assertIn("| 4    | Alex    | 1 pts |", out)
 
     def test_room_final_podium_confetti_resizes_to_winner_name(self):
         out = _room_final_podium([{"name": "Happy Falcon", "score": 1.23}])
@@ -7005,6 +7559,38 @@ class QuizMarkdownTests(unittest.TestCase):
         winner_index = lines.index(winner_line)
         self.assertGreaterEqual(len(lines[winner_index - 1]), len(winner_line))
         self.assertEqual(lines[winner_index - 1], lines[winner_index + 1])
+
+    def test_room_final_scoreboard_lists_all_players_sorted(self):
+        out = _room_final_scoreboard(
+            [
+                {"name": "Maya", "score": 2},
+                {"name": "Tom", "score": 5},
+                {"name": "Stelios", "score": 4.25},
+                {"name": "Alex", "score": 1},
+            ]
+        )
+
+        self.assertIn("Final scoreboard", out)
+        self.assertLess(out.index("Tom"), out.index("Stelios"))
+        self.assertLess(out.index("Stelios"), out.index("Maya"))
+        self.assertIn("| 1    | Tom     |    5 pts |", out)
+        self.assertIn("| 2    | Stelios | 4.25 pts |", out)
+        self.assertIn("| 4    | Alex    |    1 pts |", out)
+
+    def test_room_final_scoreboard_marks_eliminated_players(self):
+        players = [
+            {"name": "Tom", "score": 5, "eliminated": True},
+            {"name": "Maya", "score": 4, "eliminated": False},
+            {"name": "Alex", "score": 2, "eliminated": True},
+        ]
+        podium = _room_final_podium(players)
+        out = _room_final_scoreboard(players)
+
+        self.assertIn("1. Maya - 4 pts", podium)
+        self.assertNotIn("Tom - 5 pts", podium)
+        self.assertIn("Status", out)
+        self.assertLess(out.index("Maya"), out.index("Tom"))
+        self.assertIn("| 2    | Tom    | 5 pts | eliminated |", out)
 
     def test_room_final_results_countdown_prints_five_seconds(self):
         mocked_sleep = AsyncMock()
