@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented in this file.
 
+## v2.4.3 - 2026-05-05
+
+- Promoted the room refresh to stable.
+- Room types now supported in the CLI/server contract:
+  - `compete`
+  - `collaborate`
+  - `eliminate`
+- Removed Boxing from the public room API and CLI mode selector.
+- Updated room scoring:
+  - correct answers receive base question points plus a capped speed bonus
+  - wrong answers receive `0`
+  - Eliminate uses the same scoring, but wrong answers remove players from future scoring while they can keep playing for practice.
+- Added cleaner room progress events and CLI messages:
+  - submitted counts
+  - all-submitted state
+  - countdowns before game start and next question
+  - final podium/scoreboard output.
+- Hardened room server edge cases:
+  - reconnect-safe websocket cleanup
+  - late submissions rejected after deadline
+  - malformed submit payloads return a clean error
+  - manual `/next` cannot open duplicate question transitions
+  - late Collaborate joiners wait until the next question
+  - finished rooms are removed promptly.
+- `quizmd init` now lists and generates starters across the current local modes.
+
 ## v2.4.3rc7 - 2026-05-03
 
 - RC refresh after `v2.4.3rc6` failed before publication because the release workflow version check was over-escaped.

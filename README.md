@@ -45,6 +45,10 @@ quizmd init
 This creates:
 - `hello-quiz.md` (single + multiple MCQ)
 - `hello-imposter.md` (imposter mode)
+- `hello-debug.md` (debug mode)
+- `hello-challenge.md` (challenge mode)
+- `hello-reverse.md` (reverse mode)
+- `hello-millionaire.md` (millionaire mode)
 - `hello-chaos.md` (branching scenario mode)
 - `hello-essay.md` (essay mode)
 - `QUIZ_GUIDE.md` (quick commands)
@@ -101,7 +105,7 @@ quizmd hello-essay.md
 - Start: `quizmd hello-essay.md`
 
 ### 9) Room: Compete (Online)
-- What: fastest correct answers win points.
+- What: correct answers earn base points plus a small capped speed bonus.
 - Start room: `quizmd room --create --mode compete --quiz hello-quiz.md`
 
 ### 10) Room: Collaborate (Online)
@@ -121,6 +125,12 @@ Join any room:
 ```bash
 quizmd room --join <room-name> [--token <room-token>]
 ```
+
+Room behavior:
+- Rooms are open by default in the CLI. Use `--require-token` to make a token-protected room.
+- Auto-advance is the default. Use `--advance manual` if the host should type `/next` after each result.
+- Compete/Eliminate scoring: correct answer = question points + up to 25% speed bonus; wrong answer = `0`.
+- Finished rooms are ephemeral and are released by the room server after the final results.
 
 Room quiz requirement:
 - In online room types, each question `Time`/`time_limit` must be **5 seconds or higher**.
