@@ -2,6 +2,44 @@
 
 All notable changes to this project are documented in this file.
 
+## v2.4.3rc7 - 2026-05-03
+
+- RC refresh after `v2.4.3rc6` failed before publication because the release workflow version check was over-escaped.
+- Keeps the same room CLI behavior as `v2.4.3rc6`.
+
+## v2.4.3rc6 - 2026-05-03
+
+- Room CLI RC refresh:
+  - room mode selector now exposes Compete and Collaborate only
+  - room questions suppress local correctness feedback until server results arrive
+  - progress messages show submitted counts, all-submitted state, and timeout waiting state
+  - progress dedupe is retry-proof for fast Collaborate retries
+  - chat prints the server echo once as `[Name] message`
+  - lobby input uses a no-echo terminal guard instead of ANSI line clearing
+  - room loader rejects non-MCQ quiz files for the current room contract.
+
+## v2.4.3rc5 - 2026-05-01
+
+- Release candidate refresh for PyPI publication.
+- Carries latest reliability updates for millionaire Ask-AI loading/failure handling and release/CI hardening.
+
+## v2.4.3rc4 - 2026-05-01
+
+- Millionaire UI polish:
+  - moved lifelines/points block below options
+  - added labeled divider: `────────── Lifelines ──────────`
+  - added Ask AI live progress animation before final provider response line.
+- Millionaire Ask-the-People tuning:
+  - stronger early-question confidence
+  - progressively noisier/more mixed votes for later questions.
+
+## v2.4.3rc3 - 2026-05-01
+
+- RC refresh to verify and stabilize starter generation behavior on clean installs.
+- Re-validated `quizmd init --force` in a fresh virtual environment:
+  - confirms `hello-millionaire.md` is generated and listed in init output.
+- Version bump only; no gameplay behavior changes.
+
 ## v2.4.3rc2 - 2026-04-29
 
 - Fixed confusing MCQ parser failure for challenge-style content:
