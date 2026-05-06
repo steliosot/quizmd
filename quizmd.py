@@ -27,7 +27,7 @@ try:
 except ModuleNotFoundError:
     _wcwidth_wcswidth = None
 
-__version__ = "2.4.3"
+__version__ = "2.4.4"
 DEFAULT_AI_PROVIDER = "auto"
 DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -3091,6 +3091,77 @@ def parse_question_lines(question_text: str) -> list[tuple[str, bool]]:
     return lines or [("", False)]
 
 
+def parse_question_segments(question_text: str) -> list[dict]:
+    """Split quiz question Markdown into prose and fenced-code segments."""
+    segments: list[dict] = []
+    prose_lines: list[str] = []
+    code_lines: list[str] = []
+    in_code_fence = False
+    code_lang = ""
+
+    def flush_prose() -> None:
+        nonlocal prose_lines
+        if prose_lines:
+            segments.append({"type": "prose", "text": "\n".join(prose_lines)})
+            prose_lines = []
+
+    def flush_code() -> None:
+        nonlocal code_lines, code_lang
+        title, code = _extract_code_card_title("\n".join(code_lines))
+        segments.append({"type": "code", "lang": code_lang, "title": title, "code": code})
+        code_lines = []
+        code_lang = ""
+
+    for raw_line in question_text.splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("```"):
+            if in_code_fence:
+                flush_code()
+                in_code_fence = False
+            else:
+                flush_prose()
+                in_code_fence = True
+                code_lang = stripped[3:].strip().split()[0] if stripped[3:].strip() else ""
+                code_lines = []
+            continue
+
+        if in_code_fence:
+            code_lines.append(raw_line.rstrip())
+        else:
+            prose_lines.append(raw_line)
+
+    if in_code_fence:
+        # Parser validation catches malformed quiz files. This fallback keeps
+        # direct helper usage readable instead of dropping the unterminated code.
+        flush_code()
+    else:
+        flush_prose()
+
+    return segments or [{"type": "prose", "text": ""}]
+
+
+def _extract_code_card_title(code: str) -> tuple[str, str]:
+    lines = code.splitlines()
+    first_nonempty_idx = None
+    first_nonempty = ""
+    for idx, line in enumerate(lines):
+        if line.strip():
+            first_nonempty_idx = idx
+            first_nonempty = line.strip()
+            break
+
+    title = "Code"
+    label_match = re.match(r"^#\s*([A-Za-z0-9][A-Za-z0-9 _.-]{0,30})\s*$", first_nonempty)
+    if label_match:
+        label = " ".join(label_match.group(1).strip().split())
+        title = f"Code {label}"
+        if first_nonempty_idx is not None:
+            lines = lines[:first_nonempty_idx] + lines[first_nonempty_idx + 1 :]
+
+    cleaned = "\n".join(lines).strip("\n")
+    return title, cleaned
+
+
 def strip_prompt_toolkit_tags(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text)
 
@@ -3123,6 +3194,183 @@ def truncate_for_display(text: str, max_width: int) -> str:
             break
         out += ch
     return out + ellipsis
+
+
+def split_for_display_width(text: str, max_width: int) -> list[str]:
+    if max_width <= 0:
+        return [""]
+    if text == "":
+        return [""]
+
+    chunks: list[str] = []
+    current = ""
+    for ch in text:
+        if current and display_width(current + ch) > max_width:
+            chunks.append(current)
+            current = ch
+        else:
+            current += ch
+    chunks.append(current)
+    return chunks
+
+
+def pad_for_display(text: str, width: int) -> str:
+    return text + (" " * max(0, width - display_width(text)))
+
+
+def _prompt_style_span(text: str, style: str, no_color: bool = False) -> str:
+    if no_color:
+        return text
+    return f"<style {style}>{html.escape(text)}</style>"
+
+
+def _code_card_lines(
+    segment: dict,
+    width: int,
+    theme: dict,
+    no_color: bool = False,
+) -> list[tuple[str, str]]:
+    width = max(24, int(width))
+    inner_width = max(8, width - 4)
+    title = str(segment.get("title") or "Code")
+    code = str(segment.get("code") or "")
+    border_color = theme.get("pt_instruction", theme["pt_primary"])
+    code_color = theme.get("pt_code", theme["pt_primary"])
+    code_bg = theme.get("pt_code_bg", "")
+    border_style = f"fg='{border_color}'"
+    code_style = f"fg='{code_color}' bg='{code_bg}'" if code_bg else f"fg='{code_color}'"
+
+    if no_color:
+        title_text = f" {title} "
+        if width <= len(title_text) + 4:
+            top = "+" + ("-" * (width - 2)) + "+"
+        else:
+            right = width - len(title_text) - 3
+            top = "+-" + title_text + ("-" * max(0, right)) + "+"
+        bottom = "+" + ("-" * (width - 2)) + "+"
+        out: list[tuple[str, str]] = [(top, top)]
+        code_source_lines = code.splitlines() or [""]
+        for raw_line in code_source_lines:
+            for chunk in split_for_display_width(raw_line, inner_width):
+                content = pad_for_display(chunk, inner_width)
+                line = f"| {content} |"
+                out.append((line, line))
+        out.append((bottom, bottom))
+        return out
+
+    title_text = f" {title} "
+    if width <= display_width(title_text) + 4:
+        top_plain = "╭" + ("─" * (width - 2)) + "╮"
+        top_markup = _prompt_style_span(top_plain, border_style)
+    else:
+        right = width - display_width(title_text) - 3
+        top_plain = "╭─" + title_text + ("─" * max(0, right)) + "╮"
+        top_markup = _prompt_style_span(top_plain, border_style)
+    bottom_plain = "╰" + ("─" * (width - 2)) + "╯"
+    out = [(top_plain, top_markup)]
+
+    code_source_lines = code.splitlines() or [""]
+    for raw_line in code_source_lines:
+        for chunk in split_for_display_width(raw_line, inner_width):
+            content = pad_for_display(chunk, inner_width)
+            left_plain = "│ "
+            right_plain = " │"
+            plain = left_plain + content + right_plain
+            markup = (
+                _prompt_style_span(left_plain, border_style)
+                + _prompt_style_span(content, code_style)
+                + _prompt_style_span(right_plain, border_style)
+            )
+            out.append((plain, markup))
+
+    out.append((bottom_plain, _prompt_style_span(bottom_plain, border_style)))
+    return out
+
+
+def _combine_code_cards(
+    left: list[tuple[str, str]],
+    right: list[tuple[str, str]],
+    gap: str = "  ",
+) -> list[tuple[str, str]]:
+    left_width = max((display_width(plain) for plain, _ in left), default=0)
+    right_width = max((display_width(plain) for plain, _ in right), default=0)
+    total_lines = max(len(left), len(right))
+    lines: list[tuple[str, str]] = []
+    for idx in range(total_lines):
+        if idx < len(left):
+            left_plain, left_markup = left[idx]
+            left_pad = " " * max(0, left_width - display_width(left_plain))
+        else:
+            left_plain, left_markup, left_pad = " " * left_width, " " * left_width, ""
+        if idx < len(right):
+            right_plain, right_markup = right[idx]
+            right_pad = " " * max(0, right_width - display_width(right_plain))
+        else:
+            right_plain, right_markup, right_pad = " " * right_width, " " * right_width, ""
+        plain = left_plain + left_pad + gap + right_plain + right_pad
+        markup = left_markup + left_pad + gap + right_markup + right_pad
+        lines.append((plain, markup))
+    return lines
+
+
+def render_question_markdown_lines_for_prompt_toolkit(
+    question_text: str,
+    theme: dict,
+    terminal_width: int | None = None,
+    no_color: bool = False,
+    compact: bool = False,
+) -> list[str]:
+    segments = parse_question_segments(question_text)
+    terminal_width = terminal_width or 80
+    available_width = max(40, terminal_width - 2)
+    side_by_side = (not compact) and available_width >= 118
+    gap = "  "
+    lines: list[str] = []
+    idx = 0
+
+    while idx < len(segments):
+        segment = segments[idx]
+        if segment["type"] == "prose":
+            for raw_line in str(segment.get("text") or "").splitlines():
+                if no_color:
+                    lines.append(strip_prompt_toolkit_tags(render_inline_markdown_for_prompt_toolkit(raw_line)))
+                else:
+                    lines.append(render_inline_markdown_for_prompt_toolkit(raw_line))
+            idx += 1
+            continue
+
+        code_segments: list[dict] = []
+        while idx < len(segments):
+            current = segments[idx]
+            if current["type"] == "code":
+                code_segments.append(current)
+                idx += 1
+                continue
+            if current["type"] == "prose" and not str(current.get("text") or "").strip():
+                idx += 1
+                continue
+            break
+
+        card_width = min(available_width, 112)
+        if side_by_side and len(code_segments) >= 2:
+            card_width = max(36, min(88, (available_width - len(gap)) // 2))
+            for pair_start in range(0, len(code_segments), 2):
+                left = _code_card_lines(code_segments[pair_start], card_width, theme, no_color=no_color)
+                if pair_start + 1 < len(code_segments):
+                    right = _code_card_lines(code_segments[pair_start + 1], card_width, theme, no_color=no_color)
+                    lines.extend(markup for _plain, markup in _combine_code_cards(left, right, gap=gap))
+                else:
+                    lines.extend(markup for _plain, markup in left)
+                lines.append("")
+        else:
+            for code_segment in code_segments:
+                card = _code_card_lines(code_segment, card_width, theme, no_color=no_color)
+                lines.extend(markup for _plain, markup in card)
+                lines.append("")
+
+    while lines and lines[-1] == "":
+        lines.pop()
+    return lines or [""]
 
 
 def wrap_and_truncate_text(text: str, max_width: int, max_lines: int = 2) -> list[str]:
@@ -7618,15 +7866,24 @@ def collect_essay_answer_inline_box(
     palette = _prompt_ui_palette(active_theme)
 
     title = html.escape(question_title.strip() or "Essay answer")
-    question = html.escape((question_text or "").strip())
+    raw_question = (question_text or "").strip()
     instruction_text = html.escape((instructions or "").strip())
     hint = html.escape((hint_text or "").strip())
     heading_parts = [
         f"<style fg='{palette['logo']}'>{html.escape(LOGO.strip())}</style>",
         f"<style fg='{palette['accent']}'><b>{title}</b></style>",
     ]
-    if question:
-        heading_parts.append(f"<style fg='{palette['body']}'>{question}</style>")
+    if raw_question:
+        heading_parts.append(
+            "\n".join(
+                render_question_markdown_lines_for_prompt_toolkit(
+                    raw_question,
+                    active_theme,
+                    terminal_width=get_terminal_columns(),
+                    compact=should_use_compact_layout(),
+                )
+            )
+        )
     if instruction_text:
         heading_parts.append(f"<style fg='{palette['body']}'>{instruction_text}</style>")
     if hint:
@@ -8012,6 +8269,7 @@ def build_question_markup(
     millionaire_points_text: str = "",
     millionaire_safety_text: str = "",
     millionaire_instruction: str = "",
+    quiz_mode: str = "mcq",
 ) -> str:
     if imposter_marked is None:
         imposter_marked = set()
@@ -8019,7 +8277,14 @@ def build_question_markup(
     ultra_compact = bool(terminal_width is not None and terminal_width < 70)
     ascii_compact = no_color or (compact and (_is_windows() or ultra_compact))
     separator = " | " if ascii_compact else " • "
-    if imposter_mode:
+    chaos_mode = quiz_mode == "chaos"
+    if chaos_mode:
+        instruction = (
+            "Sp/En/Q"
+            if ultra_compact
+            else ("[Space] Choose | [Enter] Confirm | [Q] Quit" if ascii_compact else "[Space] Choose • [Enter] Confirm • [Q] Quit")
+        )
+    elif imposter_mode:
         instruction = (
             "Sp/X/En/Q"
             if ultra_compact
@@ -8043,17 +8308,23 @@ def build_question_markup(
         imposter_badge = "[1 IMPOSTER]"
     elif imposter_count > 1:
         imposter_badge = f"[{imposter_count} IMPOSTERS]"
-    question_type_badge = (
-        "[M]" if (is_multiple and ultra_compact) else
-        "[S]" if ((not is_multiple) and ultra_compact) else
-        "[MULTI]" if (is_multiple and ascii_compact) else
-        "[SINGLE]" if (not is_multiple and ascii_compact) else
-        "[MULTI ☑]" if is_multiple else "[SINGLE ○]"
-    )
+    if chaos_mode:
+        question_type_badge = "[DECISION]" if not ultra_compact else "[D]"
+    else:
+        question_type_badge = (
+            "[M]" if (is_multiple and ultra_compact) else
+            "[S]" if ((not is_multiple) and ultra_compact) else
+            "[MULTI]" if (is_multiple and ascii_compact) else
+            "[SINGLE]" if (not is_multiple and ascii_compact) else
+            "[MULTI ☑]" if is_multiple else "[SINGLE ○]"
+        )
     progress_units = 6 if ultra_compact else 10
     progress_fraction = question_index / total_questions if total_questions else 1
     filled_units = max(0, min(progress_units, int(round(progress_fraction * progress_units))))
     progress_bar = "█" * filled_units + "░" * (progress_units - filled_units)
+    header_label = "Q" if ultra_compact else "Question"
+    if chaos_mode:
+        header_label = "Step" if ultra_compact else (str(q.get("title") or "Step").strip() or "Step")
 
     timer_color = theme["pt_timer"]
     timer_prefix = "TIME" if ascii_compact else "⏱"
@@ -8065,34 +8336,44 @@ def build_question_markup(
             timer_color = theme["pt_timer_warning"]
             timer_prefix = "WARN" if ascii_compact else "😱"
 
-    parsed_question_lines = parse_question_lines(q["question"])
-    rendered_question_lines: list[tuple[str, bool]] = []
-    for raw_line, is_code in parsed_question_lines:
-        if is_code:
-            rendered = html.escape(raw_line.rstrip())
-            rendered_question_lines.append((rendered, True))
-        else:
-            rendered_question_lines.append((render_inline_markdown_for_prompt_toolkit(raw_line), False))
+    rendered_question_lines = render_question_markdown_lines_for_prompt_toolkit(
+        q["question"],
+        theme,
+        terminal_width=terminal_width,
+        no_color=no_color,
+        compact=compact,
+    )
+    intro_text = str(q.get("intro") or "").strip("\n")
+    rendered_intro_lines = (
+        render_question_markdown_lines_for_prompt_toolkit(
+            intro_text,
+            theme,
+            terminal_width=terminal_width,
+            no_color=no_color,
+            compact=compact,
+        )
+        if intro_text
+        else []
+    )
 
-    code_side_margin = 2
     if no_color:
         timer_text = ""
         if remaining is not None:
             timer_text = f"{timer_prefix} {remaining}s"
         header = (
-            f"{'Q' if ultra_compact else 'Question'} {question_index}/{total_questions} {progress_bar}"
+            f"{header_label} {question_index}/{total_questions} {progress_bar}"
             + (f"  {timer_text}" if timer_text else "")
             + (f"{separator}{imposter_badge}" if imposter_badge else "")
             + f"{separator}{question_type_badge}{separator}{instruction}"
         )
-        lines = [header, ""]
+        lines = []
+        if rendered_intro_lines:
+            lines.extend(strip_prompt_toolkit_tags(line) for line in rendered_intro_lines)
+            lines.extend(["", "-" * min(72, max(24, terminal_width or 72)), ""])
+        lines.extend([header, ""])
 
-        for line, is_code in rendered_question_lines:
-            plain_line = strip_prompt_toolkit_tags(line)
-            if is_code:
-                lines.append(f"  {plain_line}")
-            else:
-                lines.append(plain_line)
+        for line in rendered_question_lines:
+            lines.append(strip_prompt_toolkit_tags(line))
 
         lines.extend(["", ""])
     else:
@@ -8102,23 +8383,27 @@ def build_question_markup(
             timer_part = f"  <style fg='{timer_color}'>{timer_value}</style>"
 
         header = (
-            f"<style fg='{theme['pt_instruction']}'><b>{'Q' if ultra_compact else 'Question'} {question_index}/{total_questions}</b> {progress_bar}</style>"
+            f"<style fg='{theme['pt_instruction']}'><b>{html.escape(header_label)} {question_index}/{total_questions}</b> {progress_bar}</style>"
             + timer_part
             + f" <style fg='{theme['pt_instruction']}'>{html.escape((separator + imposter_badge) if imposter_badge else '')}{html.escape(separator + question_type_badge + separator + instruction)}</style>"
         )
-        lines = [header, ""]
+        lines = []
+        if rendered_intro_lines:
+            lines.extend(rendered_intro_lines)
+            divider_width = min(72, max(24, terminal_width or 72))
+            lines.append("")
+            lines.append(f"<style fg='{theme['pt_instruction']}'>{'─' * divider_width}</style>")
+            lines.append("")
+        lines.extend([header, ""])
 
-        for line, is_code in rendered_question_lines:
-            if is_code:
-                code_style = f"fg='{theme.get('pt_code', theme['pt_primary'])}' bg='{theme['pt_code_bg']}'"
-                lines.append(f"<style {code_style}>  {line}</style>")
-            else:
-                lines.append(line)
+        lines.extend(rendered_question_lines)
 
         lines.extend(["", ""])
 
     for i, opt in enumerate(q["options"]):
         idx = i + 1
+        raw_option_labels = q.get("option_labels") if isinstance(q.get("option_labels"), list) else []
+        display_idx = str(raw_option_labels[i]).strip() if i < len(raw_option_labels) and str(raw_option_labels[i]).strip() else str(idx)
         option_hidden = bool(hidden_options and idx in hidden_options)
         pointer = "&gt;" if i == selected else " "
         if option_hidden:
@@ -8127,10 +8412,10 @@ def build_question_markup(
             style = f"fg='{theme['pt_instruction']}'"
             if no_color:
                 lines.append(
-                    f"{'>' if i == selected else ' '} {idx}. {marker} {hidden_label}"
+                    f"{'>' if i == selected else ' '} {display_idx}. {marker} {hidden_label}"
                 )
             else:
-                lines.append(f"<style {style}>{pointer} {idx}. {marker} {hidden_label}</style>")
+                lines.append(f"<style {style}>{pointer} {html.escape(display_idx)}. {marker} {hidden_label}</style>")
             continue
         if ui == "next":
             if is_multiple:
@@ -8185,7 +8470,7 @@ def build_question_markup(
         if ultra_compact:
             option_plain = strip_prompt_toolkit_tags(render_inline_markdown_for_prompt_toolkit(opt))
             chips_plain = " ".join(chip for chip in (selected_chip, imposter_marker) if chip)
-            prefix_plain = f"{'>' if i == selected else ' '} {idx}. {marker}{(' ' + chips_plain) if chips_plain else ''} "
+            prefix_plain = f"{'>' if i == selected else ' '} {display_idx}. {marker}{(' ' + chips_plain) if chips_plain else ''} "
             continuation_prefix_plain = " " * len(prefix_plain)
             max_option_width = max(18, (terminal_width or 70) - len(prefix_plain) - 1)
             wrapped_lines = wrap_and_truncate_text(option_plain, max_option_width, max_lines=2)
@@ -8204,13 +8489,13 @@ def build_question_markup(
         chips = " ".join(chip for chip in (selected_chip, imposter_marker) if chip)
         if no_color:
             lines.append(
-                f"{'>' if i == selected else ' '} {idx}. {marker}{(' ' + chips) if chips else ''} "
+                f"{'>' if i == selected else ' '} {display_idx}. {marker}{(' ' + chips) if chips else ''} "
                 f"{strip_prompt_toolkit_tags(render_inline_markdown_for_prompt_toolkit(opt))}"
             )
         else:
             chip_text = f" {html.escape(chips)}" if chips else ""
             lines.append(
-                f"<style {style}>{pointer} {idx}. {html.escape(marker)}{chip_text} "
+                f"<style {style}>{pointer} {html.escape(display_idx)}. {html.escape(marker)}{chip_text} "
                 f"{render_inline_markdown_for_prompt_toolkit(opt)}</style>"
             )
 
@@ -8289,6 +8574,7 @@ async def ask_question(
         from prompt_toolkit.key_binding import KeyBindings
         from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
         from prompt_toolkit.layout.controls import FormattedTextControl
+        from prompt_toolkit.layout.dimension import Dimension
     except ModuleNotFoundError as exc:
         raise RuntimeError(
             "Interactive quiz mode requires prompt_toolkit. Install dependencies from requirements.txt."
@@ -8460,6 +8746,7 @@ async def ask_question(
                 else ""
             ),
             millionaire_instruction=millionaire_instruction_text(),
+            quiz_mode=quiz_mode,
         )
         if full_screen and submitted:
             grading = evaluate_submission(result["answer"], result["imposters"])
@@ -8529,7 +8816,12 @@ async def ask_question(
         return PromptHTML(f"<style fg='{theme['pt_instruction']}'>{escaped}</style>")
 
     control = FormattedTextControl(text=render)
-    window = Window(content=control, wrap_lines=True, always_hide_cursor=True)
+    window = Window(
+        content=control,
+        wrap_lines=True,
+        always_hide_cursor=True,
+        width=Dimension(weight=1),
+    )
     sidebar_control = None
     sidebar_window = None
     if status_sidebar_renderer is not None:
@@ -8538,7 +8830,7 @@ async def ask_question(
             content=sidebar_control,
             wrap_lines=True,
             always_hide_cursor=True,
-            width=max(24, int(status_sidebar_width)),
+            width=Dimension.exact(max(24, int(status_sidebar_width))),
         )
     kb = KeyBindings()
 
@@ -10565,14 +10857,20 @@ def run_chaos(
     path_taken_steps: list[str] = []
     recoveries_succeeded = 0
     chaos_steps_total = 3
-    selection_history: list[str] = []
     score_breakdown: list[dict] = []
-    chaos_sidebar_width = 68
+    chaos_sidebar_width = 32
 
-    def append_selection_history(step_label: str, selected_text: str, correct: bool, points_earned: int) -> None:
-        mark = "✓" if correct else "✗"
-        selection_history.append(
-            f"{step_label} {mark} +{points_earned} ({earned}/{maximum}): {selected_text}"
+    def chaos_intro_text() -> str:
+        return (
+            LOGO.strip()
+            + "\n\n"
+            + f"Chaos Mode: {title}\n\n"
+            + chaos["scenario"]
+            + "\n\n"
+            + "Rules:\n"
+            + "- Use ↑/↓ to move, Space to select, Enter to confirm.\n"
+            + "- Press Q to quit and keep your current score.\n"
+            + "- Press Ctrl+C to force exit at any time."
         )
 
     def prompt_choice(
@@ -10585,21 +10883,13 @@ def run_chaos(
         def chaos_status_text() -> str:
             elapsed = max(0, int(time.time() - started_at))
             minutes, seconds = divmod(elapsed, 60)
-            path_text = " \u2192 ".join(path_taken_steps) if path_taken_steps else "Start"
-            history_block = ""
-            if selection_history:
-                history_width = max(18, chaos_sidebar_width - 8)
-                lines = [f"| - {truncate_for_display(item, history_width)}" for item in selection_history[-3:]]
-                history_block = "\n| Picks:\n" + "\n".join(lines)
             return (
                 "Chaos Status\n\n"
                 "Mode: Chaos\n"
-                f"| Step: {step_index} / {total_steps}\n"
+                f"| Step: {step_index}/{total_steps}\n"
                 f"| Score: {earned}/{maximum}\n"
                 f"| Recoveries: {recoveries_succeeded}\n"
-                f"| Path: {path_text}\n"
                 f"| Time: {minutes:02d}:{seconds:02d}"
-                f"{history_block}"
             )
 
         options = question_block["options"]
@@ -10609,12 +10899,14 @@ def run_chaos(
             chaos_question = {
                 "title": step_title,
                 "question": question_block["question"],
+                "intro": chaos_intro_text() if full_screen and step_index == 1 else "",
                 "options": option_texts,
                 "correct": [option_labels.index(question_block["answer"]) + 1],
                 "type": "single",
                 "time_limit": 1,
                 "explanation": "",
                 "imposters": [],
+                "option_labels": option_labels,
             }
             _perfect, ans, _imposters, grading = run_coroutine_sync(
                 ask_question(
@@ -10673,20 +10965,21 @@ def run_chaos(
     earned = 0
     maximum = int(chaos["result"]["maximum_score"])
 
-    console.print(
-        Panel(
-            Markdown(
-                chaos["scenario"]
-                + "\n\n---\n"
-                + "Rules:\n"
-                + "- Use ↑/↓ to move, Space to select, Enter to confirm.\n"
-                + "- Press Q to quit and keep your current score.\n"
-                + "- Press Ctrl+C to force exit at any time."
-            ),
-            title=f"[bold {theme['primary']}]Chaos Mode: {title}[/bold {theme['primary']}]",
-            border_style=theme["panel"],
+    if not full_screen:
+        console.print(
+            Panel(
+                Markdown(
+                    chaos["scenario"]
+                    + "\n\n---\n"
+                    + "Rules:\n"
+                    + "- Use ↑/↓ to move, Space to select, Enter to confirm.\n"
+                    + "- Press Q to quit and keep your current score.\n"
+                    + "- Press Ctrl+C to force exit at any time."
+                ),
+                title=f"[bold {theme['primary']}]Chaos Mode: {title}[/bold {theme['primary']}]",
+                border_style=theme["panel"],
+            )
         )
-    )
 
     decision = chaos["decision1"]
     console.print("")
@@ -10708,14 +11001,12 @@ def run_chaos(
                 {"step": "Decision 1", "earned": decision_score, "max": decision_score, "correct": True}
             )
             path_taken_steps.append("[Decision 1 ✓]")
-            append_selection_history("Decision 1", decision_text, True, decision_score)
             decision_status_plain = "Correct decision."
         else:
             score_breakdown.append(
                 {"step": "Decision 1", "earned": 0, "max": decision_score, "correct": False}
             )
             path_taken_steps.append("[Decision 1 ✗]")
-            append_selection_history("Decision 1", decision_text, False, 0)
             decision_status_plain = "Risky decision."
         path_taken_steps.append(f"[Chaos {choice_1}]")
 
@@ -10752,14 +11043,12 @@ def run_chaos(
                     {"step": "Recovery", "earned": recovery_score, "max": recovery_score, "correct": True}
                 )
                 path_taken_steps.append(f"[Recovery {choice_1} ✓]")
-                append_selection_history("Recovery", recovery_text, True, recovery_score)
                 recovery_status_plain = "Recovery successful."
             else:
                 score_breakdown.append(
                     {"step": "Recovery", "earned": 0, "max": recovery_score, "correct": False}
                 )
                 path_taken_steps.append(f"[Recovery {choice_1} ✗]")
-                append_selection_history("Recovery", recovery_text, False, 0)
                 recovery_status_plain = "Recovery missed."
 
             wait_to_reveal_chaos_screen()
@@ -10793,7 +11082,6 @@ def run_chaos(
                     )
                     path_taken_steps.append("[Final Decision ✓]")
                     final_text = option_text_for_label(final_decision, final_choice)
-                    append_selection_history("Final", final_text, True, final_score)
                     final_status = f"[{theme['success']}]Final decision is correct.[/{theme['success']}]"
                 else:
                     score_breakdown.append(
@@ -10801,7 +11089,6 @@ def run_chaos(
                     )
                     path_taken_steps.append("[Final Decision ✗]")
                     final_text = option_text_for_label(final_decision, final_choice)
-                    append_selection_history("Final", final_text, False, 0)
                     final_status = f"[{theme['danger']}]Final decision is incorrect.[/{theme['danger']}]"
 
                 wait_to_reveal_chaos_screen()

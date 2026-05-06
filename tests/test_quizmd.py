@@ -107,6 +107,7 @@ from quizmd import (
     parse_essay_markdown,
     parse_int_list,
     parse_int_value,
+    parse_question_segments,
     parse_quiz_markdown,
     main,
     prompt_input,
@@ -118,6 +119,7 @@ from quizmd import (
     run_essay,
     run_coroutine_sync,
     render_exit_message,
+    render_question_markdown_lines_for_prompt_toolkit,
     render_init_next_screen,
     safe_for_stream,
     save_attempt,
@@ -2034,10 +2036,10 @@ class QuizMarkdownTests(unittest.TestCase):
         chaos_path = self.write_valid_chaos()
         try:
             title, payload = parse_chaos_markdown(chaos_path)
-            captured_kwargs = []
+            captured_calls = []
 
-            async def fake_ask_question(*_args, **kwargs):
-                captured_kwargs.append(kwargs)
+            async def fake_ask_question(question, *_args, **kwargs):
+                captured_calls.append((question, kwargs))
                 return (True, [1], [], {"answer_correct": True, "question_points": 1, "question_max_points": 1, "quit_requested": False})
 
             with patch("quizmd.ask_question", side_effect=fake_ask_question):
@@ -2045,9 +2047,13 @@ class QuizMarkdownTests(unittest.TestCase):
                 with contextlib.redirect_stdout(buf):
                     run_chaos(title, payload, no_color=True, full_screen=True)
 
-            self.assertEqual(len(captured_kwargs), 3)
-            self.assertTrue(all(kwargs["full_screen"] for kwargs in captured_kwargs))
-            self.assertTrue(all(kwargs["show_feedback"] is False for kwargs in captured_kwargs))
+            self.assertEqual(len(captured_calls), 3)
+            self.assertTrue(all(kwargs["full_screen"] for _question, kwargs in captured_calls))
+            self.assertTrue(all(kwargs["show_feedback"] is False for _question, kwargs in captured_calls))
+            self.assertIn("Chaos Mode:", captured_calls[0][0]["intro"])
+            self.assertIn("Rules:", captured_calls[0][0]["intro"])
+            self.assertEqual(captured_calls[1][0]["intro"], "")
+            self.assertEqual(captured_calls[2][0]["intro"], "")
         finally:
             Path(chaos_path).unlink(missing_ok=True)
 
@@ -4141,6 +4147,236 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertIn("ansired", danger)
         self.assertIn("[Space] Select • [Enter] Confirm • [Q] Quit", normal)
 
+    def test_parse_question_segments_extracts_labeled_code_cards(self):
+        segments = parse_question_segments(
+            "Compare these:\n\n"
+            "```python\n"
+            "# A\n"
+            "for item in rows:\n"
+            "    print(item)\n"
+            "```\n\n"
+            "```python\n"
+            "# B\n"
+            "print(rows)\n"
+            "```\n"
+        )
+
+        code_segments = [segment for segment in segments if segment["type"] == "code"]
+        self.assertEqual([segment["title"] for segment in code_segments], ["Code A", "Code B"])
+        self.assertEqual(code_segments[0]["lang"], "python")
+        self.assertNotIn("# A", code_segments[0]["code"])
+        self.assertIn("for item in rows:", code_segments[0]["code"])
+
+    def test_question_code_cards_stack_when_terminal_is_narrow(self):
+        lines = render_question_markdown_lines_for_prompt_toolkit(
+            "Which one?\n\n"
+            "```python\n"
+            "# A\n"
+            "print('a')\n"
+            "```\n\n"
+            "```python\n"
+            "# B\n"
+            "print('b')\n"
+            "```",
+            THEMES["dark"],
+            terminal_width=78,
+            no_color=True,
+        )
+
+        text = "\n".join(lines)
+        self.assertIn("Code A", text)
+        self.assertIn("Code B", text)
+        self.assertLess(text.index("Code A"), text.index("Code B"))
+        self.assertNotRegex(text, r"Code A.*Code B")
+
+    def test_question_code_cards_pair_when_terminal_is_wide(self):
+        lines = render_question_markdown_lines_for_prompt_toolkit(
+            "Which one?\n\n"
+            "```python\n"
+            "# A\n"
+            "print('a')\n"
+            "```\n\n"
+            "```python\n"
+            "# B\n"
+            "print('b')\n"
+            "```",
+            THEMES["dark"],
+            terminal_width=140,
+            no_color=True,
+        )
+
+        self.assertTrue(any("Code A" in line and "Code B" in line for line in lines))
+
+    def test_build_question_markup_uses_code_cards_for_fenced_code(self):
+        question = {
+            "title": "Question 1",
+            "question": "Pick one\n\n```python\n# A\nprint('a')\n```",
+            "options": ["A", "B"],
+            "correct": [1],
+            "type": "single",
+            "time_limit": 10,
+            "explanation": "",
+        }
+        markup = build_question_markup(
+            question,
+            THEMES["dark"],
+            selected=0,
+            marked=set(),
+            remaining=10,
+            is_multiple=False,
+            terminal_width=100,
+        )
+
+        self.assertIn("Code A", markup)
+        self.assertIn("print(&#x27;a&#x27;)", markup)
+        self.assertNotIn("bg='#1d2630'>  print", markup)
+
+    def test_reverse_mode_uses_code_cards_for_fenced_code_questions(self):
+        reverse_path = self.write_quiz(
+            "# Reverse Quiz: Behavior to Code\n\n"
+            "## Question 1\n"
+            "Which code prints A?\n\n"
+            "```python\n"
+            "# A\n"
+            "print('A')\n"
+            "```\n\n"
+            "Options:\n"
+            "- A\n"
+            "- B\n\n"
+            "Answer: 1\n"
+            "Type: single\n"
+        )
+        try:
+            _title, questions = parse_reverse_markdown(reverse_path)
+            markup = build_question_markup(
+                questions[0],
+                THEMES["dark"],
+                selected=0,
+                marked=set(),
+                remaining=10,
+                is_multiple=False,
+                terminal_width=120,
+            )
+            self.assertIn("Code A", markup)
+            self.assertIn("print(&#x27;A&#x27;)", markup)
+        finally:
+            Path(reverse_path).unlink(missing_ok=True)
+
+    def test_millionaire_mode_uses_code_cards_for_fenced_code_questions(self):
+        blocks = []
+        for idx in range(1, 16):
+            question_text = (
+                "Which code prints A?\n\n```python\n# A\nprint('A')\n```"
+                if idx == 1
+                else "Pick one."
+            )
+            blocks.append(
+                "\n".join(
+                    [
+                        f"## Question {idx}",
+                        question_text,
+                        "",
+                        "- A",
+                        "- B",
+                        "- C",
+                        "- D",
+                        "",
+                        "Answer: 1",
+                        "Type: single",
+                    ]
+                )
+            )
+        millionaire_path = self.write_quiz("# Millionaire Quiz: Ladder\n\n" + "\n\n".join(blocks))
+        try:
+            _title, questions = parse_millionaire_markdown(millionaire_path)
+            markup = build_question_markup(
+                questions[0],
+                THEMES["dark"],
+                selected=0,
+                marked=set(),
+                remaining=10,
+                is_multiple=False,
+                terminal_width=120,
+            )
+            self.assertIn("Code A", markup)
+            self.assertIn("print(&#x27;A&#x27;)", markup)
+        finally:
+            Path(millionaire_path).unlink(missing_ok=True)
+
+    def test_challenge_mode_uses_code_cards_for_fenced_code_questions(self):
+        challenge_path = self.write_quiz(
+            "# Challenge Quiz: Risk Mode\n\n"
+            "## Category: Complexity\n"
+            "Which code prints A?\n\n"
+            "```python\n"
+            "# A\n"
+            "print('A')\n"
+            "```\n\n"
+            "### Easy\n"
+            "- A\n"
+            "- B\n"
+            "Answer: 1\n\n"
+            "### Normal\n"
+            "- A\n"
+            "- B\n"
+            "Answer: 1\n\n"
+            "### Hard\n"
+            "- A\n"
+            "- B\n"
+            "Answer: 1\n"
+        )
+        try:
+            _title, categories = parse_challenge_markdown(challenge_path)
+            question = categories[0]["difficulties"]["easy"]
+            markup = build_question_markup(
+                question,
+                THEMES["dark"],
+                selected=0,
+                marked=set(),
+                remaining=10,
+                is_multiple=False,
+                terminal_width=120,
+            )
+            self.assertIn("Code A", markup)
+            self.assertIn("print(&#x27;A&#x27;)", markup)
+        finally:
+            Path(challenge_path).unlink(missing_ok=True)
+
+    def test_chaos_mode_uses_code_cards_for_fenced_code_questions(self):
+        chaos_path = self.write_valid_chaos()
+        try:
+            text = Path(chaos_path).read_text(encoding="utf-8")
+            text = text.replace(
+                "What is your first action?",
+                "What is your first action?\n\n```python\n# A\nprint('A')\n```",
+                1,
+            )
+            Path(chaos_path).write_text(text, encoding="utf-8")
+            _title, chaos = parse_chaos_markdown(chaos_path)
+            decision = chaos["decision1"]
+            question = {
+                "title": "Decision 1",
+                "question": decision["question"],
+                "options": [item["text"] for item in decision["options"]],
+                "correct": [1],
+                "type": "single",
+                "time_limit": 10,
+                "explanation": "",
+            }
+            markup = build_question_markup(
+                question,
+                THEMES["dark"],
+                selected=0,
+                marked=set(),
+                remaining=10,
+                is_multiple=False,
+                terminal_width=120,
+            )
+            self.assertIn("Code A", markup)
+            self.assertIn("print(&#x27;A&#x27;)", markup)
+        finally:
+            Path(chaos_path).unlink(missing_ok=True)
+
     def test_build_question_markup_blinks_timer_under_ten_seconds(self):
         question = {
             "title": "Question 1",
@@ -4267,6 +4503,63 @@ class QuizMarkdownTests(unittest.TestCase):
         self.assertNotIn("[selected]", markup)
         self.assertNotIn("◉", markup)
         self.assertNotIn("☑", markup)
+
+    def test_build_question_markup_chaos_mode_uses_decision_language_and_labels(self):
+        question = {
+            "title": "Recovery A",
+            "question": "Choose the safest action.",
+            "options": ["Validate first", "Delete file"],
+            "option_labels": ["A", "B"],
+            "correct": [1],
+            "type": "single",
+            "time_limit": 10,
+            "explanation": "",
+        }
+        markup = build_question_markup(
+            question,
+            THEMES["dark"],
+            selected=0,
+            marked=set(),
+            remaining=None,
+            is_multiple=False,
+            question_index=2,
+            total_questions=3,
+            quiz_mode="chaos",
+        )
+
+        self.assertIn("Recovery A 2/3", markup)
+        self.assertIn("[DECISION]", markup)
+        self.assertIn("[Space] Choose", markup)
+        self.assertIn("A. ○ Validate first", markup)
+        self.assertNotIn("[SINGLE", markup)
+
+    def test_build_question_markup_shows_intro_before_first_chaos_question(self):
+        question = {
+            "title": "Decision 1",
+            "intro": "QuizMD\n\nRules:\n- Move and choose carefully.",
+            "question": "What is your first action?",
+            "options": ["Validate first", "Delete file"],
+            "option_labels": ["A", "B"],
+            "correct": [1],
+            "type": "single",
+            "time_limit": 10,
+            "explanation": "",
+        }
+        markup = build_question_markup(
+            question,
+            THEMES["dark"],
+            selected=0,
+            marked=set(),
+            remaining=None,
+            is_multiple=False,
+            question_index=1,
+            total_questions=3,
+            quiz_mode="chaos",
+            no_color=True,
+        )
+
+        self.assertLess(markup.index("Rules:"), markup.index("Decision 1 1/3"))
+        self.assertIn("What is your first action?", markup)
 
     def test_build_question_markup_single_imposter_badge(self):
         question = {

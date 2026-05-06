@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## v2.4.4 - 2026-05-06
+
+- Cleaner terminal code presentation across quiz modes.
+- Added responsive code cards for fenced code blocks:
+  - wide terminals can show paired code options side by side
+  - narrower terminals stack code cards cleanly
+  - code-heavy MCQ, Reverse, Millionaire, Challenge, Chaos, Essay, and room questions share the same renderer.
+- Simplified Chaos question screens:
+  - decision-style headers and option labels
+  - compact right-side status panel
+  - removed duplicate path/picks text from the live status panel.
+- Fullscreen Chaos now shows the logo, scenario, and rules on the first question only.
+- Added `hello-quiz-code.md` as a small manual quiz for testing one, two, and three code-card layouts.
+
 ## v2.4.3 - 2026-05-05
 
 - Promoted the room refresh to stable.
